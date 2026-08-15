@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import logo from "../assets/logo.png";
 import {
   ShoppingCart,
   ChevronLeft,
@@ -38,6 +39,7 @@ type View =
   | "staff-menu"
   | "staff-menu-edit"
   | "staff-history"
+  | "staff-stats"
   | "staff-takeaway-menu"
   | "staff-takeaway-cart";
 type MeatChoice = "pork" | "chicken" | "beef";
@@ -92,7 +94,7 @@ interface CartItem {
 
 interface Order {
   id: string;
-  tableNumber: number;
+  tableNumber: string;
   timestamp: Date;
   items: CartItem[];
   status: OrderStatus;
@@ -110,244 +112,20 @@ const ADD_ONS = [
   { id: "water-glass", label: { en: "Water Glass", th: "แก้วน้ำ" }, price: 0 },
 ];
 
-const CATEGORIES = [
-  { id: "northern", name: { en: "Northern Specialties", th: "อาหารเหนือ" }, icon: "⭐" },
-  { id: "appetizers", name: { en: "Appetizers", th: "ของว่าง" }, icon: "🥢" },
-  { id: "noodles", name: { en: "Noodles", th: "ก๋วยเตี๋ยว" }, icon: "🍜" },
-  { id: "curries", name: { en: "Curries", th: "แกง" }, icon: "🍛" },
-  { id: "salads", name: { en: "Salads & Larb", th: "ยำ / ลาบ" }, icon: "🥗" },
-  { id: "rice", name: { en: "Rice Dishes", th: "ข้าว" }, icon: "🍚" },
-  { id: "drinks", name: { en: "Drinks", th: "เครื่องดื่ม" }, icon: "🥤" },
-  { id: "desserts", name: { en: "Desserts", th: "ของหวาน" }, icon: "🍮" },
-];
-
-const SEED_MENU_ITEMS: MenuItem[] = [
-  // Northern Specialties
-  {
-    id: "n1", categoryId: "northern",
-    name: { en: "Khao Soi", th: "ข้าวซอย" },
-    description: {
-      en: "Iconic Northern Thai coconut curry noodle soup with crispy egg noodles, pickled mustard greens, and shallots. A Lanna classic.",
-      th: "ข้าวซอยต้นตำรับล้านนา แกงกะทิเส้นก๋วยเตี๋ยวทอดกรอบ ผักดอง และหอมแดง",
-    },
-    price: 150, photo: "1569050467447-ce54b3bbc37d",
-    hasMeatChoice: true, meatPriceDeltas: { beef: 20 },
-    hasSpice: true, hasPortion: true, portionPriceDelta: 50,
-    customGroups: [
-      {
-        id: "noodle-type", nameTh: "ชนิดเส้น", nameEn: "Noodle Type", type: "single",
-        choices: [
-          { id: "egg-noodle", labelTh: "เส้นไข่กรอบ", labelEn: "Crispy Egg Noodle", priceDelta: 0 },
-          { id: "extra-noodle", labelTh: "เส้นเพิ่ม", labelEn: "Extra Noodles", priceDelta: 15 },
-        ],
-      },
-    ],
-    popular: true,
-  },
-  {
-    id: "n2", categoryId: "northern",
-    name: { en: "Gaeng Hang Lay", th: "แกงฮังเล" },
-    description: {
-      en: "Slow-cooked Burmese-style pork belly curry with ginger, tamarind, and whole shallots. Rich, deep, and warming.",
-      th: "แกงฮังเลหมูสามชั้นตุ๋นนาน รสชาติลึก กลิ่นขิง น้ำมะขาม และหอมแดงทั้งลูก",
-    },
-    price: 165, photo: "1455619452474-d2be8b1e70cd",
-    hasMeatChoice: false, hasSpice: false, popular: true,
-  },
-  {
-    id: "n3", categoryId: "northern",
-    name: { en: "Larb Khua", th: "ลาบคั่ว" },
-    description: {
-      en: "Dry-roasted spiced minced meat with toasted rice powder, dried chili, and aromatic herbs. Intensely flavored.",
-      th: "ลาบคั่วเนื้อสับคั่วแห้ง รสเข้มข้น ข้าวคั่ว พริกแห้ง และสมุนไพรหอม",
-    },
-    price: 130, photo: "1546069901-ba9599a7e63c",
-    hasMeatChoice: true, hasSpice: true, popular: true,
-  },
-  {
-    id: "n4", categoryId: "northern",
-    name: { en: "Nam Prik Noom", th: "น้ำพริกหนุ่ม" },
-    description: {
-      en: "Roasted young green chili paste with garlic and shallots. Served with blanched seasonal vegetables and sticky rice.",
-      th: "น้ำพริกหนุ่มพริกเขียวหนุ่มปิ้ง เสิร์ฟกับผักลวก แคปหมู และข้าวเหนียว",
-    },
-    price: 95, photo: "1484980972926-edee96e0960d",
-    hasMeatChoice: false, hasSpice: true, popular: false,
-  },
-  // Appetizers
-  {
-    id: "a1", categoryId: "appetizers",
-    name: { en: "Sai Oua", th: "ไส้อั่ว" },
-    description: {
-      en: "Northern Thai herbal sausage grilled over charcoal, fragrant with lemongrass, galangal, and kaffir lime. Crispy and aromatic.",
-      th: "ไส้อั่วสมุนไพรเหนือย่างถ่านหอมกลิ่นตะไคร้ ข่า และมะกรูด กรอบนอกนุ่มใน",
-    },
-    price: 120, photo: "1555939594-58d7cb561ad1",
-    hasMeatChoice: false, hasSpice: true, popular: true,
-  },
-  {
-    id: "a2", categoryId: "appetizers",
-    name: { en: "Nam Prik Ong", th: "น้ำพริกอ่อง" },
-    description: {
-      en: "Northern Thai tomato chili dip with minced pork. Served with fresh seasonal vegetables and crispy pork rinds.",
-      th: "น้ำพริกอ่องหมูสับมะเขือเทศ เสิร์ฟกับผักสดและแคปหมูกรอบ",
-    },
-    price: 95, photo: "1512058564366-18510be2db19",
-    hasMeatChoice: false, hasSpice: false, popular: false,
-  },
-  {
-    id: "a3", categoryId: "appetizers",
-    name: { en: "Tod Mun Pla", th: "ทอดมันปลา" },
-    description: {
-      en: "Golden fish cakes with red curry paste and kaffir lime leaves. Served with sweet chili dipping sauce and cucumber relish.",
-      th: "ทอดมันปลากรอบทอง ปรุงพริกแกงแดงและใบมะกรูด เสิร์ฟกับน้ำจิ้มหวาน",
-    },
-    price: 110, photo: "1540189549336-e6e99eb3ad99",
-    hasMeatChoice: false, hasSpice: false, popular: false,
-  },
-  // Noodles
-  {
-    id: "nd1", categoryId: "noodles",
-    name: { en: "Pad See Ew", th: "ผัดซีอิ๊ว" },
-    description: {
-      en: "Wide rice noodles stir-fried with dark soy sauce, Chinese broccoli, and egg in a blazing hot wok. Smoky and satisfying.",
-      th: "เส้นใหญ่ผัดซีอิ๊วกับคะน้าและไข่ในกระทะเหล็กร้อน รสควันหอม",
-    },
-    price: 90, photo: "1562802378-063ec186a863",
-    hasMeatChoice: true, hasSpice: false, popular: false,
-  },
-  {
-    id: "nd2", categoryId: "noodles",
-    name: { en: "Tom Yum Noodles", th: "ก๋วยเตี๋ยวต้มยำ" },
-    description: {
-      en: "Rice noodles in a bright and spiced tom yum broth with bean sprouts, ground pork, and fresh herbs.",
-      th: "ก๋วยเตี๋ยวในน้ำต้มยำรสจัด กับถั่วงอก หมูสับ และสมุนไพรสด",
-    },
-    price: 80, photo: "1601924994987-69e26d50dc26",
-    hasMeatChoice: true, hasSpice: true, popular: false,
-  },
-  // Curries
-  {
-    id: "c1", categoryId: "curries",
-    name: { en: "Green Curry", th: "แกงเขียวหวาน" },
-    description: {
-      en: "Fragrant Thai green curry with coconut milk, Thai eggplant, bamboo shoots, and fresh basil. Herbaceous and rich.",
-      th: "แกงเขียวหวานกะทิสด มะเขือพวง หน่อไม้ และใบโหระพาหอม",
-    },
-    price: 140, photo: "1585032226651-759b368d7246",
-    hasMeatChoice: true, hasSpice: true, popular: false,
-  },
-  {
-    id: "c2", categoryId: "curries",
-    name: { en: "Massaman Curry", th: "แกงมัสมั่น" },
-    description: {
-      en: "Rich slow-simmered curry with peanuts, potatoes, and warming spices of cardamom, cinnamon, and star anise.",
-      th: "แกงมัสมั่นรสเข้มข้น กับถั่วลิสง มันฝรั่ง และเครื่องเทศหอมอบอุ่น",
-    },
-    price: 145, photo: "1476224203421-9ac39bcb3327",
-    hasMeatChoice: true, hasSpice: false, popular: false,
-  },
-  // Salads
-  {
-    id: "s1", categoryId: "salads",
-    name: { en: "Larb Moo", th: "ลาบหมู" },
-    description: {
-      en: "Minced pork salad with toasted rice powder, lime juice, fish sauce, mint, and chili flakes. Bright and herbaceous.",
-      th: "ลาบหมูบด ข้าวคั่ว น้ำมะนาว น้ำปลา ใบสะระแหน่ และพริกป่น",
-    },
-    price: 110, photo: "1546069901-ba9599a7e63c",
-    hasMeatChoice: false, hasSpice: true, popular: false,
-  },
-  {
-    id: "s2", categoryId: "salads",
-    name: { en: "Yum Nuea Yang", th: "ยำเนื้อย่าง" },
-    description: {
-      en: "Grilled beef salad with lemongrass, red onion, tomatoes, cucumber, and a zesty lime and fish sauce dressing.",
-      th: "ยำเนื้อย่างกับตะไคร้ หอมแดง มะเขือเทศ และน้ำยำน้ำมะนาวรสจัด",
-    },
-    price: 130, photo: "1476224203421-9ac39bcb3327",
-    hasMeatChoice: false, hasSpice: true, popular: false,
-  },
-  // Rice
-  {
-    id: "r1", categoryId: "rice",
-    name: { en: "Khao Niew", th: "ข้าวเหนียว" },
-    description: {
-      en: "Traditional Northern Thai sticky rice steamed in bamboo baskets. The heart and staple of every Lanna meal.",
-      th: "ข้าวเหนียวต้นตำรับล้านนา นึ่งในกระติ๊บไม้ไผ่ หัวใจของอาหารเหนือ",
-    },
-    price: 30, photo: "1536304447766-da0ed4ce1b73",
-    hasSpice: false, popular: true,
-  },
-  {
-    id: "r2", categoryId: "rice",
-    name: { en: "Khao Pad", th: "ข้าวผัด" },
-    description: {
-      en: "Classic Thai fried rice with egg, mixed vegetables, and savory sauces, topped with cucumber and lime wedge.",
-      th: "ข้าวผัดไทยกับไข่ ผักรวม ซอสรสดี เสิร์ฟกับแตงกวาและมะนาว",
-    },
-    price: 90, photo: "1536304447766-da0ed4ce1b73",
-    hasMeatChoice: true, hasSpice: false, popular: false,
-  },
-  // Drinks
-  {
-    id: "d1", categoryId: "drinks",
-    name: { en: "Thai Iced Tea", th: "ชาไทย" },
-    description: {
-      en: "Strong Northern Thai tea with condensed milk served over ice. Sweet, creamy, and perfectly refreshing on a warm day.",
-      th: "ชาไทยเข้มข้นกับนมข้นหวาน เสิร์ฟเย็น หวานมันสดชื่น",
-    },
-    price: 60, photo: "1544145945-f90425340c7e",
-    hasSpice: false, popular: true,
-  },
-  {
-    id: "d2", categoryId: "drinks",
-    name: { en: "Butterfly Pea Lemonade", th: "น้ำดอกอัญชัน" },
-    description: {
-      en: "Stunning colour-changing drink made from butterfly pea flowers with honey and fresh lime juice. Naturally beautiful.",
-      th: "น้ำดอกอัญชันเปลี่ยนสี ผสมน้ำผึ้งและน้ำมะนาวสด สวยงามตามธรรมชาติ",
-    },
-    price: 75, photo: "1544145945-f90425340c7e",
-    hasSpice: false, popular: false,
-  },
-  {
-    id: "d3", categoryId: "drinks",
-    name: { en: "Fresh Coconut Water", th: "น้ำมะพร้าวสด" },
-    description: {
-      en: "Young coconut water served in the shell, naturally sweet and cooling. The perfect companion to spicy food.",
-      th: "น้ำมะพร้าวอ่อนสด เสิร์ฟในลูกมะพร้าว หวานเย็นสดชื่น",
-    },
-    price: 70, photo: "1507003211169-0a1dd7228f2d",
-    hasSpice: false, popular: false,
-  },
-  // Desserts
-  {
-    id: "ds1", categoryId: "desserts",
-    name: { en: "Mango Sticky Rice", th: "ข้าวเหนียวมะม่วง" },
-    description: {
-      en: "Sweet glutinous rice with fresh ripe mango slices, drizzled with rich coconut cream and toasted sesame seeds.",
-      th: "ข้าวเหนียวหวานมะม่วงสุก ราดกะทิเข้มข้นและงาคั่ว",
-    },
-    price: 120, photo: "1563379091339-03b21ab4a4f8",
-    hasSpice: false, popular: true,
-  },
-  {
-    id: "ds2", categoryId: "desserts",
-    name: { en: "Tub Tim Grob", th: "ทับทิมกรอบ" },
-    description: {
-      en: "Crunchy water chestnuts in fragrant rose syrup with creamy coconut milk and shaved ice. Cool and delicate.",
-      th: "ทับทิมกรอบในน้ำกุหลาบ กะทิเข้มข้น และน้ำแข็งไส เย็นสดชื่น",
-    },
-    price: 85, photo: "1563379091339-03b21ab4a4f8",
-    hasSpice: false, popular: false,
-  },
-];
+interface Category {
+  id: string;
+  nameEn: string;
+  nameTh: string;
+  order: number;
+  active?: boolean;
+  signature?: boolean;
+}
 
 // ─── Translations ─────────────────────────────────────────────────────────────
 
 const T = {
   en: {
-    appName: "Baan Lanna",
+    appName: "Hueanyong Kitchen",
     tagline: "Northern Thai Kitchen",
     tableLabel: "Table",
     selectTable: "Select Your Table",
@@ -396,9 +174,10 @@ const T = {
     portion: "Portion Size",
     regular: "Regular",
     special: "Special",
+    busyBanner: "We're currently busy — your order may take a little longer than usual.",
     staffAccess: "Staff Login",
     thb: "฿",
-    popular: "Popular",
+    popular: "Signature",
     back: "Back",
     eggAdded: "+ Fried Egg",
     freeLabel: "Free",
@@ -410,8 +189,8 @@ const T = {
     meatEmoji: { pork: "🐷", chicken: "🐓", beef: "🥩" },
   },
   th: {
-    appName: "บ้านล้านนา",
-    tagline: "ครัวล้านนา",
+    appName: "ครัวเฮือนยอง",
+    tagline: "อาหารเหนือ",
     tableLabel: "โต๊ะ",
     selectTable: "เลือกโต๊ะของท่าน",
     selectTableSub: "สแกน QR หรือเลือกหมายเลขโต๊ะด้านล่าง",
@@ -459,9 +238,10 @@ const T = {
     portion: "ขนาด",
     regular: "ธรรมดา",
     special: "พิเศษ",
+    busyBanner: "ขณะนี้ร้านมีออเดอร์เยอะ อาหารอาจใช้เวลานานกว่าปกตินิดหน่อย",
     staffAccess: "พนักงาน",
     thb: "฿",
-    popular: "ยอดนิยม",
+    popular: "เมนูเด่น",
     back: "ย้อนกลับ",
     eggAdded: "+ ไข่ดาว",
     freeLabel: "ฟรี",
@@ -519,6 +299,17 @@ function orderTotal(order: Order): number {
   return order.items.reduce((sum, ci) => sum + cartItemTotal(ci), 0);
 }
 
+function parseTableKey(tn: string): [number, number] {
+  const [floor, table] = tn.split("-").map(Number);
+  return [floor || 0, table || 0];
+}
+
+function compareTables(a: string, b: string): number {
+  const [af, at] = parseTableKey(a);
+  const [bf, bt] = parseTableKey(b);
+  return af !== bf ? af - bf : at - bt;
+}
+
 function timeAgo(date: Date): string {
   const mins = Math.floor((Date.now() - date.getTime()) / 60000);
   if (mins < 1) return "just now";
@@ -535,6 +326,14 @@ function formatClock(date: Date): string {
 
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function getTodayKey(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function compressImage(file: File, maxWidth = 600, quality = 0.7): Promise<string> {
@@ -573,22 +372,44 @@ function LannaBorder() {
   );
 }
 
-function RestaurantLogo({ dark = true }: { dark?: boolean }) {
+function RestaurantLogo({ dark = true, lang = "th" }: { dark?: boolean; lang?: Language }) {
   const textColor = dark ? "text-[#FFF8F0]" : "text-foreground";
-  const accentColor = dark ? "text-[#D07E35]" : "text-accent";
   return (
     <div className="flex items-center gap-2">
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center ${dark ? "bg-[#D07E35]/20" : "bg-primary/10"}`}
-      >
-        <Leaf className={accentColor} size={18} />
-      </div>
+      <img src={logo} alt="Hueanyong Kitchen" className="w-12 h-12 object-contain flex-shrink-0" />
       <div>
         <div className={`font-display font-semibold text-base leading-tight ${textColor}`}>
-          Baan Lanna
+          {T[lang].appName}
         </div>
         <div className={`text-[10px] leading-tight opacity-70 ${textColor}`}>
-          Northern Thai Kitchen
+          {T[lang].tagline}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmModal({ message, onConfirm, onCancel, lang }: { message: string; onConfirm: () => void; onCancel: () => void; lang: Language }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onCancel}>
+      <div
+        className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-foreground text-sm mb-5 leading-relaxed">{message}</p>
+        <div className="flex gap-2.5">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
+          >
+            {lang === "en" ? "Cancel" : "ยกเลิก"}
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-all"
+          >
+            {lang === "en" ? "Confirm" : "ยืนยัน"}
+          </button>
         </div>
       </div>
     </div>
@@ -599,7 +420,7 @@ function RestaurantLogo({ dark = true }: { dark?: boolean }) {
 
 interface MenuProps {
   lang: Language;
-  tableNumber: number;
+  tableNumber: string;
   cart: CartItem[];
   menuItems: MenuItem[];
   activeCategory: string;
@@ -608,13 +429,19 @@ interface MenuProps {
   onViewCart: () => void;
   onLangToggle: () => void;
   isTakeaway?: boolean;
+  categories: Category[];
+  isBusy?: boolean;
 }
 
 function MenuScreen({
-  lang, tableNumber, cart, menuItems, activeCategory,
-  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway,
+  lang, tableNumber, cart, menuItems, categories, activeCategory,
+  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy,
 }: MenuProps) {
   const t = T[lang];
+  const [busyDismissed, setBusyDismissed] = useState(false);
+  useEffect(() => {
+    if (isBusy) setBusyDismissed(false);
+  }, [isBusy]);
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
   const cartSum = cartTotal(cart);
   const filtered = menuItems.filter((item) => item.categoryId === activeCategory);
@@ -625,7 +452,7 @@ function MenuScreen({
       <header className="sticky top-0 z-50 bg-[#3C2414] shadow-xl">
         <LannaBorder />
         <div className="flex items-center justify-between px-4 py-2.5">
-          <RestaurantLogo dark />
+          <RestaurantLogo dark lang={lang} />
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 bg-[#4A6741] px-2.5 py-1 rounded-full">
               <Utensils size={11} className="text-[#FFF8F0]" />
@@ -654,7 +481,7 @@ function MenuScreen({
           className="flex overflow-x-auto px-4 pb-3 gap-2 pt-1"
           style={{ scrollbarWidth: "none" }}
         >
-          {CATEGORIES.map((cat) => (
+          {categories.map((cat) => (
             <button
               key={cat.id}
               onClick={() => onCategoryChange(cat.id)}
@@ -663,12 +490,22 @@ function MenuScreen({
                 : "bg-white/10 text-[#E6D5BA] hover:bg-white/20"
                 }`}
             >
-              <span className="text-base leading-none">{cat.icon}</span>
-              <span>{lang === "en" ? cat.name.en : cat.name.th}</span>
+              <span>{lang === "en" ? cat.nameEn : cat.nameTh}</span>
+              {cat.signature && <span className="text-[9px] opacity-70">★</span>}
             </button>
           ))}
         </div>
       </header>
+
+      {isBusy && !busyDismissed && (
+        <div className="mx-4 mt-3 bg-primary/10 border border-primary/30 rounded-xl px-4 py-3 flex items-start gap-2.5">
+          <Flame size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="flex-1 text-sm text-foreground leading-relaxed">{t.busyBanner}</p>
+          <button onClick={() => setBusyDismissed(true)} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Menu grid */}
       <div className="flex-1 px-4 py-4 pb-32">
@@ -685,7 +522,7 @@ function MenuScreen({
                   alt={lang === "en" ? item.name.en : item.name.th}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
-                {item.popular && (
+                {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
                   <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                     <Star size={8} fill="currentColor" />
                     {t.popular}
@@ -729,7 +566,7 @@ function MenuScreen({
 
 interface ItemDetailProps {
   lang: Language;
-  tableNumber: number;
+  tableNumber: string;
   item: MenuItem;
   cart: CartItem[];
   onBack: () => void;
@@ -879,7 +716,6 @@ function ItemDetailScreen({
                     : "bg-card border-border text-foreground hover:border-primary/40"
                     }`}
                 >
-                  <span className="block text-lg leading-none mb-0.5">{T[lang].meatEmoji[m]}</span>
                   {T[lang].meats[m]}
                   {item.meatPriceDeltas?.[m] ? (
                     <span className="block text-[10px] opacity-70">+{t.thb}{item.meatPriceDeltas[m]}</span>
@@ -948,7 +784,6 @@ function ItemDetailScreen({
                 }`}
             >
               <div className="flex items-center gap-3">
-                <span className="text-2xl leading-none">🍳</span>
                 <div className="text-left">
                   <div className="font-semibold text-foreground text-sm">{t.addEgg}</div>
                   <div className="text-muted-foreground text-xs">{t.eggPrice}</div>
@@ -1086,7 +921,7 @@ function ItemDetailScreen({
 
 interface CartProps {
   lang: Language;
-  tableNumber: number;
+  tableNumber: string;
   cart: CartItem[];
   onBack: () => void;
   onUpdateQty: (cartId: string, qty: number) => void;
@@ -1102,7 +937,7 @@ function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, on
 
   function optionSummary(ci: CartItem): string {
     const parts: string[] = [];
-    if (ci.meat) parts.push(`${T[lang].meatEmoji[ci.meat]} ${T[lang].meats[ci.meat]}`);
+    if (ci.meat) parts.push(T[lang].meats[ci.meat]);
     if (ci.portion === "special") parts.push(t.special);
     if (ci.item.hasSpice) parts.push(T[lang].spiceLevels[ci.spiceLevel]);
     if (ci.addEgg) parts.push(t.eggAdded);
@@ -1242,7 +1077,7 @@ function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, on
 
 interface OrderSentProps {
   lang: Language;
-  tableNumber: number;
+  tableNumber: string;
   onOrderMore: () => void;
 }
 
@@ -1324,12 +1159,11 @@ function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }: StaffL
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">
-            <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-5">
-              <Lock className="text-primary" size={32} />
+            <div className="w-20 h-20 bg-[#3C2414] rounded-full flex items-center justify-center mx-auto mb-5 p-4">
+              <img src={logo} alt="Hueanyong Kitchen" className="w-full h-full object-contain" />
             </div>
             <h1 className="font-display text-2xl font-semibold text-foreground">{t.staffLogin}</h1>
-            <p className="text-muted-foreground text-sm mt-1">Baan Lanna — Staff Portal</p>
-          </div>
+            <p className="text-muted-foreground text-sm mt-1">{T[lang].appName} — Staff Portal</p></div>
 
           <div className="relative mb-3">
             <input
@@ -1362,9 +1196,6 @@ function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }: StaffL
             {t.loginBtn}
           </button>
 
-          <p className="text-center text-muted-foreground/50 text-xs mt-6">
-            Demo password: <span className="font-mono text-muted-foreground">lanna2024</span>
-          </p>
         </div>
       </div>
     </div>
@@ -1375,46 +1206,40 @@ function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }: StaffL
 
 interface StaffHeaderProps {
   lang: Language;
-  activeTab: "orders" | "payment" | "menu" | "history";
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history") => void;
+  activeTab: "orders" | "payment" | "menu" | "history" | "stats";
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
-  onSeedMenu?: () => void;
 }
 
-function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, onSeedMenu }: StaffHeaderProps) {
+function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, }: StaffHeaderProps) {
   const t = T[lang];
   return (
     <div className="bg-[#3C2414] sticky top-0 z-50">
       <LannaBorder />
       <div className="px-4 py-2.5 flex items-center justify-between">
-        <RestaurantLogo dark />
+        <RestaurantLogo dark lang={lang} />
         <div className="flex items-center gap-1">
           <button onClick={onLangToggle} className="text-[#D07E35] text-xs px-2 py-1 hover:text-[#FFF8F0] transition-colors">
             {t.langSwitch}
           </button>
-          {onSeedMenu && (
-            <button onClick={onSeedMenu} className="text-[10px] text-[#E6D5BA]/40 hover:text-[#E6D5BA] px-2 border border-[#E6D5BA]/20 rounded-full">
-              Import Menu
-            </button>
-          )}
           <button onClick={onLogout} className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5">
             <LogOut size={17} />
           </button>
         </div>
       </div>
-      <div className="flex px-4 pb-0">
-        {(["orders", "payment", "menu", "history"] as const).map((tab) => (
+      <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        {(["orders", "payment", "menu", "history", "stats"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold border-b-2 transition-all ${activeTab === tab
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold border-b-2 transition-all whitespace-nowrap ${activeTab === tab
               ? "border-[#D07E35] text-[#FFF8F0]"
               : "border-transparent text-[#E6D5BA]/60 hover:text-[#E6D5BA]"
               }`}
           >
-            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : <CheckCircle size={14} />}
-            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : (lang === "en" ? "History" : "ประวัติ")}
+            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : <Star size={14} />}
+            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : (lang === "en" ? "Stats" : "สถิติ")}
           </button>
         ))}
       </div>
@@ -1430,21 +1255,21 @@ interface StaffOrdersProps {
   onMarkServed: (orderId: string) => void;
   onRemoveItem: (orderId: string, cartId: string) => void;
   onCancelOrder: (orderId: string) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
-  onSeedMenu?: () => void;
   onStartTakeaway?: () => void;
+  onAskConfirm: (message: string, onConfirm: () => void) => void;
 }
 
-function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onSeedMenu, onStartTakeaway }: StaffOrdersProps) {
+function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onStartTakeaway, onAskConfirm }: StaffOrdersProps) {
   const t = T[lang];
   const takeawayOrders = orders.filter((o) => o.isTakeaway && o.status === "in-progress");
   const inProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
   const awaitingPayment = orders.filter((o) => o.status === "awaiting-payment" && !o.isTakeaway);
 
   // Group awaiting orders by table
-  const awaitingByTable: Record<number, { orders: Order[]; total: number }> = {};
+  const awaitingByTable: Record<string, { orders: Order[]; total: number }> = {};
   awaitingPayment.forEach((o) => {
     if (!awaitingByTable[o.tableNumber]) {
       awaitingByTable[o.tableNumber] = { orders: [], total: 0 };
@@ -1453,7 +1278,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
     awaitingByTable[o.tableNumber].total += orderTotal(o);
   });
   const awaitingTables = Object.entries(awaitingByTable)
-    .sort(([a], [b]) => Number(a) - Number(b));
+    .sort(([a], [b]) => compareTables(a, b));
 
   function optionSummary(ci: CartItem): string {
     const parts: string[] = [];
@@ -1478,7 +1303,6 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
         onTabChange={onTabChange}
         onLogout={onLogout}
         onLangToggle={onLangToggle}
-        onSeedMenu={onSeedMenu}
       />
 
       <div
@@ -1591,9 +1415,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                         <span>{formatClock(order.timestamp)}</span>
                       </div>
                       <button
-                        onClick={() => {
-                          if (window.confirm(t.confirmCancelOrder)) onCancelOrder(order.id);
-                        }}
+                        onClick={() => onAskConfirm(t.confirmCancelOrder, () => onCancelOrder(order.id))}
                         className="text-destructive/60 hover:text-destructive transition-colors"
                         title={t.cancelOrder}
                       >
@@ -1621,9 +1443,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                           )}
                         </div>
                         <button
-                          onClick={() => {
-                            if (window.confirm(t.confirmRemoveItem)) onRemoveItem(order.id, ci.cartId);
-                          }}
+                          onClick={() => onAskConfirm(t.confirmRemoveItem, () => onRemoveItem(order.id, ci.cartId))}
                           className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 mt-0.5"
                         >
                           <X size={14} />
@@ -1709,11 +1529,11 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
 interface StaffPaymentProps {
   lang: Language;
   orders: Order[];
-  selectedTable: number | null;
-  onSelectTable: (n: number) => void;
-  onCloseTable: (n: number, paymentMethod: PaymentMethod, cashReceived?: number) => void;
+  selectedTable: string | null;
+  onSelectTable: (n: string) => void;
+  onCloseTable: (n: string, paymentMethod: PaymentMethod, cashReceived?: number) => void;
   onCloseTakeaway: (orderId: string, paymentMethod: PaymentMethod, cashReceived?: number) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -1728,7 +1548,7 @@ function StaffPaymentScreen({
   const awaitingPayment = orders.filter((o) => o.status === "awaiting-payment" && !o.isTakeaway);
   const takeawayAwaiting = orders.filter((o) => o.status === "awaiting-payment" && o.isTakeaway);
   const selectedTakeawayOrder = takeawayAwaiting.find((o) => o.id === selectedTakeawayId) || null;
-  const tableNumbers = [...new Set(awaitingPayment.map((o) => o.tableNumber))].sort((a, b) => a - b);
+  const tableNumbers = [...new Set(awaitingPayment.map((o) => o.tableNumber))].sort(compareTables);
 
   const tableOrders = selectedTable
     ? awaitingPayment.filter((o) => o.tableNumber === selectedTable)
@@ -2001,15 +1821,22 @@ interface StaffMenuProps {
   onEdit: (item: MenuItem) => void;
   onToggleActive: (item: MenuItem, active: boolean) => void;
   onDelete: (itemId: string) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
+  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  categories: Category[];
+  onAddCategory: (nameEn: string, nameTh: string) => void;
+  onDeleteCategory: (categoryId: string) => void;
+  onToggleCategorySignature: (categoryId: string, signature: boolean) => void;
 }
 
 function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle,
+  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature,
 }: StaffMenuProps) {
   const t = T[lang];
+  const [newCatEn, setNewCatEn] = useState("");
+  const [newCatTh, setNewCatTh] = useState("");
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -2024,14 +1851,75 @@ function StaffMenuScreen({
           {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
         </button>
 
-        {CATEGORIES.map((cat) => {
+        {/* Category management */}
+        <div className="bg-card border border-border rounded-xl p-3 mb-6">
+          <h3 className="font-semibold text-foreground text-sm mb-2.5">
+            {lang === "en" ? "Categories" : "จัดการหมวดหมู่"}
+          </h3>
+          <div className="space-y-1.5 mb-3">
+            {categories.map((cat) => (
+              <div key={cat.id} className="flex items-center gap-2 bg-background rounded-lg px-3 py-2">
+                <span className="flex-1 text-sm text-foreground">
+                  {lang === "en" ? cat.nameEn : cat.nameTh}
+                </span>
+                <button
+                  onClick={() => onToggleCategorySignature(cat.id, !cat.signature)}
+                  className={`text-[10px] px-2 py-1 rounded-full font-medium flex-shrink-0 ${cat.signature ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                    }`}
+                >
+                  {t.popular}
+                </button>
+                <button
+                  onClick={() =>
+                    onAskConfirm(
+                      lang === "en"
+                        ? "Delete category? Items inside will be hidden from customer menu."
+                        : "ลบหมวดหมู่นี้? เมนูในหมวดจะไม่แสดงในเมนูลูกค้าอีก",
+                      () => onDeleteCategory(cat.id)
+                    )
+                  }
+                  className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              value={newCatEn}
+              onChange={(e) => setNewCatEn(e.target.value)}
+              placeholder="Category (EN)"
+              className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+            />
+            <input
+              value={newCatTh}
+              onChange={(e) => setNewCatTh(e.target.value)}
+              placeholder="หมวดหมู่ (TH)"
+              className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+            />
+            <button
+              onClick={() => {
+                if (newCatEn.trim() && newCatTh.trim()) {
+                  onAddCategory(newCatEn.trim(), newCatTh.trim());
+                  setNewCatEn("");
+                  setNewCatTh("");
+                }
+              }}
+              className="bg-primary text-primary-foreground px-3 rounded-lg text-xs font-semibold flex-shrink-0"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+        </div>
+
+        {categories.map((cat) => {
           const catItems = items.filter((i) => i.categoryId === cat.id);
           if (catItems.length === 0) return null;
           return (
             <div key={cat.id} className="mb-6">
-              <h3 className="font-semibold text-foreground text-sm mb-2 flex items-center gap-1.5">
-                <span>{cat.icon}</span>
-                {lang === "en" ? cat.name.en : cat.name.th}
+              <h3 className="font-semibold text-foreground text-sm mb-2">
+                {lang === "en" ? cat.nameEn : cat.nameTh}
               </h3>
               <div className="space-y-2">
                 {catItems.map((item) => (
@@ -2058,9 +1946,9 @@ function StaffMenuScreen({
                       <Utensils size={16} />
                     </button>
                     <button
-                      onClick={() => {
-                        if (window.confirm(lang === "en" ? "Delete this item?" : "ลบเมนูนี้?")) onDelete(item.id);
-                      }}
+                      onClick={() =>
+                        onAskConfirm(lang === "en" ? "Delete this item?" : "ลบเมนูนี้?", () => onDelete(item.id))
+                      }
                       className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
                     >
                       <Trash2 size={16} />
@@ -2082,9 +1970,10 @@ interface StaffMenuEditProps {
   onSave: (item: MenuItem) => void;
   onCancel: () => void;
   onLangToggle: () => void;
+  categories: Category[];
 }
 
-function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle }: StaffMenuEditProps) {
+function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categories, }: StaffMenuEditProps) {
   const t = T[lang];
   const [form, setForm] = useState<MenuItem>(item);
 
@@ -2151,8 +2040,8 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle }: Sta
             onChange={(e) => update({ categoryId: e.target.value })}
             className="w-full bg-card border-2 border-border rounded-xl px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary"
           >
-            {CATEGORIES.map((c) => (
-              <option key={c.id} value={c.id}>{lang === "en" ? c.name.en : c.name.th}</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{lang === "en" ? c.nameEn : c.nameTh}</option>
             ))}
           </select>
         </div>
@@ -2223,6 +2112,7 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle }: Sta
             { key: "hasPortion" as const, label: lang === "en" ? "Portion Size" : "ขนาดจาน (ธรรมดา/พิเศษ)" },
             { key: "hasEggAddon" as const, label: lang === "en" ? "Add Fried Egg" : "เพิ่มไข่ดาว" },
             { key: "hasPlainAddOns" as const, label: lang === "en" ? "Extra Plate/Cutlery/Water" : "จาน/ช้อนส้อม/แก้วน้ำเพิ่ม" },
+            { key: "popular" as const, label: t.popular },
           ].map((opt) => {
             const isOn = opt.key === "hasEggAddon" || opt.key === "hasPlainAddOns"
               ? form[opt.key] !== false
@@ -2450,7 +2340,7 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle }: Sta
 interface StaffHistoryProps {
   lang: Language;
   orders: Order[];
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -2518,34 +2408,183 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
   );
 }
 
+interface StaffStatsProps {
+  lang: Language;
+  orders: Order[];
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  onLogout: () => void;
+  onLangToggle: () => void;
+}
+
+function formatDateInput(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
+  const t = T[lang];
+  const today = formatDateInput(new Date());
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+
+  const paidOrders = orders.filter((o) => o.status === "paid");
+
+  const rangeStart = new Date(`${startDate}T00:00:00`);
+  const rangeEnd = new Date(`${endDate}T23:59:59`);
+  const filtered = paidOrders.filter((o) => o.timestamp >= rangeStart && o.timestamp <= rangeEnd);
+
+  const totalRevenue = filtered.reduce((s, o) => s + orderTotal(o), 0);
+  const cashRevenue = filtered.filter((o) => o.paymentMethod === "cash").reduce((s, o) => s + orderTotal(o), 0);
+  const transferRevenue = filtered.filter((o) => o.paymentMethod === "transfer").reduce((s, o) => s + orderTotal(o), 0);
+  const orderCount = filtered.length;
+
+  const menuCounts: Record<string, { nameEn: string; nameTh: string; qty: number; revenue: number }> = {};
+  filtered.forEach((o) => {
+    o.items.forEach((ci) => {
+      const key = ci.item.id;
+      if (!menuCounts[key]) {
+        menuCounts[key] = { nameEn: ci.item.name.en, nameTh: ci.item.name.th, qty: 0, revenue: 0 };
+      }
+      menuCounts[key].qty += ci.quantity;
+      menuCounts[key].revenue += cartItemTotal(ci);
+    });
+  });
+  const topMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty).slice(0, 10);
+
+  const setPreset = (days: number) => {
+    const end = new Date();
+    const start = new Date();
+    if (days > 0) start.setDate(end.getDate() - (days - 1));
+    setStartDate(formatDateInput(start));
+    setEndDate(formatDateInput(end));
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <StaffHeader lang={lang} activeTab="stats" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
+
+      <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="flex gap-2 mb-3">
+          <button onClick={() => setPreset(1)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
+            {lang === "en" ? "Today" : "วันนี้"}
+          </button>
+          <button onClick={() => setPreset(7)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
+            {lang === "en" ? "7 Days" : "7 วัน"}
+          </button>
+          <button onClick={() => setPreset(30)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
+            {lang === "en" ? "30 Days" : "30 วัน"}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 mb-5">
+          <input
+            type="date"
+            value={startDate}
+            max={endDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          />
+          <span className="text-muted-foreground text-sm">–</span>
+          <input
+            type="date"
+            value={endDate}
+            min={startDate}
+            max={today}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Total Revenue" : "รายได้รวม"}</div>
+            <div className="font-display font-bold text-2xl text-primary">{t.thb}{totalRevenue}</div>
+          </div>
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Orders" : "จำนวนออเดอร์"}</div>
+            <div className="font-display font-bold text-2xl text-foreground">{orderCount}</div>
+          </div>
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Cash" : "เงินสด"}</div>
+            <div className="font-display font-bold text-xl text-secondary">{t.thb}{cashRevenue}</div>
+          </div>
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Transfer" : "เงินโอน"}</div>
+            <div className="font-display font-bold text-xl text-accent">{t.thb}{transferRevenue}</div>
+          </div>
+        </div>
+
+        <h3 className="font-semibold text-foreground text-sm mb-3">
+          {lang === "en" ? "Top Menu Items" : "เมนูขายดี"}
+        </h3>
+        {topMenus.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
+            {lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้"}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {topMenus.map((m, idx) => (
+              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-primary/10 text-primary font-bold text-xs flex items-center justify-center flex-shrink-0">
+                    {idx + 1}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-foreground">{lang === "en" ? m.nameEn : m.nameTh}</div>
+                    <div className="text-muted-foreground text-xs">{m.qty} {t.items}</div>
+                  </div>
+                </div>
+                <div className="font-semibold text-primary text-sm">{t.thb}{m.revenue}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-function getTableFromUrl(): number | null {
+function getTableFromUrl(): string | null {
   try {
     const params = new URLSearchParams(window.location.search);
     const raw = params.get("table");
-    const n = raw ? parseInt(raw, 10) : NaN;
-    return Number.isInteger(n) && n > 0 ? n : null;
+    if (raw && /^[0-9]+-[0-9]+$/.test(raw)) return raw;
+    return null;
   } catch {
     return null;
   }
 }
 
 export default function App() {
-  const [lang, setLang] = useState<Language>("en");
+  const [lang, setLang] = useState<Language>("th");
   const [view, setView] = useState<View>(() => (getTableFromUrl() ? "menu" : "staff-login"));
-  const [tableNumber, setTableNumber] = useState<number | null>(() => getTableFromUrl());
+  const [tableNumber, setTableNumber] = useState<string | null>(() => getTableFromUrl());
 
   // Customer state
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
-  const [activeCategory, setActiveCategory] = useState<string>(CATEGORIES[0].id);
+  const [activeCategory, setActiveCategory] = useState<string>("");
 
   // Staff state
   const [orders, setOrders] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(query(collection(db, "categories"), orderBy("order", "asc")), (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
+      setAllCategories(data);
+      setCategories(data.filter((c) => c.active !== false));
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, "menuItems"), (snapshot) => {
@@ -2568,6 +2607,8 @@ export default function App() {
           status: raw.status,
           paymentMethod: raw.paymentMethod,
           cashReceived: raw.cashReceived,
+          isTakeaway: raw.isTakeaway,
+          takeawayLabel: raw.takeawayLabel,
         } as Order;
       });
       setOrders(data);
@@ -2575,12 +2616,36 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const [selectedPayTable, setSelectedPayTable] = useState<number | null>(null);
+  const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
-  const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history">("orders");
+  const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history" | "stats">("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
-  const [takeawayCart, setTakeawayCart] = useState<CartItem[]>([]);
-  const [takeawayCategory, setTakeawayCategory] = useState<string>(CATEGORIES[0].id);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm }); const [takeawayCart, setTakeawayCart] = useState<CartItem[]>([]);
+  const [busyTables, setBusyTables] = useState(0);
+  const [busyItems, setBusyItems] = useState(0);
+
+  // ฟัง status สรุปที่ฝั่งพนักงาน (client ใครก็ตามที่ login อยู่) คำนวณและอัปเดตไว้ให้
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, "status", "live"), (snap) => {
+      const data = snap.data();
+      setBusyTables(data?.busyTables || 0);
+      setBusyItems(data?.busyItems || 0);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // คำนวณสถานะยุ่งจากออเดอร์ที่เห็น (มีผลจริงเฉพาะฝั่งพนักงานที่ login แล้วเท่านั้น เพราะลูกค้าอ่าน orders ไม่ได้)
+  useEffect(() => {
+    const dineInProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
+    const allInProgress = orders.filter((o) => o.status === "in-progress");
+    const tables = new Set(dineInProgress.map((o) => o.tableNumber)).size;
+    const items = allInProgress.reduce((s, o) => s + o.items.reduce((s2, ci) => s2 + ci.quantity, 0), 0);
+    setDoc(doc(db, "status", "live"), { busyTables: tables, busyItems: items }).catch(() => { });
+  }, [orders]);
+
+  const isBusy = busyTables >= 4 || busyItems > 10;
+  const [takeawayCategory, setTakeawayCategory] = useState<string>("");
   const [takeawaySelectedItem, setTakeawaySelectedItem] = useState<MenuItem | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -2595,6 +2660,10 @@ export default function App() {
   }, []);
 
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
+  useEffect(() => {
+    if (!activeCategory && categories.length > 0) setActiveCategory(categories[0].id);
+    if (!takeawayCategory && categories.length > 0) setTakeawayCategory(categories[0].id);
+  }, [categories, activeCategory, takeawayCategory]);
 
   const handleSelectItem = (item: MenuItem) => {
     setSelectedItem(item);
@@ -2634,7 +2703,7 @@ export default function App() {
 
   const handleStartTakeaway = () => {
     setTakeawayCart([]);
-    setTakeawayCategory(CATEGORIES[0].id);
+    setTakeawayCategory(categories[0]?.id || "");
     setView("staff-takeaway-menu");
   };
 
@@ -2659,7 +2728,7 @@ export default function App() {
   const handleConfirmTakeaway = async () => {
     if (takeawayCart.length === 0) return;
     const cleanItems = JSON.parse(JSON.stringify(takeawayCart));
-    const counterRef = doc(db, "counters", "takeaway");
+    const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
     const nextNumber = await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(counterRef);
       const current = snap.exists() ? (snap.data().count || 0) : 0;
@@ -2712,7 +2781,7 @@ export default function App() {
     await deleteDoc(doc(db, "orders", orderId));
   };
 
-  const handleCloseTable = async (tableNum: number, paymentMethod: PaymentMethod, cashReceived?: number) => {
+  const handleCloseTable = async (tableNum: string, paymentMethod: PaymentMethod, cashReceived?: number) => {
     const toClose = orders.filter(
       (o) => o.tableNumber === tableNum && o.status === "awaiting-payment"
     );
@@ -2736,19 +2805,20 @@ export default function App() {
     });
   };
 
-  const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history") => {
+  const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history" | "stats") => {
     setStaffTab(tab);
     setView(
       tab === "orders" ? "staff-orders" :
         tab === "payment" ? "staff-payment" :
-          tab === "menu" ? "staff-menu" : "staff-history"
+          tab === "menu" ? "staff-menu" :
+            tab === "history" ? "staff-history" : "staff-stats"
     );
   };
 
   const handleAddNewItem = () => {
     setEditingItem({
       id: uid(),
-      categoryId: CATEGORIES[0].id,
+      categoryId: categories[0]?.id || "",
       name: { en: "", th: "" },
       description: { en: "", th: "" },
       price: 0,
@@ -2781,16 +2851,24 @@ export default function App() {
     setView("staff-login");
   };
 
-  const handleSeedMenu = async () => {
-    for (const item of SEED_MENU_ITEMS) {
-      await setDoc(doc(db, "menuItems", item.id), { ...item, active: true });
-    }
-    alert(`Imported ${SEED_MENU_ITEMS.length} menu items to Firestore`);
+  let content: React.ReactNode = null;
+
+  const handleAddCategory = async (nameEn: string, nameTh: string) => {
+    const newOrder = allCategories.length > 0 ? Math.max(...allCategories.map((c) => c.order)) + 1 : 0;
+    await addDoc(collection(db, "categories"), { nameEn, nameTh, order: newOrder, active: true, signature: false });
+  };
+
+  const handleDeleteCategory = async (categoryId: string) => {
+    await deleteDoc(doc(db, "categories", categoryId));
+  };
+
+  const handleToggleCategorySignature = async (categoryId: string, signature: boolean) => {
+    await updateDoc(doc(db, "categories", categoryId), { signature });
   };
 
   switch (view) {
     case "menu":
-      return (
+      content = (
         <MenuScreen
           lang={lang}
           tableNumber={tableNumber!}
@@ -2801,16 +2879,19 @@ export default function App() {
           onItemClick={handleSelectItem}
           onViewCart={() => setView("cart")}
           onLangToggle={toggleLang}
+          categories={categories}
+          isBusy={isBusy}
         />
       );
+      break;
 
     case "item-detail": {
       const isTakeawayFlow = !!takeawaySelectedItem;
       const activeItem = isTakeawayFlow ? takeawaySelectedItem : selectedItem;
-      return activeItem ? (
+      content = activeItem ? (
         <ItemDetailScreen
           lang={lang}
-          tableNumber={isTakeawayFlow ? 0 : tableNumber!}
+          tableNumber={isTakeawayFlow ? "0" : tableNumber!}
           item={activeItem}
           cart={isTakeawayFlow ? takeawayCart : cart}
           onBack={() => {
@@ -2826,10 +2907,11 @@ export default function App() {
           isTakeaway={isTakeawayFlow}
         />
       ) : null;
+      break;
     }
 
     case "cart":
-      return (
+      content = (
         <CartScreen
           lang={lang}
           tableNumber={tableNumber!}
@@ -2841,18 +2923,20 @@ export default function App() {
           onLangToggle={toggleLang}
         />
       );
+      break;
 
     case "order-sent":
-      return (
+      content = (
         <OrderSentScreen
           lang={lang}
           tableNumber={tableNumber!}
           onOrderMore={() => setView("menu")}
         />
       );
+      break;
 
     case "staff-login":
-      return (
+      content = (
         <StaffLoginScreen
           lang={lang}
           onLogin={handleStaffLogin}
@@ -2861,9 +2945,10 @@ export default function App() {
           onLangToggle={toggleLang}
         />
       );
+      break;
 
     case "staff-orders":
-      return (
+      content = (
         <StaffOrdersScreen
           lang={lang}
           orders={orders}
@@ -2873,11 +2958,14 @@ export default function App() {
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
+          onAskConfirm={askConfirm}
+          onStartTakeaway={handleStartTakeaway}
         />
       );
+      break;
 
     case "staff-payment":
-      return (
+      content = (
         <StaffPaymentScreen
           lang={lang}
           orders={orders}
@@ -2890,35 +2978,44 @@ export default function App() {
           onLangToggle={toggleLang}
         />
       );
+      break;
 
     case "staff-menu":
-      return (
+      content = (
         <StaffMenuScreen
           lang={lang}
           items={allMenuItems}
+          categories={allCategories}
           onAdd={handleAddNewItem}
           onEdit={handleEditItem}
           onToggleActive={handleToggleActive}
           onDelete={handleDeleteItem}
+          onAddCategory={handleAddCategory}
+          onDeleteCategory={handleDeleteCategory}
+          onToggleCategorySignature={handleToggleCategorySignature}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
+          onAskConfirm={askConfirm}
         />
       );
+      break;
 
     case "staff-menu-edit":
-      return editingItem ? (
+      content = editingItem ? (
         <StaffMenuEditScreen
           lang={lang}
           item={editingItem}
           onSave={handleSaveItem}
           onCancel={() => setView("staff-menu")}
           onLangToggle={toggleLang}
+          categories={categories}
         />
       ) : null;
+      break;
 
     case "staff-history":
-      return (
+      content = (
         <StaffHistoryScreen
           lang={lang}
           orders={orders}
@@ -2927,12 +3024,25 @@ export default function App() {
           onLangToggle={toggleLang}
         />
       );
+      break;
+
+    case "staff-stats":
+      content = (
+        <StaffStatsScreen
+          lang={lang}
+          orders={orders}
+          onTabChange={handleStaffTabChange}
+          onLogout={handleLogout}
+          onLangToggle={toggleLang}
+        />
+      );
+      break;
 
     case "staff-takeaway-menu":
-      return (
+      content = (
         <MenuScreen
           lang={lang}
-          tableNumber={0}
+          tableNumber={"0"}
           cart={takeawayCart}
           menuItems={menuItems}
           activeCategory={takeawayCategory}
@@ -2941,14 +3051,16 @@ export default function App() {
           onViewCart={() => setView("staff-takeaway-cart")}
           onLangToggle={toggleLang}
           isTakeaway={true}
+          categories={categories}
         />
       );
+      break;
 
     case "staff-takeaway-cart":
-      return (
+      content = (
         <CartScreen
           lang={lang}
-          tableNumber={0}
+          tableNumber={"0"}
           cart={takeawayCart}
           onBack={() => setView("staff-takeaway-menu")}
           onUpdateQty={handleTakeawayUpdateQty}
@@ -2958,8 +3070,26 @@ export default function App() {
           isTakeaway={true}
         />
       );
+      break;
 
     default:
-      return null;
+      content = null;
   }
+
+  return (
+    <>
+      {content}
+      {confirmDialog && (
+        <ConfirmModal
+          message={confirmDialog.message}
+          lang={lang}
+          onConfirm={() => {
+            confirmDialog.onConfirm();
+            setConfirmDialog(null);
+          }}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      )}
+    </>
+  );
 }
