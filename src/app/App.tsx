@@ -30,6 +30,7 @@ import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebas
 type Language = "en" | "th";
 type View =
   | "menu"
+  | "link-expired"
   | "item-detail"
   | "cart"
   | "order-sent"
@@ -50,6 +51,7 @@ interface CustomChoice {
   labelTh: string;
   labelEn: string;
   priceDelta: number;
+  active?: boolean;
 }
 interface CustomGroup {
   id: string;
@@ -77,6 +79,7 @@ interface MenuItem {
   hasPlainAddOns?: boolean; // ปิดตัวเลือกจาน/ช้อนส้อม/แก้วน้ำสำหรับเมนูนี้ได้
   customGroups?: CustomGroup[];
   popular?: boolean;
+  disabledMeats?: MeatChoice[];
 }
 
 interface CartItem {
@@ -175,6 +178,8 @@ const T = {
     regular: "Regular",
     special: "Special",
     busyBanner: "We're currently busy — your order may take a little longer than usual.",
+    linkExpired: "This link has expired",
+    linkExpiredMsg: "Please scan the QR code at your table again to continue ordering.",
     staffAccess: "Staff Login",
     thb: "฿",
     popular: "Signature",
@@ -239,6 +244,8 @@ const T = {
     regular: "ธรรมดา",
     special: "พิเศษ",
     busyBanner: "ขณะนี้ร้านมีออเดอร์เยอะ อาหารอาจใช้เวลานานกว่าปกตินิดหน่อย",
+    linkExpired: "ลิงก์หมดอายุแล้ว",
+    linkExpiredMsg: "กรุณาสแกน QR code ที่โต๊ะของท่านอีกครั้งเพื่อสั่งอาหารต่อ",
     staffAccess: "พนักงาน",
     thb: "฿",
     popular: "เมนูเด่น",
@@ -516,20 +523,28 @@ function MenuScreen({
               onClick={() => onItemClick(item)}
               className="bg-card rounded-2xl overflow-hidden text-left border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-150 active:scale-95 group"
             >
-              <div className="aspect-[4/3] relative bg-muted overflow-hidden">
-                <img
-                  src={resolvePhoto(item.photo, 400, 300)}
-                  alt={lang === "en" ? item.name.en : item.name.th}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
-                {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
-                  <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+              {item.photo && (
+                <div className="aspect-[4/3] relative bg-muted overflow-hidden">
+                  <img
+                    src={resolvePhoto(item.photo, 400, 300)}
+                    alt={lang === "en" ? item.name.en : item.name.th}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
+                    <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Star size={8} fill="currentColor" />
+                      {t.popular}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="p-2.5">
+                {!item.photo && (item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
+                  <div className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full mb-1.5">
                     <Star size={8} fill="currentColor" />
                     {t.popular}
                   </div>
                 )}
-              </div>
-              <div className="p-2.5">
                 <div className="font-semibold text-foreground text-sm leading-snug">
                   {lang === "en" ? item.name.en : item.name.th}
                 </div>
@@ -590,7 +605,7 @@ function ItemDetailScreen({
   const [note, setNote] = useState("");
   const [quantity, setQuantity] = useState(1);
 
-  const meats: MeatChoice[] = ["pork", "chicken", "beef"];
+  const meats: MeatChoice[] = (["pork", "chicken", "beef"] as MeatChoice[]).filter((m) => !item.disabledMeats?.includes(m));
   const spiceLevels: SpiceLevel[] = [0, 1, 2, 3];
   const totalPrice = itemPrice(item, meat, portion, addEgg, selectedAddOns, customSelections) * quantity;
 
@@ -630,11 +645,13 @@ function ItemDetailScreen({
     <div className="min-h-screen bg-background flex flex-col">
       {/* Hero photo */}
       <div className="relative h-[42vh] bg-muted flex-shrink-0 overflow-hidden">
-        <img
-          src={resolvePhoto(item.photo, 400, 300)}
-          alt={lang === "en" ? item.name.en : item.name.th}
-          className="w-full h-full object-cover"
-        />
+        {item.photo && (
+          <img
+            src={resolvePhoto(item.photo, 400, 300)}
+            alt={lang === "en" ? item.name.en : item.name.th}
+            className="w-full h-full object-cover"
+          />
+        )}
         <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background to-transparent" />
 
         {/* Top controls */}
@@ -844,7 +861,7 @@ function ItemDetailScreen({
               {lang === "en" ? group.nameEn : group.nameTh}
             </h3>
             <div className="flex flex-wrap gap-2">
-              {group.choices.map((choice) => {
+              {group.choices.filter((c) => c.active !== false).map((choice) => {
                 const selected = (customSelections[group.id] || []).includes(choice.id);
                 return (
                   <button
@@ -1002,13 +1019,15 @@ function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, on
             {cart.map((ci) => (
               <div key={ci.cartId} className="bg-card rounded-2xl p-4 border border-border">
                 <div className="flex gap-3">
-                  <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted flex-shrink-0">
-                    <img
-                      src={resolvePhoto(ci.item.photo, 128, 128)}
-                      alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
+                  {ci.item.photo && (
+                    <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted flex-shrink-0">
+                      <img
+                        src={resolvePhoto(ci.item.photo, 128, 128)}
+                        alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}ห
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-semibold text-foreground text-sm leading-snug">
@@ -1079,6 +1098,19 @@ interface OrderSentProps {
   lang: Language;
   tableNumber: string;
   onOrderMore: () => void;
+}
+
+function LinkExpiredScreen({ lang }: { lang: Language }) {
+  const t = T[lang];
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-6 text-center">
+      <div className="w-24 h-24 rounded-full bg-destructive/10 flex items-center justify-center mb-6">
+        <Clock className="text-destructive" size={44} />
+      </div>
+      <h1 className="font-display text-2xl font-semibold text-foreground mb-3">{t.linkExpired}</h1>
+      <p className="text-muted-foreground text-base leading-relaxed max-w-xs">{t.linkExpiredMsg}</p>
+    </div>
+  );
 }
 
 function OrderSentScreen({ lang, tableNumber, onOrderMore }: OrderSentProps) {
@@ -2140,23 +2172,40 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categ
               {lang === "en" ? "Extra price per meat type (0 = same price)" : "ราคาเพิ่มต่อชนิดเนื้อ (0 = ราคาเท่ากัน)"}
             </label>
             <div className="grid grid-cols-3 gap-2">
-              {(["pork", "chicken", "beef"] as MeatChoice[]).map((m) => (
-                <div key={m}>
-                  <div className="text-xs text-muted-foreground mb-1">{T[lang].meats[m]}</div>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={form.meatPriceDeltas?.[m] || ""}
-                    onChange={(e) =>
-                      update({
-                        meatPriceDeltas: { ...form.meatPriceDeltas, [m]: Number(e.target.value.replace(/[^0-9]/g, "")) || 0 },
-                      })
-                    }
-                    placeholder="0"
-                    className="w-full bg-card border-2 border-border rounded-lg px-2 py-2 text-sm text-foreground outline-none focus:border-primary"
-                  />
-                </div>
-              ))}
+              {(["pork", "chicken", "beef"] as MeatChoice[]).map((m) => {
+                const isDisabled = form.disabledMeats?.includes(m);
+                return (
+                  <div key={m}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-muted-foreground">{T[lang].meats[m]}</span>
+                      <button
+                        onClick={() => {
+                          const current = form.disabledMeats || [];
+                          update({
+                            disabledMeats: isDisabled ? current.filter((x) => x !== m) : [...current, m],
+                          });
+                        }}
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${isDisabled ? "bg-muted text-muted-foreground" : "bg-secondary/15 text-secondary"}`}
+                      >
+                        {isDisabled ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={form.meatPriceDeltas?.[m] || ""}
+                      onChange={(e) =>
+                        update({
+                          meatPriceDeltas: { ...form.meatPriceDeltas, [m]: Number(e.target.value.replace(/[^0-9]/g, "")) || 0 },
+                        })
+                      }
+                      placeholder="0"
+                      disabled={isDisabled}
+                      className="w-full bg-card border-2 border-border rounded-lg px-2 py-2 text-sm text-foreground outline-none focus:border-primary disabled:opacity-40"
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2254,6 +2303,18 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categ
               <div className="space-y-1.5 mb-2">
                 {group.choices.map((choice, cIdx) => (
                   <div key={choice.id} className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        const groups = [...(form.customGroups || [])];
+                        const choices = [...group.choices];
+                        choices[cIdx] = { ...choice, active: choice.active === false ? true : false };
+                        groups[gIdx] = { ...group, choices };
+                        update({ customGroups: groups });
+                      }}
+                      className={`text-[9px] px-1.5 py-1.5 rounded-md font-medium flex-shrink-0 ${choice.active === false ? "bg-muted text-muted-foreground" : "bg-secondary/15 text-secondary"}`}
+                    >
+                      {choice.active === false ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
+                    </button>
                     <input
                       value={choice.labelEn}
                       onChange={(e) => {
@@ -2559,9 +2620,28 @@ function getTableFromUrl(): string | null {
   }
 }
 
+const TABLE_SESSION_HOURS = 3;
+
+function isTableSessionExpired(tableNum: string): boolean {
+  const key = `table-session-${tableNum}`;
+  const stored = localStorage.getItem(key);
+  if (!stored) {
+    // ยังไม่เคยสแกนโต๊ะนี้มาก่อน = ถือว่าสแกนครั้งแรกตอนนี้
+    localStorage.setItem(key, Date.now().toString());
+    return false;
+  }
+  const scannedAt = Number(stored);
+  const hoursPassed = (Date.now() - scannedAt) / (1000 * 60 * 60);
+  return hoursPassed >= TABLE_SESSION_HOURS;
+}
+
 export default function App() {
   const [lang, setLang] = useState<Language>("th");
-  const [view, setView] = useState<View>(() => (getTableFromUrl() ? "menu" : "staff-login"));
+  const [view, setView] = useState<View>(() => {
+    const tn = getTableFromUrl();
+    if (!tn) return "staff-login";
+    return isTableSessionExpired(tn) ? "link-expired" : "menu";
+  });
   const [tableNumber, setTableNumber] = useState<string | null>(() => getTableFromUrl());
 
   // Customer state
@@ -2572,6 +2652,7 @@ export default function App() {
   // Staff state
   const [orders, setOrders] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -2595,6 +2676,10 @@ export default function App() {
     return () => unsubscribe();
   }, []);
   useEffect(() => {
+    if (!authChecked) return;
+    const isStaff = getTableFromUrl() === null; // ถ้าไม่มี ?table= = ฝั่งพนักงาน
+    if (!isStaff) return; // ลูกค้าไม่ต้องฟัง orders เลย เลี่ยง permission error
+
     const q = query(collection(db, "orders"), orderBy("createdAt", "asc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((d) => {
@@ -2614,7 +2699,7 @@ export default function App() {
       setOrders(data);
     });
     return () => unsubscribe();
-  }, []);
+  }, [authChecked]);
 
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
@@ -2647,7 +2732,6 @@ export default function App() {
   const isBusy = busyTables >= 4 || busyItems > 10;
   const [takeawayCategory, setTakeawayCategory] = useState<string>("");
   const [takeawaySelectedItem, setTakeawaySelectedItem] = useState<MenuItem | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -2823,6 +2907,11 @@ export default function App() {
       description: { en: "", th: "" },
       price: 0,
       photo: "",
+      hasMeatChoice: false,
+      hasSpice: false,
+      hasPortion: false,
+      hasEggAddon: false,
+      hasPlainAddOns: false,
     });
     setView("staff-menu-edit");
   };
@@ -2883,6 +2972,10 @@ export default function App() {
           isBusy={isBusy}
         />
       );
+      break;
+
+    case "link-expired":
+      content = <LinkExpiredScreen lang={lang} />;
       break;
 
     case "item-detail": {
