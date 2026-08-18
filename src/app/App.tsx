@@ -149,7 +149,7 @@ const T = {
     beef: "Beef",
     spiceLevel: "Spice Level",
     addEgg: "Add Fried Egg",
-    eggPrice: "+฿20",
+    eggPrice: "+฿15",
     addOns: "Add-ons",
     quantity: "Quantity",
     orderSent: "Order Sent!",
@@ -215,7 +215,7 @@ const T = {
     beef: "เนื้อ",
     spiceLevel: "ระดับความเผ็ด",
     addEgg: "เพิ่มไข่ดาว",
-    eggPrice: "+฿20",
+    eggPrice: "+฿15",
     addOns: "เพิ่มเติม",
     quantity: "จำนวน",
     orderSent: "ส่งออเดอร์แล้ว!",
@@ -280,7 +280,7 @@ function itemPrice(
   let price = item.price;
   if (meat && item.meatPriceDeltas?.[meat]) price += item.meatPriceDeltas[meat]!;
   if (portion === "special" && item.portionPriceDelta) price += item.portionPriceDelta;
-  if (addEgg) price += 20;
+  if (addEgg) price += 15;
   addOns.forEach((id) => {
     const found = ADD_ONS.find((a) => a.id === id);
     if (found) price += found.price;
@@ -396,6 +396,57 @@ function RestaurantLogo({ dark = true, lang = "th" }: { dark?: boolean; lang?: L
   );
 }
 
+function OnboardingModal({ lang, onClose }: { lang: Language; onClose: () => void }) {
+  const steps =
+    lang === "en"
+      ? [
+        { emoji: "👋", text: "Welcome! Here's how ordering works" },
+        { emoji: "🍽️", text: "Browse the menu and pick what you like" },
+        { emoji: "🛒", text: "Go to your cart and confirm your order" },
+        { emoji: "👨‍🍳", text: "Sit back while the kitchen prepares your food" },
+        { emoji: "😋", text: "Enjoy your meal!" },
+        { emoji: "💳", text: "When you're done, pay at the counter" },
+      ]
+      : [
+        { emoji: "👋", text: "ยินดีต้อนรับ ก่อนเริ่มขอแนะนำวิธีสั่งอาหารสักนิด" },
+        { emoji: "🍽️", text: "เลือกเมนูที่ต้องการจากหน้าเมนู" },
+        { emoji: "🛒", text: "ไปที่ตะกร้าแล้วกดยืนยันสั่งอาหาร" },
+        { emoji: "👨‍🍳", text: "รอครัวปรุงอาหารสักครู่" },
+        { emoji: "😋", text: "อร่อยกันได้เลย!" },
+        { emoji: "💳", text: "เสร็จแล้วลงมาชำระเงินที่เคาน์เตอร์ ขอบคุณที่แวะมาค่ะ" },
+      ];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onClose}>
+      <div
+        className="bg-card rounded-2xl p-6 max-w-sm w-full border border-border shadow-2xl relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <X size={20} />
+        </button>
+        <div className="space-y-4 mt-2">
+          {steps.map((s, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <span className="text-2xl flex-shrink-0">{s.emoji}</span>
+              <p className="text-foreground text-sm leading-relaxed">{s.text}</p>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={onClose}
+          className="w-full mt-6 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95"
+        >
+          {lang === "en" ? "Got it" : "เข้าใจแล้ว"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ConfirmModal({ message, onConfirm, onCancel, lang }: { message: string; onConfirm: () => void; onCancel: () => void; lang: Language }) {
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onCancel}>
@@ -449,131 +500,144 @@ function MenuScreen({
   useEffect(() => {
     if (isBusy) setBusyDismissed(false);
   }, [isBusy]);
+
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  useEffect(() => {
+    const seen = localStorage.getItem("has-seen-onboarding");
+    if (!seen) setShowOnboarding(true);
+  }, []);
+  const dismissOnboarding = () => {
+    localStorage.setItem("has-seen-onboarding", "1");
+    setShowOnboarding(false);
+  };
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
   const cartSum = cartTotal(cart);
   const filtered = menuItems.filter((item) => item.categoryId === activeCategory);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Sticky header */}
-      <header className="sticky top-0 z-50 bg-[#3C2414] shadow-xl">
-        <LannaBorder />
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <RestaurantLogo dark lang={lang} />
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-[#4A6741] px-2.5 py-1 rounded-full">
-              <Utensils size={11} className="text-[#FFF8F0]" />
-              <span className="text-[#FFF8F0] text-xs font-medium">
-                {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : `${t.tableLabel} ${tableNumber}`}
-              </span></div>
-            <button
-              onClick={onLangToggle}
-              className="text-[#D07E35] text-[11px] font-semibold px-2 py-1 hover:text-[#FFF8F0] transition-colors"
-            >
-              {t.langSwitch}
-            </button>
-            <button onClick={onViewCart} className="relative p-1.5 text-[#FFF8F0] hover:text-[#D07E35] transition-colors">
-              <ShoppingCart size={22} />
-              {cartCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[10px] w-4.5 h-4.5 min-w-[18px] min-h-[18px] rounded-full flex items-center justify-center font-bold px-0.5">
-                  {cartCount}
-                </span>
-              )}
+    <>
+      {showOnboarding && <OnboardingModal lang={lang} onClose={dismissOnboarding} />}
+      <div className="min-h-screen bg-background flex flex-col">
+        {/* Sticky header */}
+        <header className="sticky top-0 z-50 bg-[#3C2414] shadow-xl">
+          <LannaBorder />
+          <div className="flex items-center justify-between px-4 py-2.5">
+            <RestaurantLogo dark lang={lang} />
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-[#4A6741] px-2.5 py-1 rounded-full">
+                <Utensils size={11} className="text-[#FFF8F0]" />
+                <span className="text-[#FFF8F0] text-xs font-medium">
+                  {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : `${t.tableLabel} ${tableNumber}`}
+                </span></div>
+              <button
+                onClick={onLangToggle}
+                className="text-[#D07E35] text-[11px] font-semibold px-2 py-1 hover:text-[#FFF8F0] transition-colors"
+              >
+                {t.langSwitch}
+              </button>
+              <button onClick={onViewCart} className="relative p-1.5 text-[#FFF8F0] hover:text-[#D07E35] transition-colors">
+                <ShoppingCart size={22} />
+                {cartCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[10px] w-4.5 h-4.5 min-w-[18px] min-h-[18px] rounded-full flex items-center justify-center font-bold px-0.5">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Category tabs */}
+          <div
+            className="flex overflow-x-auto px-4 pb-3 gap-2 pt-1"
+            style={{ scrollbarWidth: "none" }}
+          >
+            {categories.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => onCategoryChange(cat.id)}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeCategory === cat.id
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-white/10 text-[#E6D5BA] hover:bg-white/20"
+                  }`}
+              >
+                <span>{lang === "en" ? cat.nameEn : cat.nameTh}</span>
+                {cat.signature && <span className="text-[9px] opacity-70">★</span>}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        {isBusy && !busyDismissed && (
+          <div className="mx-4 mt-3 bg-primary/10 border border-primary/30 rounded-xl px-4 py-3 flex items-start gap-2.5">
+            <Flame size={16} className="text-primary flex-shrink-0 mt-0.5" />
+            <p className="flex-1 text-sm text-foreground leading-relaxed">{t.busyBanner}</p>
+            <button onClick={() => setBusyDismissed(true)} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
+              <X size={16} />
             </button>
           </div>
-        </div>
+        )}
 
-        {/* Category tabs */}
-        <div
-          className="flex overflow-x-auto px-4 pb-3 gap-2 pt-1"
-          style={{ scrollbarWidth: "none" }}
-        >
-          {categories.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => onCategoryChange(cat.id)}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeCategory === cat.id
-                ? "bg-primary text-primary-foreground"
-                : "bg-white/10 text-[#E6D5BA] hover:bg-white/20"
-                }`}
-            >
-              <span>{lang === "en" ? cat.nameEn : cat.nameTh}</span>
-              {cat.signature && <span className="text-[9px] opacity-70">★</span>}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      {isBusy && !busyDismissed && (
-        <div className="mx-4 mt-3 bg-primary/10 border border-primary/30 rounded-xl px-4 py-3 flex items-start gap-2.5">
-          <Flame size={16} className="text-primary flex-shrink-0 mt-0.5" />
-          <p className="flex-1 text-sm text-foreground leading-relaxed">{t.busyBanner}</p>
-          <button onClick={() => setBusyDismissed(true)} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* Menu grid */}
-      <div className="flex-1 px-4 py-4 pb-32">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {filtered.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onItemClick(item)}
-              className="bg-card rounded-2xl overflow-hidden text-left border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-150 active:scale-95 group"
-            >
-              {item.photo && (
-                <div className="aspect-[4/3] relative bg-muted overflow-hidden">
-                  <img
-                    src={resolvePhoto(item.photo, 400, 300)}
-                    alt={lang === "en" ? item.name.en : item.name.th}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
-                    <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+        {/* Menu grid */}
+        <div className="flex-1 px-4 py-4 pb-32">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {filtered.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onItemClick(item)}
+                className="bg-card rounded-2xl overflow-hidden text-left border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-150 active:scale-95 group"
+              >
+                {item.photo && (
+                  <div className="aspect-[4/3] relative bg-muted overflow-hidden">
+                    <img
+                      src={resolvePhoto(item.photo, 400, 300)}
+                      alt={lang === "en" ? item.name.en : item.name.th}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
+                      <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Star size={8} fill="currentColor" />
+                        {t.popular}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="p-2.5">
+                  {!item.photo && (item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
+                    <div className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full mb-1.5">
                       <Star size={8} fill="currentColor" />
                       {t.popular}
                     </div>
                   )}
-                </div>
-              )}
-              <div className="p-2.5">
-                {!item.photo && (item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
-                  <div className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full mb-1.5">
-                    <Star size={8} fill="currentColor" />
-                    {t.popular}
+                  <div className="font-semibold text-foreground text-sm leading-snug">
+                    {lang === "en" ? item.name.en : item.name.th}
                   </div>
-                )}
-                <div className="font-semibold text-foreground text-sm leading-snug">
-                  {lang === "en" ? item.name.en : item.name.th}
+                  <div className="text-muted-foreground text-[10px] mt-0.5 leading-snug">
+                    {lang === "en" ? item.name.th : item.name.en}
+                  </div>
+                  <div className="mt-1.5 font-bold text-primary text-sm">
+                    {t.thb}{item.price}
+                  </div>
                 </div>
-                <div className="text-muted-foreground text-[10px] mt-0.5 leading-snug">
-                  {lang === "en" ? item.name.th : item.name.en}
-                </div>
-                <div className="mt-1.5 font-bold text-primary text-sm">
-                  {t.thb}{item.price}
-                </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* Floating cart bar */}
-      {cartCount > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
-          <button
-            onClick={onViewCart}
-            className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95"
-          >
-            <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-sm font-bold">{cartCount}</span>
-            <span>{t.viewCart}</span>
-            <span className="font-bold">{t.thb}{cartSum}</span>
-          </button>
-        </div>
-      )}
-    </div>
+        {/* Floating cart bar */}
+        {cartCount > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
+            <button
+              onClick={onViewCart}
+              className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95"
+            >
+              <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-sm font-bold">{cartCount}</span>
+              <span>{t.viewCart}</span>
+              <span className="font-bold">{t.thb}{cartSum}</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
