@@ -402,45 +402,64 @@ function OnboardingModal({ lang, onClose }: { lang: Language; onClose: () => voi
       ? [
         { emoji: "👋", text: "Welcome! Here's how ordering works" },
         { emoji: "🍽️", text: "Browse the menu and pick what you like" },
-        { emoji: "🛒", text: "Go to your cart and confirm your order" },
-        { emoji: "👨‍🍳", text: "Sit back while the kitchen prepares your food" },
+        { emoji: "🛒", text: "Add items to your cart, then confirm your order" },
+        { emoji: "👨‍🍳", text: "Sit back while the kitchen gets cooking" },
         { emoji: "😋", text: "Enjoy your meal!" },
-        { emoji: "💳", text: "When you're done, pay at the counter" },
+        { emoji: "💳", text: "Pay at the counter when you're done" },
       ]
       : [
-        { emoji: "👋", text: "ยินดีต้อนรับ ก่อนเริ่มขอแนะนำวิธีสั่งอาหารสักนิด" },
-        { emoji: "🍽️", text: "เลือกเมนูที่ต้องการจากหน้าเมนู" },
-        { emoji: "🛒", text: "ไปที่ตะกร้าแล้วกดยืนยันสั่งอาหาร" },
-        { emoji: "👨‍🍳", text: "รอครัวปรุงอาหารสักครู่" },
-        { emoji: "😋", text: "อร่อยกันได้เลย!" },
-        { emoji: "💳", text: "เสร็จแล้วลงมาชำระเงินที่เคาน์เตอร์ ขอบคุณที่แวะมาค่ะ" },
+        { emoji: "👋", text: "ยินดีต้อนรับค่ะ มาดูวิธีสั่งอาหารกันก่อนนะคะ" },
+        { emoji: "🍽️", text: "เลือกเมนูที่ถูกใจจากหน้าเมนูได้เลยค่ะ" },
+        { emoji: "🛒", text: "ใส่ตะกร้าแล้วกดยืนยันสั่งอาหารได้เลยค่ะ" },
+        { emoji: "👨‍🍳", text: "รอสักครู่นะคะ ครัวกำลังปรุงอาหารให้อยู่ค่ะ" },
+        { emoji: "😋", text: "ทานให้อร่อยค่ะ" },
+        { emoji: "💳", text: "เสร็จแล้วชำระเงินที่เคาน์เตอร์ได้เลยค่ะ" },
       ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center px-6"
+      onClick={onClose}
+    >
       <div
-        className="bg-card rounded-2xl p-6 max-w-sm w-full border border-border shadow-2xl relative"
+        className="bg-card rounded-3xl p-6 max-w-sm w-full border border-border shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           onClick={onClose}
-          className="absolute top-3 right-3 text-muted-foreground hover:text-foreground transition-colors"
+          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
         >
           <X size={20} />
         </button>
-        <div className="space-y-4 mt-2">
+
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-5">
+          {lang === "en" ? "How it works" : "วิธีสั่งอาหาร"}
+        </p>
+
+        <div>
           {steps.map((s, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <span className="text-2xl flex-shrink-0">{s.emoji}</span>
-              <p className="text-foreground text-sm leading-relaxed">{s.text}</p>
+            <div key={i} className="flex gap-3">
+              <div className="flex flex-col items-center flex-shrink-0">
+                <span className="flex items-center justify-center w-9 h-9 rounded-full bg-primary text-primary-foreground text-sm font-semibold flex-shrink-0">
+                  {i + 1}
+                </span>
+                {i < steps.length - 1 && (
+                  <span className="w-px h-full bg-border my-1" />
+                )}
+              </div>
+              <p className="text-foreground text-sm leading-relaxed pt-1.5 pb-4">
+                <span className="mr-1">{s.emoji}</span>
+                {s.text}
+              </p>
             </div>
           ))}
         </div>
+
         <button
           onClick={onClose}
-          className="w-full mt-6 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95"
+          className="w-full mt-1 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95"
         >
-          {lang === "en" ? "Got it" : "เข้าใจแล้ว"}
+          {lang === "en" ? "Order Now" : "สั่งอาหาร"}
         </button>
       </div>
     </div>
