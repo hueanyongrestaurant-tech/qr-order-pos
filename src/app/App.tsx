@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import logo from "../assets/logo.png";
 import {
   ShoppingCart,
@@ -19,9 +19,9 @@ import {
   Clock,
   CheckCircle,
   Trash2,
-  ChevronUp,
   ChevronDown,
   ChevronRight,
+  GripVertical,
 } from "lucide-react";
 
 import { db, auth } from "../lib/firebase";
@@ -1940,6 +1940,88 @@ function StaffPaymentScreen({
   );
 }
 
+// ─── Drag-to-reorder (mouse + touch via Pointer Events) ──────────────────────
+// เดิมใช้ปุ่มลูกศรขึ้น/ลง เปลี่ยนมาใช้ "จับที่ไอคอน Grip แล้วลาก" แทน
+// รองรับทั้งเมาส์ (desktop) และนิ้ว (แท็บเล็ต/มือถือ) เพราะใช้ Pointer Events
+function useDragReorder<T extends { id: string }>(
+  list: T[],
+  onCommit: (orderedIds: string[]) => void
+) {
+  const [order, setOrder] = useState<string[]>(list.map((i) => i.id));
+  const [dragId, setDragId] = useState<string | null>(null);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const orderRef = useRef(order);
+  orderRef.current = order;
+
+  // sync เมื่อรายการจาก Firestore เปลี่ยน (แต่ไม่ทับระหว่างลากอยู่)
+  useEffect(() => {
+    if (dragId) return;
+    setOrder(list.map((i) => i.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.map((i) => i.id).join("|")]);
+
+  useEffect(() => {
+    if (!dragId) return;
+
+    const handleMove = (e: PointerEvent) => {
+      const current = orderRef.current;
+      const draggedIdx = current.indexOf(dragId);
+      if (draggedIdx === -1) return;
+      let targetIdx = draggedIdx;
+      for (let i = 0; i < current.length; i++) {
+        if (current[i] === dragId) continue;
+        const el = itemRefs.current[current[i]];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        if (e.clientY < mid) {
+          targetIdx = i < draggedIdx ? i : i - 1;
+          break;
+        }
+        targetIdx = i;
+      }
+      if (targetIdx !== draggedIdx) {
+        const next = [...current];
+        next.splice(draggedIdx, 1);
+        next.splice(targetIdx, 0, dragId);
+        setOrder(next);
+      }
+    };
+
+    const handleUp = () => {
+      setDragId(null);
+      document.body.style.userSelect = "";
+      onCommit(orderRef.current);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragId]);
+
+  const orderedList = order
+    .map((id) => list.find((i) => i.id === id))
+    .filter((i): i is T => !!i);
+
+  const startDrag = (id: string) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    document.body.style.userSelect = "none";
+    setDragId(id);
+  };
+
+  const setItemRef = (id: string) => (el: HTMLDivElement | null) => {
+    itemRefs.current[id] = el;
+  };
+
+  return { orderedList, dragId, startDrag, setItemRef };
+}
+
 interface StaffMenuProps {
   lang: Language;
   items: (MenuItem & { active?: boolean })[];
@@ -1955,16 +2037,19 @@ interface StaffMenuProps {
   onAddCategory: (nameEn: string, nameTh: string) => void;
   onDeleteCategory: (categoryId: string) => void;
   onToggleCategorySignature: (categoryId: string, signature: boolean) => void;
-  onMoveCategory: (categoryId: string, direction: "up" | "down") => void;
-  onMoveMenuItem: (itemId: string, categoryId: string, direction: "up" | "down") => void;
+  onReorderCategories: (orderedIds: string[]) => void;
+  onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
 }
 
 function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onMoveCategory, onMoveMenuItem,
+  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
 }: StaffMenuProps) {
   const t = T[lang];
   const [newCatEn, setNewCatEn] = useState("");
   const [newCatTh, setNewCatTh] = useState("");
+
+  const sortedCategories = [...categories].sort((a, b) => a.order - b.order);
+  const catDrag = useDragReorder(sortedCategories, (orderedIds) => onReorderCategories(orderedIds));
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -1985,24 +2070,21 @@ function StaffMenuScreen({
             {lang === "en" ? "Categories" : "จัดการหมวดหมู่"}
           </h3>
           <div className="space-y-1.5 mb-3">
-            {[...categories].sort((a, b) => a.order - b.order).map((cat, idx, arr) => (
-              <div key={cat.id} className="flex items-center gap-2 bg-background rounded-lg px-3 py-2">
-                <div className="flex flex-col flex-shrink-0">
-                  <button
-                    onClick={() => onMoveCategory(cat.id, "up")}
-                    disabled={idx === 0}
-                    className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                  >
-                    <ChevronUp size={14} />
-                  </button>
-                  <button
-                    onClick={() => onMoveCategory(cat.id, "down")}
-                    disabled={idx === arr.length - 1}
-                    className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                  >
-                    <ChevronDown size={14} />
-                  </button>
-                </div>
+            {catDrag.orderedList.map((cat) => (
+              <div
+                key={cat.id}
+                ref={catDrag.setItemRef(cat.id)}
+                className={`flex items-center gap-2 bg-background rounded-lg px-3 py-2 transition-shadow ${catDrag.dragId === cat.id ? "shadow-lg ring-2 ring-primary/40 relative z-10" : ""
+                  }`}
+                style={{ touchAction: catDrag.dragId ? "none" : undefined }}
+              >
+                <button
+                  onPointerDown={catDrag.startDrag(cat.id)}
+                  className="text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing flex-shrink-0 touch-none"
+                  aria-label={lang === "en" ? "Drag to reorder" : "ลากเพื่อเรียงลำดับ"}
+                >
+                  <GripVertical size={16} />
+                </button>
                 <span className="flex-1 text-sm text-foreground">
                   {lang === "en" ? cat.nameEn : cat.nameTh}
                 </span>
@@ -2057,70 +2139,97 @@ function StaffMenuScreen({
           </div>
         </div>
 
-        {[...categories].sort((a, b) => a.order - b.order).map((cat) => {
+        {sortedCategories.map((cat) => {
           const catItems = items
             .filter((i) => i.categoryId === cat.id)
             .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
           if (catItems.length === 0) return null;
           return (
-            <div key={cat.id} className="mb-6">
-              <h3 className="font-semibold text-foreground text-sm mb-2">
-                {lang === "en" ? cat.nameEn : cat.nameTh}
-              </h3>
-              <div className="space-y-2">
-                {catItems.map((item, idx) => (
-                  <div
-                    key={item.id}
-                    className={`bg-card rounded-xl border border-border p-3 flex items-center gap-3 ${item.active === false ? "opacity-50" : ""}`}
-                  >
-                    <div className="flex flex-col flex-shrink-0">
-                      <button
-                        onClick={() => onMoveMenuItem(item.id, cat.id, "up")}
-                        disabled={idx === 0}
-                        className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button
-                        onClick={() => onMoveMenuItem(item.id, cat.id, "down")}
-                        disabled={idx === catItems.length - 1}
-                        className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-foreground text-sm truncate">
-                        {lang === "en" ? item.name.en : item.name.th}
-                      </div>
-                      <div className="text-muted-foreground text-xs">{t.thb}{item.price}</div>
-                    </div>
-                    <button
-                      onClick={() => onToggleActive(item, item.active === false)}
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0 ${item.active === false
-                        ? "bg-muted text-muted-foreground"
-                        : "bg-secondary/15 text-secondary"
-                        }`}
-                    >
-                      {item.active === false ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
-                    </button>
-                    <button onClick={() => onEdit(item)} className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0">
-                      <Utensils size={16} />
-                    </button>
-                    <button
-                      onClick={() =>
-                        onAskConfirm(lang === "en" ? "Delete this item?" : "ลบเมนูนี้?", () => onDelete(item.id))
-                      }
-                      className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <CategoryMenuItemsList
+              key={cat.id}
+              lang={lang}
+              t={t}
+              cat={cat}
+              catItems={catItems}
+              onReorderMenuItems={onReorderMenuItems}
+              onToggleActive={onToggleActive}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onAskConfirm={onAskConfirm}
+            />
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// รายการเมนูภายในหมวดหมู่เดียว แยกเป็นคอมโพเนนต์ต่างหาก
+// เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
+function CategoryMenuItemsList({
+  lang, t, cat, catItems, onReorderMenuItems, onToggleActive, onEdit, onDelete, onAskConfirm,
+}: {
+  lang: Language;
+  t: (typeof T)["en"];
+  cat: Category;
+  catItems: (MenuItem & { active?: boolean })[];
+  onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
+  onToggleActive: (item: MenuItem, active: boolean) => void;
+  onEdit: (item: MenuItem) => void;
+  onDelete: (itemId: string) => void;
+  onAskConfirm: (message: string, onConfirm: () => void) => void;
+}) {
+  const itemDrag = useDragReorder(catItems, (orderedIds) => onReorderMenuItems(cat.id, orderedIds));
+
+  return (
+    <div className="mb-6">
+      <h3 className="font-semibold text-foreground text-sm mb-2">
+        {lang === "en" ? cat.nameEn : cat.nameTh}
+      </h3>
+      <div className="space-y-2">
+        {itemDrag.orderedList.map((item) => (
+          <div
+            key={item.id}
+            ref={itemDrag.setItemRef(item.id)}
+            className={`bg-card rounded-xl border border-border p-3 flex items-center gap-3 transition-shadow ${item.active === false ? "opacity-50" : ""
+              } ${itemDrag.dragId === item.id ? "shadow-lg ring-2 ring-primary/40 relative z-10" : ""}`}
+            style={{ touchAction: itemDrag.dragId ? "none" : undefined }}
+          >
+            <button
+              onPointerDown={itemDrag.startDrag(item.id)}
+              className="text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing flex-shrink-0 touch-none"
+              aria-label={lang === "en" ? "Drag to reorder" : "ลากเพื่อเรียงลำดับ"}
+            >
+              <GripVertical size={16} />
+            </button>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-foreground text-sm truncate">
+                {lang === "en" ? item.name.en : item.name.th}
+              </div>
+              <div className="text-muted-foreground text-xs">{t.thb}{item.price}</div>
+            </div>
+            <button
+              onClick={() => onToggleActive(item, item.active === false)}
+              className={`text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0 ${item.active === false
+                ? "bg-muted text-muted-foreground"
+                : "bg-secondary/15 text-secondary"
+                }`}
+            >
+              {item.active === false ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
+            </button>
+            <button onClick={() => onEdit(item)} className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0">
+              <Utensils size={16} />
+            </button>
+            <button
+              onClick={() =>
+                onAskConfirm(lang === "en" ? "Delete this item?" : "ลบเมนูนี้?", () => onDelete(item.id))
+              }
+              className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2942,59 +3051,9 @@ function getTableFromUrl(): string | null {
   }
 }
 
-// ─── useViewHistory: sync `view` state กับ browser history ────────────────
-// วางไว้เหนือ export default function App() (เช่น หลังฟังก์ชัน getTableFromUrl())
-
-function useViewHistory<T extends string>(initial: T | (() => T)) {
-  // รองรับทั้ง useViewHistory("menu") และ useViewHistory(() => cond ? "menu" : "staff-login")
-  const resolveInitial = (): T =>
-    typeof initial === "function" ? (initial as () => T)() : initial;
-
-  const [view, setViewState] = useState<T>(() => {
-    // ถ้ามี state ติดมากับ history อยู่แล้ว (เช่น refresh หน้า) ให้ใช้ค่านั้น
-    return (window.history.state?.view as T) ?? resolveInitial();
-  });
-
-  // ตอน mount ครั้งแรก ให้แน่ใจว่า entry แรกมี state ผูกอยู่
-  useEffect(() => {
-    if (!window.history.state?.view) {
-      window.history.replaceState({ view }, "");
-    }
-
-    const handlePopState = (event: PopStateEvent) => {
-      // ผู้ใช้กดปุ่ม back/forward ของ browser
-      const targetView = event.state?.view as T | undefined;
-      if (targetView) {
-        setViewState(targetView);
-      } else {
-        // เผื่อกรณี state เป็น null (เช่น กด back จนสุด) — กันไม่ให้แอปหลุดไปหน้าอื่น
-        const fallback = resolveInitial();
-        setViewState(fallback);
-        window.history.replaceState({ view: fallback }, "");
-      }
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ตัวนี้แทนที่ setView เดิม — รองรับทั้ง setView("cart") และ setView(v => ...) เหมือน useState จริง
-  const setView = (next: T | ((prev: T) => T)) => {
-    setViewState((prev) => {
-      const resolved = typeof next === "function" ? (next as (prev: T) => T)(prev) : next;
-      if (prev === resolved) return prev; // ไม่ push ซ้ำถ้า view เดิม
-      window.history.pushState({ view: resolved }, "");
-      return resolved;
-    });
-  };
-
-  return [view, setView] as const;
-}
-
 export default function App() {
   const [lang, setLang] = useState<Language>("th");
-  const [view, setView] = useViewHistory<View>(() => (getTableFromUrl() ? "menu" : "staff-login"));
+  const [view, setView] = useState<View>(() => (getTableFromUrl() ? "menu" : "staff-login"));
   const [tableNumber, setTableNumber] = useState<string | null>(() => getTableFromUrl());
 
   // Customer state
@@ -3391,19 +3450,11 @@ export default function App() {
     await updateDoc(doc(db, "menuItems", item.id), { active });
   };
 
-  const handleMoveMenuItem = async (itemId: string, categoryId: string, direction: "up" | "down") => {
-    const itemsInCat = allMenuItems
-      .filter((m) => m.categoryId === categoryId)
-      .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
-    // backfill order ให้ทุกเมนูในหมวดนี้ก่อน (เผื่อเมนูเก่ายังไม่มีค่า order)
-    const withOrder = itemsInCat.map((m, i) => ({ ...m, order: i }));
-    const idx = withOrder.findIndex((m) => m.id === itemId);
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (idx === -1 || swapIdx < 0 || swapIdx >= withOrder.length) return;
-    const a = withOrder[idx];
-    const b = withOrder[swapIdx];
-    [a.order, b.order] = [b.order, a.order];
-    await Promise.all(withOrder.map((m) => updateDoc(doc(db, "menuItems", m.id), { order: m.order })));
+  // รับ id ที่เรียงลำดับใหม่แล้ว (จากการลาก) แล้วเขียนค่า order ทับทั้งหมวด
+  const handleReorderMenuItems = async (categoryId: string, orderedIds: string[]) => {
+    await Promise.all(
+      orderedIds.map((id, i) => updateDoc(doc(db, "menuItems", id), { order: i }))
+    );
   };
 
   const handleDeleteItem = async (itemId: string) => {
@@ -3422,17 +3473,10 @@ export default function App() {
     await addDoc(collection(db, "categories"), { nameEn, nameTh, order: newOrder, active: true, signature: false });
   };
 
-  const handleMoveCategory = async (categoryId: string, direction: "up" | "down") => {
-    const sorted = [...allCategories].sort((a, b) => a.order - b.order);
-    const idx = sorted.findIndex((c) => c.id === categoryId);
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (idx === -1 || swapIdx < 0 || swapIdx >= sorted.length) return;
-    const a = sorted[idx];
-    const b = sorted[swapIdx];
-    await Promise.all([
-      updateDoc(doc(db, "categories", a.id), { order: b.order }),
-      updateDoc(doc(db, "categories", b.id), { order: a.order }),
-    ]);
+  const handleReorderCategories = async (orderedIds: string[]) => {
+    await Promise.all(
+      orderedIds.map((id, i) => updateDoc(doc(db, "categories", id), { order: i }))
+    );
   };
 
   const handleDeleteCategory = async (categoryId: string) => {
@@ -3580,8 +3624,8 @@ export default function App() {
           onLogout={handleLogout}
           onLangToggle={toggleLang}
           onAskConfirm={askConfirm}
-          onMoveCategory={handleMoveCategory}
-          onMoveMenuItem={handleMoveMenuItem}
+          onReorderCategories={handleReorderCategories}
+          onReorderMenuItems={handleReorderMenuItems}
         />
       );
       break;
