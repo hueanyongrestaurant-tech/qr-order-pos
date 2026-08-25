@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronRight,
   GripVertical,
+  Receipt,
 } from "lucide-react";
 
 import { db, auth } from "../lib/firebase";
@@ -44,6 +45,7 @@ type View =
   | "staff-menu-edit"
   | "staff-history"
   | "staff-stats"
+  | "staff-expenses"
   | "staff-manual-table"
   | "staff-manual-menu"
   | "staff-manual-cart";;
@@ -112,6 +114,35 @@ interface Order {
   isTakeaway?: boolean;
   takeawayLabel?: string;
   paymentBatchId?: string;
+}
+
+// ─── บัญชีรายจ่าย (Expenses) ───────────────────────────────────────────────────
+// 1 document ต่อ 1 วัน (doc id = "YYYY-MM-DD") เก็บรายการของที่ซื้อไว้เป็น array
+// ข้างใน แทนที่จะแยก 1 document ต่อ 1 รายการ เพื่อไม่ให้จำนวน document บวมเร็วเกินไป
+
+interface ExpenseLineItem {
+  name: string;
+  quantity: number;
+  unit?: string;
+  amount: number; // ราคารวมของรายการนี้ (บาท)
+}
+
+interface ExpenseDay {
+  id: string; // = date ("YYYY-MM-DD")
+  date: string;
+  items: ExpenseLineItem[];
+  totalAmount: number;
+  updatedAt: Date;
+}
+
+// รายชื่อของที่เคยกรอกไว้ ใช้เพื่อ autocomplete ตอนพิมพ์ชื่อของ (เหมือน Excel)
+interface ExpenseCatalogEntry {
+  id: string; // sanitized name ใช้เป็น doc id
+  name: string;
+  unit?: string;
+  lastQuantity?: number;
+  lastAmount?: number;
+  usageCount: number;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -378,6 +409,14 @@ function formatClock(date: Date): string {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+// แปลงชื่อของเป็น id ที่ใช้เป็น Firestore doc id ได้ (ตัดอักขระที่ Firestore ไม่รับ)
+// รายชื่อของที่ซื้อเข้าร้านมีจำกัด (ไม่กี่สิบ-ร้อยรายการ) จึงใช้ชื่อเป็น id ตรงๆ
+// เพื่อกันไม่ให้มี doc ซ้ำสำหรับของชิ้นเดียวกัน
+function expenseCatalogId(name: string): string {
+  const cleaned = name.trim().replace(/[\/\\.#$\[\]\s]+/g, "-").slice(0, 120);
+  return cleaned || uid();
 }
 
 function uid(): string {
@@ -1378,8 +1417,8 @@ function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }: StaffL
 
 interface StaffHeaderProps {
   lang: Language;
-  activeTab: "orders" | "payment" | "menu" | "history" | "stats";
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  activeTab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses";
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -1401,7 +1440,7 @@ function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, }: 
         </div>
       </div>
       <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-        {(["orders", "payment", "menu", "history", "stats"] as const).map((tab) => (
+        {(["orders", "payment", "menu", "history", "expenses", "stats"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}
@@ -1410,8 +1449,8 @@ function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, }: 
               : "border-transparent text-[#E6D5BA]/60 hover:text-[#E6D5BA]"
               }`}
           >
-            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : <Star size={14} />}
-            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : (lang === "en" ? "Stats" : "สถิติ")}
+            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : tab === "expenses" ? <Receipt size={14} /> : <Star size={14} />}
+            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : tab === "expenses" ? (lang === "en" ? "Expenses" : "รายจ่าย") : (lang === "en" ? "Stats" : "สถิติ")}
           </button>
         ))}
       </div>
@@ -1427,7 +1466,7 @@ interface StaffOrdersProps {
   onMarkServed: (orderId: string) => void;
   onRemoveItem: (orderId: string, cartId: string) => void;
   onCancelOrder: (orderId: string) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
   onLogout: () => void;
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
@@ -1706,7 +1745,7 @@ interface StaffPaymentProps {
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -2056,7 +2095,7 @@ interface StaffMenuProps {
   onEdit: (item: MenuItem) => void;
   onToggleActive: (item: MenuItem, active: boolean) => void;
   onDelete: (itemId: string) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
   onLogout: () => void;
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
@@ -2749,7 +2788,7 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categ
 interface StaffHistoryProps {
   lang: Language;
   orders: Order[];
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -2905,10 +2944,245 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
   );
 }
 
+// ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
+
+interface StaffExpensesProps {
+  lang: Language;
+  expenseDays: ExpenseDay[];
+  catalog: ExpenseCatalogEntry[];
+  onAddItem: (date: string, item: ExpenseLineItem) => void;
+  onDeleteItem: (date: string, index: number) => void;
+  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onLogout: () => void;
+  onLangToggle: () => void;
+}
+
+function StaffExpensesScreen({
+  lang, expenseDays, catalog, onAddItem, onDeleteItem, onAskConfirm, onTabChange, onLogout, onLangToggle,
+}: StaffExpensesProps) {
+  const t = T[lang];
+  const today = formatDateInput(new Date());
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [name, setName] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [unit, setUnit] = useState("");
+  const [amount, setAmount] = useState("");
+
+  // ช่วงวันที่สำหรับดูสรุปรวม (แยกจากวันที่กำลังกรอกของด้านบน)
+  const [summaryStart, setSummaryStart] = useState(today);
+  const [summaryEnd, setSummaryEnd] = useState(today);
+
+  const sortedCatalog = [...catalog].sort((a, b) => b.usageCount - a.usageCount);
+  const currentDay = expenseDays.find((e) => e.id === selectedDate);
+  const dayItems = currentDay?.items || [];
+  const dayTotal = currentDay?.totalAmount || 0;
+
+  const summaryDays = expenseDays.filter((e) => e.date >= summaryStart && e.date <= summaryEnd);
+  const summaryTotal = summaryDays.reduce((s, e) => s + e.totalAmount, 0);
+  const summaryLines = summaryDays
+    .flatMap((e) => e.items.map((it) => ({ ...it, date: e.date })))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // ถ้าพิมพ์ชื่อตรงกับของที่เคยกรอกไว้เป๊ะ (เลือกจาก autocomplete) เติมหน่วย/จำนวน/ราคาล่าสุดให้อัตโนมัติ แก้ไขได้
+  const handleNameChange = (value: string) => {
+    setName(value);
+    const match = catalog.find((c) => c.name === value);
+    if (match) {
+      setUnit(match.unit || "");
+      if (!quantity) setQuantity(match.lastQuantity ? String(match.lastQuantity) : "");
+      if (!amount) setAmount(match.lastAmount ? String(match.lastAmount) : "");
+    }
+  };
+
+  const handleAdd = () => {
+    const trimmedName = name.trim();
+    const qty = parseFloat(quantity);
+    const amt = parseFloat(amount);
+    if (!trimmedName || !qty || qty <= 0 || isNaN(amt) || amt < 0) return;
+    onAddItem(selectedDate, {
+      name: trimmedName,
+      quantity: qty,
+      unit: unit.trim() || undefined,
+      amount: amt,
+    });
+    setName("");
+    setQuantity("");
+    setUnit("");
+    setAmount("");
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <StaffHeader lang={lang} activeTab="expenses" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
+
+      <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="flex items-center gap-2 mb-5">
+          <input
+            type="date"
+            value={selectedDate}
+            max={today}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          />
+          <button
+            onClick={() => setSelectedDate(today)}
+            className="py-2 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap"
+          >
+            {lang === "en" ? "Today" : "วันนี้"}
+          </button>
+        </div>
+
+        {/* ฟอร์มกรอกของที่ซื้อ */}
+        <div className="bg-card border border-border rounded-xl p-3 mb-6">
+          <h3 className="font-semibold text-foreground text-sm mb-2.5">
+            {lang === "en" ? "Add Purchase" : "บันทึกของที่ซื้อ"}
+          </h3>
+          <input
+            list="expense-catalog-list"
+            value={name}
+            onChange={(e) => handleNameChange(e.target.value)}
+            placeholder={lang === "en" ? "Item name (e.g. eggs, veggies)" : "ชื่อของ (เช่น ไข่ไก่, ผัก)"}
+            className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary mb-2"
+          />
+          <datalist id="expense-catalog-list">
+            {sortedCatalog.map((c) => (
+              <option key={c.id} value={c.name} />
+            ))}
+          </datalist>
+          <div className="grid grid-cols-3 gap-1.5 mb-2">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder={lang === "en" ? "Qty" : "จำนวน"}
+              className="bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary"
+            />
+            <input
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              placeholder={lang === "en" ? "Unit" : "หน่วย"}
+              className="bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary"
+            />
+            <input
+              type="number"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder={t.thb + (lang === "en" ? " Price" : " ราคา")}
+              className="bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary"
+            />
+          </div>
+          <button
+            onClick={handleAdd}
+            className="w-full bg-primary text-primary-foreground py-2.5 rounded-lg font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
+          >
+            <Plus size={16} />
+            {lang === "en" ? "Add Item" : "เพิ่มรายการ"}
+          </button>
+        </div>
+
+        {/* รายการของวันที่เลือก */}
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-foreground text-sm">
+            {lang === "en" ? "Purchases" : "รายการที่ซื้อ"} ({selectedDate})
+          </h3>
+          <div className="font-display font-bold text-sm text-destructive">
+            {lang === "en" ? "Total" : "รวม"} {t.thb}{dayTotal}
+          </div>
+        </div>
+
+        {dayItems.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
+            {lang === "en" ? "No purchases logged for this date" : "ยังไม่มีรายการซื้อของวันนี้"}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {dayItems.map((it, idx) => (
+              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-foreground">{it.name}</div>
+                  <div className="text-muted-foreground text-xs">
+                    {it.quantity}{it.unit ? ` ${it.unit}` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="font-semibold text-foreground text-sm">{t.thb}{it.amount}</div>
+                  <button
+                    onClick={() =>
+                      onAskConfirm(
+                        lang === "en" ? "Delete this item?" : "ลบรายการนี้?",
+                        () => onDeleteItem(selectedDate, idx)
+                      )
+                    }
+                    className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* สรุปรวมรายจ่าย ตามช่วงวันที่ */}
+        <h3 className="font-semibold text-foreground text-sm mb-3 mt-8">
+          {lang === "en" ? "Expense Summary" : "สรุปรวมรายจ่าย"}
+        </h3>
+
+        <div className="flex items-center gap-2 mb-4">
+          <input
+            type="date"
+            value={summaryStart}
+            max={summaryEnd}
+            onChange={(e) => setSummaryStart(e.target.value)}
+            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          />
+          <span className="text-muted-foreground text-sm">–</span>
+          <input
+            type="date"
+            value={summaryEnd}
+            min={summaryStart}
+            max={today}
+            onChange={(e) => setSummaryEnd(e.target.value)}
+            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          />
+        </div>
+
+        <div className="bg-card rounded-2xl border border-border p-4 mb-4">
+          <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Total Expenses" : "รายจ่ายรวม"}</div>
+          <div className="font-display font-bold text-2xl text-destructive">{t.thb}{summaryTotal}</div>
+        </div>
+
+        {summaryLines.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
+            {lang === "en" ? "No expenses for this period" : "ไม่มีรายจ่ายในช่วงนี้"}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {summaryLines.map((line, idx) => (
+              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-foreground">{line.name}</div>
+                  <div className="text-muted-foreground text-xs">
+                    {line.date} · {line.quantity}{line.unit ? ` ${line.unit}` : ""}
+                  </div>
+                </div>
+                <div className="font-semibold text-destructive text-sm">{t.thb}{line.amount}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface StaffStatsProps {
   lang: Language;
   orders: Order[];
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
+  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -2992,25 +3266,11 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
   });
   const topMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty).slice(0, 10);
 
-  const setPreset = (days: number) => {
-    const end = new Date();
-    const start = new Date();
-    if (days > 0) start.setDate(end.getDate() - (days - 1));
-    setStartDate(formatDateInput(start));
-    setEndDate(formatDateInput(end));
-  };
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <StaffHeader lang={lang} activeTab="stats" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-        <div className="flex gap-2 mb-3">
-          <button onClick={() => setPreset(1)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
-            {lang === "en" ? "Today" : "วันนี้"}
-          </button>
-        </div>
-
         <div className="flex items-center gap-2 mb-5">
           <input
             type="date"
@@ -3125,16 +3385,17 @@ function writeSession(key: string, value: unknown) {
 // เฉพาะวิวเหล่านี้ที่ฝั่งลูกค้าจะถูกจำไว้ตอนรีเฟรช (ตัดพวกที่ sub-state เสี่ยงเกินไปออก)
 const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-sent"];
 
-type StaffTab = "orders" | "payment" | "menu" | "history" | "stats";
+type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses";
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
   payment: "staff-payment",
   menu: "staff-menu",
   history: "staff-history",
   stats: "staff-stats",
+  expenses: "staff-expenses",
 };
 function isStaffTab(v: unknown): v is StaffTab {
-  return v === "orders" || v === "payment" || v === "menu" || v === "history" || v === "stats";
+  return v === "orders" || v === "payment" || v === "menu" || v === "history" || v === "stats" || v === "expenses";
 }
 
 export default function App() {
@@ -3165,15 +3426,12 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [authChecked, setAuthChecked] = useState(false);
+  const [expenseDays, setExpenseDays] = useState<ExpenseDay[]>([]);
+  const [expenseCatalog, setExpenseCatalog] = useState<ExpenseCatalogEntry[]>([]);
 
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
-  const [staffLoggedIn, setStaffLoggedIn] = useState(false);
-  const allMenuItemsRef = useRef(allMenuItems);
-  useEffect(() => {
-    allMenuItemsRef.current = allMenuItems;
-  }, [allMenuItems]);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(query(collection(db, "categories"), orderBy("order", "asc")), (snapshot) => {
@@ -3281,9 +3539,40 @@ export default function App() {
     return () => unsubscribe();
   }, [authChecked]);
 
+  // บัญชีรายจ่าย — เฉพาะฝั่งพนักงานเท่านั้น (เหมือน orders ด้านบน)
+  useEffect(() => {
+    if (!authChecked) return;
+    const isStaff = getTableFromUrl() === null;
+    if (!isStaff) return;
+
+    const unsubscribeExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
+      const data = snapshot.docs.map((d) => {
+        const raw = d.data();
+        return {
+          id: d.id,
+          date: raw.date,
+          items: raw.items || [],
+          totalAmount: raw.totalAmount || 0,
+          updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate() : new Date(),
+        } as ExpenseDay;
+      });
+      setExpenseDays(data);
+    });
+
+    const unsubscribeCatalog = onSnapshot(collection(db, "expenseItems"), (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as ExpenseCatalogEntry));
+      setExpenseCatalog(data);
+    });
+
+    return () => {
+      unsubscribeExpenses();
+      unsubscribeCatalog();
+    };
+  }, [authChecked]);
+
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
-  const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history" | "stats">("orders");
+  const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history" | "stats" | "expenses">("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const menuScrollTopRef = useRef(0);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -3331,44 +3620,10 @@ export default function App() {
           return "staff-orders";
         });
       }
-      setStaffLoggedIn(!!user);
       setAuthChecked(true);
     });
     return () => unsubscribe();
   }, []);
-
-  // รีเซ็ตเมนูที่ถูกปิดไว้ให้กลับมาเปิดทั้งหมดเมื่อขึ้นวันใหม่
-  // ทำงานเฉพาะฝั่งพนักงานที่ login อยู่ (เพราะ security rules อนุญาตให้เขียน menuItems ได้เฉพาะ auth != null)
-  // เช็คทันทีตอน login/เปิดแอป และเช็คซ้ำทุก 1 นาที เผื่อเปิดแท็บค้างข้ามเที่ยงคืนโดยไม่รีเฟรช
-  useEffect(() => {
-    if (!staffLoggedIn) return;
-
-    const checkAndResetDailyMenu = async () => {
-      const todayKey = getTodayKey();
-      const lockRef = doc(db, "counters", `menu-reset-${todayKey}`);
-      try {
-        const claimed = await runTransaction(db, async (transaction) => {
-          const snap = await transaction.get(lockRef);
-          if (snap.exists()) return false; // มีเครื่องอื่นรีเซ็ตของวันนี้ไปแล้ว
-          transaction.set(lockRef, { resetAt: serverTimestamp() });
-          return true;
-        });
-        if (!claimed) return;
-
-        const toReset = allMenuItemsRef.current.filter((m) => m.active === false);
-        if (toReset.length === 0) return;
-        await Promise.all(
-          toReset.map((m) => updateDoc(doc(db, "menuItems", m.id), { active: true }))
-        );
-      } catch {
-        // เงียบไว้ก่อน เดี๋ยวรอบถัดไป (นาทีถัดไป) จะลองใหม่เอง
-      }
-    };
-
-    checkAndResetDailyMenu();
-    const interval = setInterval(checkAndResetDailyMenu, 60_000);
-    return () => clearInterval(interval);
-  }, [staffLoggedIn]);
 
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
   useEffect(() => {
@@ -3596,14 +3851,15 @@ export default function App() {
     }
   };
 
-  const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history" | "stats") => {
+  const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => {
     setStaffTab(tab);
     writeSession("staffTab", tab);
     setView(
       tab === "orders" ? "staff-orders" :
         tab === "payment" ? "staff-payment" :
           tab === "menu" ? "staff-menu" :
-            tab === "history" ? "staff-history" : "staff-stats"
+            tab === "history" ? "staff-history" :
+              tab === "expenses" ? "staff-expenses" : "staff-stats"
     );
   };
 
@@ -3675,6 +3931,48 @@ export default function App() {
 
   const handleToggleCategorySignature = async (categoryId: string, signature: boolean) => {
     await updateDoc(doc(db, "categories", categoryId), { signature });
+  };
+
+  // เพิ่มรายการซื้อของ 1 บรรทัดเข้าไปในวันที่ระบุ (สร้าง doc ของวันนั้นถ้ายังไม่มี)
+  // แล้วอัปเดต "รายชื่อของที่เคยกรอก" (expenseItems) ไว้ใช้ทำ autocomplete ต่อ
+  const handleAddExpenseItem = async (date: string, item: ExpenseLineItem) => {
+    const existing = expenseDays.find((e) => e.id === date);
+    const newItems = [...(existing?.items || []), item];
+    const totalAmount = newItems.reduce((s, i) => s + i.amount, 0);
+    await setDoc(doc(db, "expenses", date), {
+      date,
+      items: newItems,
+      totalAmount,
+      updatedAt: serverTimestamp(),
+    });
+
+    const catalogId = expenseCatalogId(item.name);
+    const existingCatalog = expenseCatalog.find((c) => c.id === catalogId);
+    await setDoc(doc(db, "expenseItems", catalogId), {
+      name: item.name,
+      unit: item.unit || "",
+      lastQuantity: item.quantity,
+      lastAmount: item.amount,
+      usageCount: (existingCatalog?.usageCount || 0) + 1,
+      updatedAt: serverTimestamp(),
+    });
+  };
+
+  const handleDeleteExpenseItem = async (date: string, index: number) => {
+    const existing = expenseDays.find((e) => e.id === date);
+    if (!existing) return;
+    const newItems = existing.items.filter((_, i) => i !== index);
+    const totalAmount = newItems.reduce((s, i) => s + i.amount, 0);
+    if (newItems.length === 0) {
+      await deleteDoc(doc(db, "expenses", date));
+    } else {
+      await setDoc(doc(db, "expenses", date), {
+        date,
+        items: newItems,
+        totalAmount,
+        updatedAt: serverTimestamp(),
+      });
+    }
   };
 
   switch (view) {
@@ -3851,6 +4149,22 @@ export default function App() {
         <StaffStatsScreen
           lang={lang}
           orders={orders}
+          onTabChange={handleStaffTabChange}
+          onLogout={handleLogout}
+          onLangToggle={toggleLang}
+        />
+      );
+      break;
+
+    case "staff-expenses":
+      content = (
+        <StaffExpensesScreen
+          lang={lang}
+          expenseDays={expenseDays}
+          catalog={expenseCatalog}
+          onAddItem={handleAddExpenseItem}
+          onDeleteItem={handleDeleteExpenseItem}
+          onAskConfirm={askConfirm}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
