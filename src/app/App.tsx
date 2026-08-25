@@ -2739,10 +2739,10 @@ interface HistoryEntry {
 
 function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle }: StaffHistoryProps) {
   const t = T[lang];
-  const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
   const toggleDay = (key: string) => {
-    setCollapsedDays((prev) => {
+    setExpandedDays((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
@@ -2802,7 +2802,7 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
         ) : (
           Object.entries(grouped).map(([dateStr, dayEntries]) => {
             const dayTotal = dayEntries.reduce((s, e) => s + e.total, 0);
-            const isDayCollapsed = collapsedDays.has(dateStr);
+            const isDayCollapsed = !expandedDays.has(dateStr);
             return (
               <div key={dateStr} className="mb-6">
                 <button
