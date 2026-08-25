@@ -2039,10 +2039,12 @@ interface StaffMenuProps {
   onToggleCategorySignature: (categoryId: string, signature: boolean) => void;
   onReorderCategories: (orderedIds: string[]) => void;
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
+  scrollTopRef: React.MutableRefObject<number>;   // ⭐ เพิ่มบรรทัดนี้
 }
 
 function StaffMenuScreen({
   lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
+  scrollTopRef,
 }: StaffMenuProps) {
   const t = T[lang];
   const [newCatEn, setNewCatEn] = useState("");
@@ -2050,6 +2052,21 @@ function StaffMenuScreen({
 
   const sortedCategories = [...categories].sort((a, b) => a.order - b.order);
   const catDrag = useDragReorder(sortedCategories, (orderedIds) => onReorderCategories(orderedIds));
+
+  useEffect(() => {
+    const handleScroll = () => { scrollTopRef.current = window.scrollY; };
+    window.addEventListener("scroll", handleScroll);
+
+    // รอให้เนื้อหา (รูปภาพ ฯลฯ) เรนเดอร์จนได้ความสูงจริงก่อนค่อยเลื่อนกลับ
+    const id = requestAnimationFrame(() => {
+      window.scrollTo(0, scrollTopRef.current);
+    });
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      cancelAnimationFrame(id);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -3141,6 +3158,7 @@ export default function App() {
   const [loginError, setLoginError] = useState(false);
   const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history" | "stats">("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const menuScrollTopRef = useRef(0);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm });
   const [busyTables, setBusyTables] = useState(0);
@@ -3626,6 +3644,7 @@ export default function App() {
           onAskConfirm={askConfirm}
           onReorderCategories={handleReorderCategories}
           onReorderMenuItems={handleReorderMenuItems}
+          scrollTopRef={menuScrollTopRef}
         />
       );
       break;
