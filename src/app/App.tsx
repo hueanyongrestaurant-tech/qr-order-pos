@@ -1711,6 +1711,132 @@ interface StaffPaymentProps {
   onLangToggle: () => void;
 }
 
+interface PaymentCardProps {
+  keyId: string;
+  label: string;
+  subtitle: string;
+  total: number;
+  items: CartItem[];
+  onAdjust: (key: string, delta: number) => void;
+  total2: number;
+  closeAction: () => void;
+  cancelAction?: () => void;
+  expandedKey: string | null;
+  select: (key: string) => void;
+  paymentMethod: PaymentMethod;
+  setPaymentMethod: (m: PaymentMethod) => void;
+  cashInput: string;
+  setCashInput: (v: string) => void;
+  lang: Language;
+  t: typeof T["en"];
+}
+
+function PaymentCard({
+  keyId, label, subtitle, total, items, onAdjust, total2, closeAction, cancelAction,
+  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, lang, t,
+}: PaymentCardProps) {
+  const isSelected = expandedKey === keyId;
+  return (
+    <div className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(60,36,20,0.15)" }}>
+      <button onClick={() => select(keyId)} className="w-full px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-[#3C2414] text-[#FFF8F0] font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
+            {label}
+          </div>
+          <div className="text-left">
+            <div className="text-foreground text-sm font-medium">{subtitle}</div>
+          </div>
+        </div>
+        <div className="font-display font-bold text-lg text-primary">{t.thb}{total}</div>
+      </button>
+
+      {isSelected && (
+        <div className="px-4 pb-4 border-t border-border pt-3">
+          <div className="space-y-2 mb-3">
+            {items.map((ci, ciIdx) => {
+              const key = cartItemKey(ci);
+              return (
+                <div key={ciIdx} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => onAdjust(key, -1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-destructive/10 transition-all">
+                        <Minus size={12} />
+                      </button>
+                      <span className="text-muted-foreground text-sm font-medium w-6 text-center">{ci.quantity}</span>
+                      <button onClick={() => onAdjust(key, 1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-primary/10 transition-all">
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-foreground text-sm font-medium truncate">
+                        {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                      </div>
+                      {formatOptionDetails(ci, lang) && (
+                        <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-foreground font-semibold text-sm flex-shrink-0 ml-2">{t.thb}{cartItemTotal(ci)}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {cancelAction && (
+            <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium mb-3">
+              {t.cancelOrder}
+            </button>
+          )}
+
+          <div className="flex gap-2 mb-3">
+            {(["cash", "transfer"] as PaymentMethod[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => { setPaymentMethod(m); setCashInput(""); }}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border text-foreground"
+                  }`}
+              >
+                {m === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
+              </button>
+            ))}
+          </div>
+
+          {paymentMethod === "cash" && (
+            <div className="mb-3">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={cashInput}
+                onChange={(e) => setCashInput(e.target.value.replace(/[^0-9]/g, ""))}
+                placeholder={lang === "en" ? "Cash received" : "รับเงินมา"}
+                className="w-full bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              {cashInput !== "" && (
+                <div className={`text-sm font-semibold mt-1.5 ${Number(cashInput) >= total2 ? "text-secondary" : "text-destructive"}`}>
+                  {Number(cashInput) >= total2
+                    ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${Number(cashInput) - total2}`
+                    : (lang === "en" ? "Amount not enough" : "จำนวนเงินไม่พอ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={closeAction}
+            disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2)}
+            className="w-full bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Check size={16} />
+            {t.closeTable}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StaffPaymentScreen({
   lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
   onCancelOrder, onAskConfirm, onTabChange, onLogout, onLangToggle,
@@ -1752,121 +1878,6 @@ function StaffPaymentScreen({
     };
   });
 
-  function PaymentCard({
-    keyId, label, subtitle, total, items, onAdjust, total2, closeAction, cancelAction,
-  }: {
-    keyId: string;
-    label: string;
-    subtitle: string;
-    total: number;
-    items: CartItem[];
-    onAdjust: (key: string, delta: number) => void;
-    total2: number;
-    closeAction: () => void;
-    cancelAction?: () => void;
-  }) {
-    const isSelected = expandedKey === keyId;
-    return (
-      <div className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(60,36,20,0.15)" }}>
-        <button onClick={() => select(keyId)} className="w-full px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#3C2414] text-[#FFF8F0] font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
-              {label}
-            </div>
-            <div className="text-left">
-              <div className="text-foreground text-sm font-medium">{subtitle}</div>
-            </div>
-          </div>
-          <div className="font-display font-bold text-lg text-primary">{t.thb}{total}</div>
-        </button>
-
-        {isSelected && (
-          <div className="px-4 pb-4 border-t border-border pt-3">
-            <div className="space-y-2 mb-3">
-              {items.map((ci, ciIdx) => {
-                const key = cartItemKey(ci);
-                return (
-                  <div key={ciIdx} className="flex items-center justify-between py-1">
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button onClick={() => onAdjust(key, -1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-destructive/10 transition-all">
-                          <Minus size={12} />
-                        </button>
-                        <span className="text-muted-foreground text-sm font-medium w-6 text-center">{ci.quantity}</span>
-                        <button onClick={() => onAdjust(key, 1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-primary/10 transition-all">
-                          <Plus size={12} />
-                        </button>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-foreground text-sm font-medium truncate">
-                          {lang === "en" ? ci.item.name.en : ci.item.name.th}
-                        </div>
-                        {formatOptionDetails(ci, lang) && (
-                          <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
-                        )}
-                      </div>
-                    </div>
-                    <span className="text-foreground font-semibold text-sm flex-shrink-0 ml-2">{t.thb}{cartItemTotal(ci)}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {cancelAction && (
-              <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium mb-3">
-                {t.cancelOrder}
-              </button>
-            )}
-
-            <div className="flex gap-2 mb-3">
-              {(["cash", "transfer"] as PaymentMethod[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => { setPaymentMethod(m); setCashInput(""); }}
-                  className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card border-border text-foreground"
-                    }`}
-                >
-                  {m === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
-                </button>
-              ))}
-            </div>
-
-            {paymentMethod === "cash" && (
-              <div className="mb-3">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={cashInput}
-                  onChange={(e) => setCashInput(e.target.value.replace(/[^0-9]/g, ""))}
-                  placeholder={lang === "en" ? "Cash received" : "รับเงินมา"}
-                  className="w-full bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
-                />
-                {cashInput !== "" && (
-                  <div className={`text-sm font-semibold mt-1.5 ${Number(cashInput) >= total2 ? "text-secondary" : "text-destructive"}`}>
-                    {Number(cashInput) >= total2
-                      ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${Number(cashInput) - total2}`
-                      : (lang === "en" ? "Amount not enough" : "จำนวนเงินไม่พอ")}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <button
-              onClick={closeAction}
-              disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2)}
-              className="w-full bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Check size={16} />
-              {t.closeTable}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <StaffHeader lang={lang} activeTab="payment" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
@@ -1904,6 +1915,14 @@ function StaffPaymentScreen({
                           setExpandedKey(null);
                         })
                       }
+                      expandedKey={expandedKey}
+                      select={select}
+                      paymentMethod={paymentMethod}
+                      setPaymentMethod={setPaymentMethod}
+                      cashInput={cashInput}
+                      setCashInput={setCashInput}
+                      lang={lang}
+                      t={t}
                     />
                   ))}
                 </div>
@@ -1928,6 +1947,14 @@ function StaffPaymentScreen({
                       onAdjust={(key, delta) => onAdjustTakeawayItem(order.id, key, delta)}
                       closeAction={() => onCloseTakeaway(order.id, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
                       cancelAction={() => onAskConfirm(t.confirmCancelOrder, () => { onCancelOrder(order.id); setExpandedKey(null); })}
+                      expandedKey={expandedKey}
+                      select={select}
+                      paymentMethod={paymentMethod}
+                      setPaymentMethod={setPaymentMethod}
+                      cashInput={cashInput}
+                      setCashInput={setCashInput}
+                      lang={lang}
+                      t={t}
                     />
                   ))}
                 </div>
@@ -3068,13 +3095,69 @@ function getTableFromUrl(): string | null {
   }
 }
 
+// ─── หน้าจอค้าง / จำหน้าล่าสุดตอนรีเฟรช ────────────────────────────────────────
+// ใช้ sessionStorage (อยู่แค่ในแท็บนี้ ไม่ตกค้างข้ามอุปกรณ์/ข้ามการสแกนใหม่)
+// เพื่อจำว่าอยู่หน้าไหนอยู่ ตอนกด refresh จะได้ไม่กระเด้งกลับไปหน้าแรก
+
+const STORAGE_PREFIX = "hyk-pos";
+
+function readSession<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(`${STORAGE_PREFIX}:${key}`);
+    return raw === null ? null : (JSON.parse(raw) as T);
+  } catch {
+    return null;
+  }
+}
+
+function writeSession(key: string, value: unknown) {
+  try {
+    if (value === null || value === undefined) {
+      sessionStorage.removeItem(`${STORAGE_PREFIX}:${key}`);
+    } else {
+      sessionStorage.setItem(`${STORAGE_PREFIX}:${key}`, JSON.stringify(value));
+    }
+  } catch {
+    // sessionStorage ใช้ไม่ได้ (โหมดส่วนตัว ฯลฯ) — ปล่อยผ่าน ไม่ทำให้แอปพัง
+  }
+}
+
+// เฉพาะวิวเหล่านี้ที่ฝั่งลูกค้าจะถูกจำไว้ตอนรีเฟรช (ตัดพวกที่ sub-state เสี่ยงเกินไปออก)
+const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-sent"];
+
+type StaffTab = "orders" | "payment" | "menu" | "history" | "stats";
+const STAFF_TAB_VIEW: Record<StaffTab, View> = {
+  orders: "staff-orders",
+  payment: "staff-payment",
+  menu: "staff-menu",
+  history: "staff-history",
+  stats: "staff-stats",
+};
+function isStaffTab(v: unknown): v is StaffTab {
+  return v === "orders" || v === "payment" || v === "menu" || v === "history" || v === "stats";
+}
+
 export default function App() {
+  const initialTableFromUrl = getTableFromUrl();
+  // เชื่อ session ที่บันทึกไว้ได้ก็ต่อเมื่อเป็นโต๊ะเดียวกับที่บันทึกไว้เท่านั้น (กันเคสสแกนโต๊ะอื่นในแท็บเดิม)
+  const savedCustomerTable = initialTableFromUrl ? readSession<string>("customerTable") : null;
+  const isResumingCustomerSession = !!initialTableFromUrl && savedCustomerTable === initialTableFromUrl;
+
   const [lang, setLang] = useState<Language>("th");
-  const [view, setView] = useState<View>(() => (getTableFromUrl() ? "menu" : "staff-login"));
-  const [tableNumber, setTableNumber] = useState<string | null>(() => getTableFromUrl());
+  const [view, setView] = useState<View>(() => {
+    if (!initialTableFromUrl) return "staff-login"; // ฝั่งพนักงาน: effect ของ onAuthStateChanged จะจัดหน้าที่ถูกต้องให้เอง
+    if (isResumingCustomerSession) {
+      const savedView = readSession<View>("customerView");
+      if (savedView && CUSTOMER_RESUMABLE_VIEWS.includes(savedView)) return savedView;
+    }
+    return "menu";
+  });
+  const [tableNumber, setTableNumber] = useState<string | null>(() => initialTableFromUrl);
 
   // Customer state
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() =>
+    isResumingCustomerSession ? readSession<CartItem[]>("customerCart") || [] : []
+  );
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>("");
 
@@ -3086,6 +3169,11 @@ export default function App() {
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
+  const [staffLoggedIn, setStaffLoggedIn] = useState(false);
+  const allMenuItemsRef = useRef(allMenuItems);
+  useEffect(() => {
+    allMenuItemsRef.current = allMenuItems;
+  }, [allMenuItems]);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(query(collection(db, "categories"), orderBy("order", "asc")), (snapshot) => {
@@ -3126,6 +3214,45 @@ export default function App() {
       setMenuItems(data.filter((m) => m.active !== false));
     });
     return () => unsubscribe();
+  }, []);
+
+  // รีเฟรชตอนอยู่หน้ารายละเอียดเมนู: menuItems ยังโหลดไม่มา ต้องรอแล้วค่อยหา item ที่จำไว้กลับมาใส่
+  useEffect(() => {
+    if (view !== "item-detail" || selectedItem || manualSelectedItem || menuItems.length === 0) return;
+    const savedId = readSession<string>("customerSelectedItemId");
+    const found = savedId ? menuItems.find((m) => m.id === savedId) : undefined;
+    if (found) {
+      setSelectedItem(found);
+    } else {
+      setView("menu"); // หา item เดิมไม่เจอ (ถูกลบ/ปิดไปแล้ว) กลับไปหน้าเมนูแทนที่จะค้างหน้าเปล่า
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedItem, menuItems]);
+
+  // จำหน้า/ตะกร้า/รายการที่กำลังดูไว้ ตอนกดรีเฟรชฝั่งลูกค้าจะได้กลับมาหน้าเดิม (ไม่ใช่ทุกทีที่กระโดดกลับไปหน้าแรก)
+  useEffect(() => {
+    if (!tableNumber) return; // ฝั่งพนักงานไม่เกี่ยว
+    writeSession("customerTable", tableNumber);
+    if (CUSTOMER_RESUMABLE_VIEWS.includes(view)) writeSession("customerView", view);
+    writeSession("customerCart", cart);
+    // ตอนเพิ่งรีเฟรชที่หน้า item-detail, selectedItem จะยังเป็น null อยู่ชั่วคราว
+    // (รอ menuItems โหลดเสร็จก่อนถึงจะหา item เดิมเจอ) ถ้าเขียนทับตอนนี้ด้วย null
+    // จะไปลบค่าที่บันทึกไว้ก่อนที่ effect ฟื้นคืนค่าจะทันได้อ่าน — เลยข้ามการเขียนไปก่อน
+    if (view !== "item-detail" || selectedItem) {
+      writeSession("customerSelectedItemId", selectedItem?.id ?? null);
+    }
+  }, [tableNumber, view, cart, selectedItem]);
+
+  // iOS Safari (โดยเฉพาะเปิดผ่านแอปกล้อง/แอปแชทที่ใช้ in-app browser) มักดึงหน้าที่ถูก
+  // "แช่แข็ง" ไว้ใน back-forward cache กลับมาแสดงโดยไม่รันโค้ดใหม่เลย ทำให้ Firestore
+  // listener ค้าง/ไม่อัปเดต ดูเหมือนสแกนแล้วไม่ขึ้นอะไร ต้องรีเฟรชเองถึงจะเห็น —
+  // ตรวจจับเคสนี้แล้วรีโหลดหน้าให้อัตโนมัติ
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) window.location.reload();
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
   }, []);
   useEffect(() => {
     if (!authChecked) return;
@@ -3194,12 +3321,54 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user && !getTableFromUrl()) {
-        setView((v) => (v === "staff-login" ? "staff-orders" : v));
+        setView((v) => {
+          if (v !== "staff-login") return v;
+          const savedTab = readSession<StaffTab>("staffTab");
+          if (isStaffTab(savedTab)) {
+            setStaffTab(savedTab);
+            return STAFF_TAB_VIEW[savedTab];
+          }
+          return "staff-orders";
+        });
       }
+      setStaffLoggedIn(!!user);
       setAuthChecked(true);
     });
     return () => unsubscribe();
   }, []);
+
+  // รีเซ็ตเมนูที่ถูกปิดไว้ให้กลับมาเปิดทั้งหมดเมื่อขึ้นวันใหม่
+  // ทำงานเฉพาะฝั่งพนักงานที่ login อยู่ (เพราะ security rules อนุญาตให้เขียน menuItems ได้เฉพาะ auth != null)
+  // เช็คทันทีตอน login/เปิดแอป และเช็คซ้ำทุก 1 นาที เผื่อเปิดแท็บค้างข้ามเที่ยงคืนโดยไม่รีเฟรช
+  useEffect(() => {
+    if (!staffLoggedIn) return;
+
+    const checkAndResetDailyMenu = async () => {
+      const todayKey = getTodayKey();
+      const lockRef = doc(db, "counters", `menu-reset-${todayKey}`);
+      try {
+        const claimed = await runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(lockRef);
+          if (snap.exists()) return false; // มีเครื่องอื่นรีเซ็ตของวันนี้ไปแล้ว
+          transaction.set(lockRef, { resetAt: serverTimestamp() });
+          return true;
+        });
+        if (!claimed) return;
+
+        const toReset = allMenuItemsRef.current.filter((m) => m.active === false);
+        if (toReset.length === 0) return;
+        await Promise.all(
+          toReset.map((m) => updateDoc(doc(db, "menuItems", m.id), { active: true }))
+        );
+      } catch {
+        // เงียบไว้ก่อน เดี๋ยวรอบถัดไป (นาทีถัดไป) จะลองใหม่เอง
+      }
+    };
+
+    checkAndResetDailyMenu();
+    const interval = setInterval(checkAndResetDailyMenu, 60_000);
+    return () => clearInterval(interval);
+  }, [staffLoggedIn]);
 
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
   useEffect(() => {
@@ -3339,6 +3508,7 @@ export default function App() {
       await signInWithEmailAndPassword(auth, STAFF_EMAIL, pw);
       setLoginError(false);
       setStaffTab("orders");
+      writeSession("staffTab", "orders");
       setView("staff-orders");
     } catch {
       setLoginError(true);
@@ -3428,6 +3598,7 @@ export default function App() {
 
   const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history" | "stats") => {
     setStaffTab(tab);
+    writeSession("staffTab", tab);
     setView(
       tab === "orders" ? "staff-orders" :
         tab === "payment" ? "staff-payment" :
@@ -3481,6 +3652,7 @@ export default function App() {
 
   const handleLogout = async () => {
     await signOut(auth);
+    writeSession("staffTab", null);
     setView("staff-login");
   };
 
