@@ -19,10 +19,13 @@ import {
   Clock,
   CheckCircle,
   Trash2,
+  ChevronUp,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 import { db, auth } from "../lib/firebase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -41,8 +44,9 @@ type View =
   | "staff-menu-edit"
   | "staff-history"
   | "staff-stats"
-  | "staff-takeaway-menu"
-  | "staff-takeaway-cart";
+  | "staff-manual-table"
+  | "staff-manual-menu"
+  | "staff-manual-cart";;
 type MeatChoice = "pork" | "chicken" | "beef";
 type SpiceLevel = 0 | 1 | 2 | 3;
 type Portion = "regular" | "special";
@@ -59,6 +63,7 @@ interface CustomGroup {
   nameEn: string;
   type: "single" | "multi"; // single = เลือกได้ 1, multi = เลือกได้หลายอย่าง
   choices: CustomChoice[];
+  required?: boolean;
 }
 type OrderStatus = "in-progress" | "awaiting-payment" | "paid";
 type PaymentMethod = "cash" | "transfer";
@@ -80,6 +85,7 @@ interface MenuItem {
   customGroups?: CustomGroup[];
   popular?: boolean;
   disabledMeats?: MeatChoice[];
+  order?: number;
 }
 
 interface CartItem {
@@ -105,6 +111,7 @@ interface Order {
   cashReceived?: number;
   isTakeaway?: boolean;
   takeawayLabel?: string;
+  paymentBatchId?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -304,6 +311,48 @@ function cartTotal(cart: CartItem[]): number {
 
 function orderTotal(order: Order): number {
   return order.items.reduce((sum, ci) => sum + cartItemTotal(ci), 0);
+}
+
+function cartItemKey(ci: CartItem): string {
+  return JSON.stringify({
+    id: ci.item.id,
+    meat: ci.meat,
+    portion: ci.portion,
+    spiceLevel: ci.spiceLevel,
+    addEgg: ci.addEgg,
+    addOns: [...ci.addOns].sort(),
+    customSelections: ci.customSelections,
+    note: ci.note || "",
+  });
+}
+
+function mergeIntoCart(cart: CartItem[], newItem: CartItem): CartItem[] {
+  const key = cartItemKey(newItem);
+  const idx = cart.findIndex((ci) => cartItemKey(ci) === key);
+  if (idx === -1) return [...cart, newItem];
+  const updated = [...cart];
+  updated[idx] = { ...updated[idx], quantity: updated[idx].quantity + newItem.quantity };
+  return updated;
+}
+
+function formatOptionDetails(ci: CartItem, lang: Language): string {
+  const t = T[lang];
+  const parts: string[] = [];
+  if (ci.meat) parts.push(t.meats[ci.meat]);
+  if (ci.portion === "special") parts.push(t.special);
+  if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(t.spiceLevels[ci.spiceLevel]);
+  if (ci.addEgg) parts.push(t.eggAdded);
+  ci.addOns.forEach((id) => {
+    const addon = ADD_ONS.find((a) => a.id === id);
+    if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
+  });
+  ci.item.customGroups?.forEach((group) => {
+    const selected = ci.customSelections?.[group.id] || [];
+    group.choices.forEach((choice) => {
+      if (selected.includes(choice.id)) parts.push(lang === "en" ? choice.labelEn : choice.labelTh);
+    });
+  });
+  return parts.join(", ");
 }
 
 function parseTableKey(tn: string): [number, number] {
@@ -508,11 +557,12 @@ interface MenuProps {
   isTakeaway?: boolean;
   categories: Category[];
   isBusy?: boolean;
+  onExit?: () => void;
 }
 
 function MenuScreen({
   lang, tableNumber, cart, menuItems, categories, activeCategory,
-  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy,
+  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit
 }: MenuProps) {
   const t = T[lang];
   const [busyDismissed, setBusyDismissed] = useState(false);
@@ -521,17 +571,12 @@ function MenuScreen({
   }, [isBusy]);
 
   const [showOnboarding, setShowOnboarding] = useState(false);
-  useEffect(() => {
-    const seen = localStorage.getItem("has-seen-onboarding");
-    if (!seen) setShowOnboarding(true);
-  }, []);
-  const dismissOnboarding = () => {
-    localStorage.setItem("has-seen-onboarding", "1");
-    setShowOnboarding(false);
-  };
+  const dismissOnboarding = () => setShowOnboarding(false);
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
   const cartSum = cartTotal(cart);
-  const filtered = menuItems.filter((item) => item.categoryId === activeCategory);
+  const filtered = menuItems
+    .filter((item) => item.categoryId === activeCategory)
+    .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
 
   return (
     <>
@@ -541,7 +586,14 @@ function MenuScreen({
         <header className="sticky top-0 z-50 bg-[#3C2414] shadow-xl">
           <LannaBorder />
           <div className="flex items-center justify-between px-4 py-2.5">
-            <RestaurantLogo dark lang={lang} />
+            <div className="flex items-center gap-1">
+              {onExit && (
+                <button onClick={onExit} className="text-[#FFF8F0] p-1 hover:text-[#D07E35] transition-colors mr-1">
+                  <ChevronLeft size={22} />
+                </button>
+              )}
+              <RestaurantLogo dark lang={lang} />
+            </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1 bg-[#4A6741] px-2.5 py-1 rounded-full">
                 <Utensils size={11} className="text-[#FFF8F0]" />
@@ -570,7 +622,7 @@ function MenuScreen({
             className="flex overflow-x-auto px-4 pb-3 gap-2 pt-1"
             style={{ scrollbarWidth: "none" }}
           >
-            {categories.map((cat) => (
+            {[...categories].sort((a, b) => a.order - b.order).map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => onCategoryChange(cat.id)}
@@ -708,6 +760,10 @@ function ItemDetailScreen({
       prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
     );
   };
+
+  const missingRequired = item.customGroups?.some(
+    (g) => g.required && (customSelections[g.id] || []).length === 0
+  );
 
   const handleAdd = () => {
     onAddToCart({
@@ -1006,7 +1062,8 @@ function ItemDetailScreen({
       <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
         <button
           onClick={handleAdd}
-          className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95"
+          disabled={missingRequired}
+          className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-sm font-bold">{quantity}</span>
           <span>{t.addToCart}</span>
@@ -1110,7 +1167,7 @@ function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, on
                         className="w-full h-full object-cover"
                       />
                     </div>
-                  )}ห
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-semibold text-foreground text-sm leading-snug">
@@ -1373,11 +1430,11 @@ interface StaffOrdersProps {
   onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
-  onStartTakeaway?: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onStartManualOrder: () => void;
 }
 
-function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onStartTakeaway, onAskConfirm }: StaffOrdersProps) {
+function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder }: StaffOrdersProps) {
   const t = T[lang];
   const takeawayOrders = orders.filter((o) => o.isTakeaway && o.status === "in-progress");
   const inProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
@@ -1424,15 +1481,14 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
         className="flex-1 px-4 py-5 overflow-y-auto"
         style={{ scrollbarWidth: "none" }}
       >
-        {onStartTakeaway && (
-          <button
-            onClick={onStartTakeaway}
-            className="w-full mb-5 bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
-          >
-            <Plus size={16} />
-            {lang === "en" ? "New Takeaway Order" : "สั่งกลับบ้านใหม่"}
-          </button>
-        )}
+
+        <button
+          onClick={onStartManualOrder}
+          className="w-full mb-5 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
+        >
+          <Plus size={16} />
+          {lang === "en" ? "Create Order for Table" : "สร้างออเดอร์ให้โต๊ะ"}
+        </button>
 
         {/* Takeaway orders */}
         {takeawayOrders.length > 0 && (
@@ -1644,130 +1700,179 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
 interface StaffPaymentProps {
   lang: Language;
   orders: Order[];
-  selectedTable: string | null;
-  onSelectTable: (n: string) => void;
   onCloseTable: (n: string, paymentMethod: PaymentMethod, cashReceived?: number) => void;
   onCloseTakeaway: (orderId: string, paymentMethod: PaymentMethod, cashReceived?: number) => void;
+  onAdjustItem: (contributingOrders: Order[], key: string, delta: number) => void;
+  onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
+  onCancelOrder: (orderId: string) => void;
+  onAskConfirm: (message: string, onConfirm: () => void) => void;
   onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats") => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
 
 function StaffPaymentScreen({
-  lang, orders, selectedTable, onSelectTable, onCloseTable, onCloseTakeaway, onTabChange, onLogout, onLangToggle,
+  lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
+  onCancelOrder, onAskConfirm, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
-  const [selectedTakeawayId, setSelectedTakeawayId] = useState<string | null>(null);
+
+  const select = (key: string) => {
+    setExpandedKey((prev) => (prev === key ? null : key));
+    setPaymentMethod("cash");
+    setCashInput("");
+  };
+
   const awaitingPayment = orders.filter((o) => o.status === "awaiting-payment" && !o.isTakeaway);
   const takeawayAwaiting = orders.filter((o) => o.status === "awaiting-payment" && o.isTakeaway);
-  const selectedTakeawayOrder = takeawayAwaiting.find((o) => o.id === selectedTakeawayId) || null;
+
   const tableNumbers = [...new Set(awaitingPayment.map((o) => o.tableNumber))].sort(compareTables);
+  const tableGroups = tableNumbers.map((tn) => {
+    const tableOrders = awaitingPayment.filter((o) => o.tableNumber === tn);
+    const allItems = tableOrders.flatMap((o) => o.items);
+    const groupedItems = (() => {
+      const map = new Map<string, CartItem>();
+      allItems.forEach((ci) => {
+        const key = cartItemKey(ci);
+        const existing = map.get(key);
+        map.set(key, existing ? { ...existing, quantity: existing.quantity + ci.quantity } : { ...ci });
+      });
+      return Array.from(map.values());
+    })();
+    return {
+      tableNumber: tn,
+      orders: tableOrders,
+      items: groupedItems,
+      total: tableOrders.reduce((s, o) => s + orderTotal(o), 0),
+      itemCount: allItems.reduce((s, ci) => s + ci.quantity, 0),
+      rounds: tableOrders.length,
+    };
+  });
 
-  const tableOrders = selectedTable
-    ? awaitingPayment.filter((o) => o.tableNumber === selectedTable)
-    : [];
-  const tableSum = tableOrders.reduce((sum, o) => sum + orderTotal(o), 0);
-  const allItems = tableOrders.flatMap((o) => o.items);
+  function PaymentCard({
+    keyId, label, subtitle, total, items, onAdjust, total2, closeAction, cancelAction,
+  }: {
+    keyId: string;
+    label: string;
+    subtitle: string;
+    total: number;
+    items: CartItem[];
+    onAdjust: (key: string, delta: number) => void;
+    total2: number;
+    closeAction: () => void;
+    cancelAction?: () => void;
+  }) {
+    const isSelected = expandedKey === keyId;
+    return (
+      <div className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(60,36,20,0.15)" }}>
+        <button onClick={() => select(keyId)} className="w-full px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#3C2414] text-[#FFF8F0] font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
+              {label}
+            </div>
+            <div className="text-left">
+              <div className="text-foreground text-sm font-medium">{subtitle}</div>
+            </div>
+          </div>
+          <div className="font-display font-bold text-lg text-primary">{t.thb}{total}</div>
+        </button>
 
-  return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <StaffHeader
-        lang={lang}
-        activeTab="payment"
-        onTabChange={onTabChange}
-        onLogout={onLogout}
-        onLangToggle={onLangToggle}
-      />
-
-      <div
-        className="flex-1 px-4 py-5 overflow-y-auto"
-        style={{ scrollbarWidth: "none" }}
-      >
-
-        {takeawayAwaiting.length > 0 && (
-          <div className="mb-6">
-            <h3 className="font-semibold text-foreground text-sm mb-3">
-              {lang === "en" ? "Takeaway — Awaiting Payment" : "กลับบ้าน — รอชำระเงิน"}
-            </h3>
-            <div className="grid gap-3 md:grid-cols-2">
-              {takeawayAwaiting.map((order) => {
-                const isSelected = selectedTakeawayId === order.id;
-                const orderSum = orderTotal(order);
+        {isSelected && (
+          <div className="px-4 pb-4 border-t border-border pt-3">
+            <div className="space-y-2 mb-3">
+              {items.map((ci, ciIdx) => {
+                const key = cartItemKey(ci);
                 return (
-                  <div key={order.id} className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(208,126,53,0.3)" }}>
-                    <button
-                      onClick={() => { setSelectedTakeawayId(isSelected ? null : order.id); setPaymentMethod("cash"); setCashInput(""); }}
-                      className="w-full px-4 py-3 flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-accent text-accent-foreground font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
-                          {order.takeawayLabel}
-                        </div>
-                        <div className="text-foreground text-sm font-medium">
-                          {order.items.reduce((s, ci) => s + ci.quantity, 0)} {t.items}
-                        </div>
-                      </div>
-                      <div className="font-display font-bold text-lg text-primary">{t.thb}{orderSum}</div>
-                    </button>
-
-                    {isSelected && (
-                      <div className="px-4 pb-4 border-t border-border pt-3">
-                        <div className="flex gap-2 mb-3">
-                          {(["cash", "transfer"] as PaymentMethod[]).map((m) => (
-                            <button
-                              key={m}
-                              onClick={() => { setPaymentMethod(m); setCashInput(""); }}
-                              className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "bg-card border-border text-foreground"
-                                }`}
-                            >
-                              {m === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
-                            </button>
-                          ))}
-                        </div>
-                        {paymentMethod === "cash" && (
-                          <div className="mb-3">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={cashInput}
-                              onChange={(e) => setCashInput(e.target.value.replace(/[^0-9]/g, ""))}
-                              placeholder={lang === "en" ? "Cash received" : "รับเงินมา"}
-                              className="w-full bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
-                            />
-                            {cashInput !== "" && (
-                              <div className={`text-sm font-semibold mt-1.5 ${Number(cashInput) >= orderSum ? "text-secondary" : "text-destructive"}`}>
-                                {Number(cashInput) >= orderSum
-                                  ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${Number(cashInput) - orderSum}`
-                                  : (lang === "en" ? "Amount not enough" : "จำนวนเงินไม่พอ")}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => {
-                            onCloseTakeaway(order.id, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined);
-                            setSelectedTakeawayId(null);
-                          }}
-                          disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < orderSum)}
-                          className="w-full bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          <Check size={16} />
-                          {t.closeTable}
+                  <div key={ciIdx} className="flex items-center justify-between py-1">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button onClick={() => onAdjust(key, -1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-destructive/10 transition-all">
+                          <Minus size={12} />
+                        </button>
+                        <span className="text-muted-foreground text-sm font-medium w-6 text-center">{ci.quantity}</span>
+                        <button onClick={() => onAdjust(key, 1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-primary/10 transition-all">
+                          <Plus size={12} />
                         </button>
                       </div>
-                    )}
+                      <div className="min-w-0">
+                        <div className="text-foreground text-sm font-medium truncate">
+                          {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                        </div>
+                        {formatOptionDetails(ci, lang) && (
+                          <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-foreground font-semibold text-sm flex-shrink-0 ml-2">{t.thb}{cartItemTotal(ci)}</span>
                   </div>
                 );
               })}
             </div>
+
+            {cancelAction && (
+              <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium mb-3">
+                {t.cancelOrder}
+              </button>
+            )}
+
+            <div className="flex gap-2 mb-3">
+              {(["cash", "transfer"] as PaymentMethod[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => { setPaymentMethod(m); setCashInput(""); }}
+                  className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border text-foreground"
+                    }`}
+                >
+                  {m === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
+                </button>
+              ))}
+            </div>
+
+            {paymentMethod === "cash" && (
+              <div className="mb-3">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={cashInput}
+                  onChange={(e) => setCashInput(e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder={lang === "en" ? "Cash received" : "รับเงินมา"}
+                  className="w-full bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                {cashInput !== "" && (
+                  <div className={`text-sm font-semibold mt-1.5 ${Number(cashInput) >= total2 ? "text-secondary" : "text-destructive"}`}>
+                    {Number(cashInput) >= total2
+                      ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${Number(cashInput) - total2}`
+                      : (lang === "en" ? "Amount not enough" : "จำนวนเงินไม่พอ")}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={closeAction}
+              disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2)}
+              className="w-full bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Check size={16} />
+              {t.closeTable}
+            </button>
           </div>
         )}
+      </div>
+    );
+  }
 
-        {tableNumbers.length === 0 ? (
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <StaffHeader lang={lang} activeTab="payment" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
+
+      <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        {tableGroups.length === 0 && takeawayAwaiting.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-4">
               <CreditCard className="text-muted-foreground/50" size={34} />
@@ -1775,154 +1880,60 @@ function StaffPaymentScreen({
             <p className="text-muted-foreground text-sm">{t.noTablesWaiting}</p>
           </div>
         ) : (
-          <div className="lg:grid lg:grid-cols-[auto_1fr] lg:gap-8 lg:items-start">
-            {/* Table picker */}
-            <div className="mb-6 lg:mb-0 lg:w-64">
-              <p className="text-muted-foreground text-sm mb-3">{t.selectTablePay}</p>
-              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-3 gap-2.5">
-                {tableNumbers.map((tn) => (
-                  <button
-                    key={tn}
-                    onClick={() => onSelectTable(tn)}
-                    className={`aspect-square rounded-2xl flex flex-col items-center justify-center border-2 transition-all ${selectedTable === tn
-                      ? "bg-primary border-primary text-primary-foreground shadow-lg scale-105"
-                      : "bg-card border-border text-foreground hover:border-primary/40 hover:bg-primary/5 active:scale-95"
-                      }`}
-                  >
-                    <div className="font-display font-bold text-xl">{tn}</div>
-                    <div className="text-[9px] opacity-60 mt-0.5 uppercase tracking-wide">{t.tableLabel}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Order summary */}
-            {selectedTable && tableOrders.length > 0 && (
-              <div className="bg-card rounded-2xl border border-border overflow-hidden">
-                {/* Summary header */}
-                <div
-                  className="px-5 py-4 border-b border-border"
-                  style={{ background: "linear-gradient(135deg, rgba(60,36,20,0.06), rgba(60,36,20,0.02))" }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-display text-xl font-semibold text-foreground">
-                        {t.tableLabel} {selectedTable}
-                      </div>
-                      <div className="text-muted-foreground text-xs mt-0.5">
-                        {tableOrders.length} {tableOrders.length === 1 ? t.rounds : t.roundsPlural}
-                        {" · "}
-                        {allItems.reduce((s, ci) => s + ci.quantity, 0)} {t.items}
-                      </div>
-                    </div>
-                    <div className="font-display font-bold text-2xl text-primary">{t.thb}{tableSum}</div>
-                  </div>
-                </div>
-
-                {/* Items list */}
-                <div
-                  className="px-5 py-4 space-y-2.5 max-h-80 overflow-y-auto"
-                  style={{ scrollbarWidth: "none" }}
-                >
-                  {allItems.map((ci, idx) => (
-                    <div
-                      key={`${ci.cartId}-${idx}`}
-                      className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="text-muted-foreground text-sm font-medium flex-shrink-0">
-                          {ci.quantity}×
-                        </span>
-                        <div className="min-w-0">
-                          <div className="text-foreground text-sm font-medium truncate">
-                            {lang === "en" ? ci.item.name.en : ci.item.name.th}
-                          </div>
-                          {ci.addEgg && (
-                            <div className="text-muted-foreground text-xs">{t.eggAdded}</div>
-                          )}
-                        </div>
-                      </div>
-                      <span className="text-foreground font-semibold text-sm flex-shrink-0 ml-3">
-                        {t.thb}{cartItemTotal(ci)}
-                      </span>
-                    </div>
+          <>
+            {tableGroups.length > 0 && (
+              <div className="mb-6">
+                <h3 className="font-semibold text-foreground text-sm mb-3">
+                  {lang === "en" ? "Dine-in — Awaiting Payment" : "ในร้าน — รอชำระเงิน"}
+                </h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {tableGroups.map((g) => (
+                    <PaymentCard
+                      key={g.tableNumber}
+                      keyId={`table:${g.tableNumber}`}
+                      label={g.tableNumber}
+                      subtitle={`${g.rounds} ${g.rounds === 1 ? t.rounds : t.roundsPlural} · ${g.itemCount} ${t.items}`}
+                      total={g.total}
+                      total2={g.total}
+                      items={g.items}
+                      onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
+                      closeAction={() => onCloseTable(g.tableNumber, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
+                      cancelAction={() =>
+                        onAskConfirm(t.confirmCancelOrder, () => {
+                          g.orders.forEach((o) => onCancelOrder(o.id));
+                          setExpandedKey(null);
+                        })
+                      }
+                    />
                   ))}
                 </div>
-
-                {/* Payment method */}
-                <div className="px-5 py-4 border-t border-border">
-                  <div className="text-sm font-semibold text-foreground mb-2.5">
-                    {lang === "en" ? "Payment Method" : "วิธีจ่ายเงิน"}
-                  </div>
-                  <div className="flex gap-2 mb-3">
-                    {(["cash", "transfer"] as PaymentMethod[]).map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => { setPaymentMethod(m); setCashInput(""); }}
-                        className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border text-foreground hover:border-primary/40"
-                          }`}
-                      >
-                        {m === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
-                      </button>
-                    ))}
-                  </div>
-
-                  {paymentMethod === "cash" && (
-                    <div className="mb-1">
-                      <label className="text-xs text-muted-foreground block mb-1">
-                        {lang === "en" ? "Cash received" : "รับเงินมา"}
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={cashInput}
-                        onChange={(e) => setCashInput(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="0"
-                        className="w-full bg-card border-2 border-border rounded-xl px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary"
-                      />
-                      {cashInput !== "" && (
-                        <div className={`text-sm font-semibold mt-2 ${Number(cashInput) >= tableSum ? "text-secondary" : "text-destructive"}`}>
-                          {Number(cashInput) >= tableSum
-                            ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${Number(cashInput) - tableSum}`
-                            : (lang === "en" ? "Amount not enough" : "จำนวนเงินไม่พอ")}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Total & close */}
-                <div className="px-5 py-4 border-t border-border bg-muted/20">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="font-semibold text-foreground text-base">{t.tableTotal}</span>
-                    <span className="font-display font-bold text-2xl text-primary">{t.thb}{tableSum}</span>
-                  </div>
-                  <button
-                    onClick={() =>
-                      onCloseTable(
-                        selectedTable,
-                        paymentMethod,
-                        paymentMethod === "cash" ? Number(cashInput || 0) : undefined
-                      )
-                    }
-                    disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < tableSum)}
-                    className="w-full bg-secondary text-secondary-foreground py-4 rounded-2xl font-semibold text-base hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <Check size={18} />
-                    {t.closeTable}
-                  </button>
-                </div>
               </div>
             )}
 
-            {selectedTable && tableOrders.length === 0 && (
-              <div className="bg-card rounded-2xl border border-border px-6 py-10 text-center text-muted-foreground text-sm">
-                No pending orders for this table.
+            {takeawayAwaiting.length > 0 && (
+              <div className="mb-6">
+                <h3 className="font-semibold text-foreground text-sm mb-3">
+                  {lang === "en" ? "Takeaway — Awaiting Payment" : "กลับบ้าน — รอชำระเงิน"}
+                </h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {takeawayAwaiting.map((order) => (
+                    <PaymentCard
+                      key={order.id}
+                      keyId={`takeaway:${order.id}`}
+                      label={order.takeawayLabel || "T"}
+                      subtitle={`${order.items.reduce((s, ci) => s + ci.quantity, 0)} ${t.items}`}
+                      total={orderTotal(order)}
+                      total2={orderTotal(order)}
+                      items={order.items}
+                      onAdjust={(key, delta) => onAdjustTakeawayItem(order.id, key, delta)}
+                      closeAction={() => onCloseTakeaway(order.id, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
+                      cancelAction={() => onAskConfirm(t.confirmCancelOrder, () => { onCancelOrder(order.id); setExpandedKey(null); })}
+                    />
+                  ))}
+                </div>
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>
@@ -1944,10 +1955,12 @@ interface StaffMenuProps {
   onAddCategory: (nameEn: string, nameTh: string) => void;
   onDeleteCategory: (categoryId: string) => void;
   onToggleCategorySignature: (categoryId: string, signature: boolean) => void;
+  onMoveCategory: (categoryId: string, direction: "up" | "down") => void;
+  onMoveMenuItem: (itemId: string, categoryId: string, direction: "up" | "down") => void;
 }
 
 function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature,
+  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onMoveCategory, onMoveMenuItem,
 }: StaffMenuProps) {
   const t = T[lang];
   const [newCatEn, setNewCatEn] = useState("");
@@ -1972,8 +1985,24 @@ function StaffMenuScreen({
             {lang === "en" ? "Categories" : "จัดการหมวดหมู่"}
           </h3>
           <div className="space-y-1.5 mb-3">
-            {categories.map((cat) => (
+            {[...categories].sort((a, b) => a.order - b.order).map((cat, idx, arr) => (
               <div key={cat.id} className="flex items-center gap-2 bg-background rounded-lg px-3 py-2">
+                <div className="flex flex-col flex-shrink-0">
+                  <button
+                    onClick={() => onMoveCategory(cat.id, "up")}
+                    disabled={idx === 0}
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => onMoveCategory(cat.id, "down")}
+                    disabled={idx === arr.length - 1}
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                </div>
                 <span className="flex-1 text-sm text-foreground">
                   {lang === "en" ? cat.nameEn : cat.nameTh}
                 </span>
@@ -2028,8 +2057,10 @@ function StaffMenuScreen({
           </div>
         </div>
 
-        {categories.map((cat) => {
-          const catItems = items.filter((i) => i.categoryId === cat.id);
+        {[...categories].sort((a, b) => a.order - b.order).map((cat) => {
+          const catItems = items
+            .filter((i) => i.categoryId === cat.id)
+            .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
           if (catItems.length === 0) return null;
           return (
             <div key={cat.id} className="mb-6">
@@ -2037,11 +2068,27 @@ function StaffMenuScreen({
                 {lang === "en" ? cat.nameEn : cat.nameTh}
               </h3>
               <div className="space-y-2">
-                {catItems.map((item) => (
+                {catItems.map((item, idx) => (
                   <div
                     key={item.id}
                     className={`bg-card rounded-xl border border-border p-3 flex items-center gap-3 ${item.active === false ? "opacity-50" : ""}`}
                   >
+                    <div className="flex flex-col flex-shrink-0">
+                      <button
+                        onClick={() => onMoveMenuItem(item.id, cat.id, "up")}
+                        disabled={idx === 0}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
+                      >
+                        <ChevronUp size={14} />
+                      </button>
+                      <button
+                        onClick={() => onMoveMenuItem(item.id, cat.id, "down")}
+                        disabled={idx === catItems.length - 1}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-20 transition-colors"
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-foreground text-sm truncate">
                         {lang === "en" ? item.name.en : item.name.th}
@@ -2074,6 +2121,61 @@ function StaffMenuScreen({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function StaffManualTableScreen({
+  lang, onSelect, onSelectTakeaway, onCancel, onLangToggle,
+}: { lang: Language; onSelect: (tn: string) => void; onSelectTakeaway: () => void; onCancel: () => void; onLangToggle: () => void }) {
+  const t = T[lang];
+  const floors: { floor: number; tables: number }[] = [
+    { floor: 1, tables: 5 },
+    { floor: 2, tables: 9 },
+  ];
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <div className="bg-[#3C2414] sticky top-0 z-50">
+        <LannaBorder />
+        <div className="flex items-center justify-between px-4 py-3">
+          <button onClick={onCancel} className="text-[#FFF8F0] p-1 hover:text-[#D07E35] transition-colors">
+            <ChevronLeft size={24} />
+          </button>
+          <div className="font-display font-semibold text-[#FFF8F0]">
+            {lang === "en" ? "Select Table" : "เลือกโต๊ะ"}
+          </div>
+          <button onClick={onLangToggle} className="text-[#D07E35] text-xs font-semibold">{t.langSwitch}</button>
+        </div>
+      </div>
+
+      <div className="flex-1 px-5 py-6 max-w-md mx-auto w-full">
+        <button
+          onClick={onSelectTakeaway}
+          className="w-full mb-6 py-4 rounded-2xl bg-accent/15 border-2 border-accent text-accent font-semibold text-base hover:bg-accent/25 transition-all active:scale-95"
+        >
+          {lang === "en" ? "Takeaway (no table)" : "กลับบ้าน (ไม่มีโต๊ะ)"}
+        </button>
+
+        {floors.map((f) => (
+          <div key={f.floor} className="mb-6">
+            <h3 className="font-semibold text-foreground text-sm mb-3">
+              {lang === "en" ? `Floor ${f.floor}` : `ชั้น ${f.floor}`}
+            </h3>
+            <div className="grid grid-cols-4 gap-2.5">
+              {Array.from({ length: f.tables }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  onClick={() => onSelect(`${f.floor}-${n}`)}
+                  className="aspect-square rounded-2xl text-lg font-semibold bg-card text-foreground border border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95 transition-all"
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2381,6 +2483,16 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categ
                   <option value="single">{lang === "en" ? "Choose 1" : "เลือกได้ 1"}</option>
                   <option value="multi">{lang === "en" ? "Choose many" : "เลือกได้หลายอย่าง"}</option>
                 </select>
+                <button
+                  onClick={() => {
+                    const groups = [...(form.customGroups || [])];
+                    groups[gIdx] = { ...group, required: !group.required };
+                    update({ customGroups: groups });
+                  }}
+                  className={`text-[10px] px-2 py-1 rounded-full font-medium ${group.required ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}
+                >
+                  {lang === "en" ? "Required" : "บังคับเลือก"}
+                </button>
               </div>
 
               <div className="space-y-1.5 mb-2">
@@ -2489,8 +2601,27 @@ interface StaffHistoryProps {
   onLangToggle: () => void;
 }
 
+interface HistoryEntry {
+  tableNumber: string;
+  isTakeaway?: boolean;
+  takeawayLabel?: string;
+  timestamp: Date;
+  orders: Order[];
+  total: number;
+  itemCount: number;
+}
+
 function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle }: StaffHistoryProps) {
   const t = T[lang];
+  const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
+  const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
+  const toggleDay = (key: string) => {
+    setCollapsedDays((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
   const paidOrders = orders
     .filter((o) => o.status === "paid")
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
@@ -2501,11 +2632,36 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
     });
   }
 
-  const grouped: Record<string, Order[]> = {};
+  // รวมออเดอร์ที่ปิดพร้อมกัน (มี paymentBatchId เดียวกัน) เป็นรายการเดียว
+  // ออเดอร์เก่าที่ไม่มี paymentBatchId จะแสดงแยกแบบเดิม ไม่กระทบข้อมูลเก่า
+  const entryMap = new Map<string, HistoryEntry>();
   paidOrders.forEach((o) => {
-    const key = dateLabel(o.timestamp);
+    const key = o.paymentBatchId || o.id;
+    const existing = entryMap.get(key);
+    if (existing) {
+      existing.orders.push(o);
+      existing.total += orderTotal(o);
+      existing.itemCount += o.items.reduce((s, ci) => s + ci.quantity, 0);
+      if (o.timestamp < existing.timestamp) existing.timestamp = o.timestamp;
+    } else {
+      entryMap.set(key, {
+        tableNumber: o.tableNumber,
+        isTakeaway: o.isTakeaway,
+        takeawayLabel: o.takeawayLabel,
+        timestamp: o.timestamp,
+        orders: [o],
+        total: orderTotal(o),
+        itemCount: o.items.reduce((s, ci) => s + ci.quantity, 0),
+      });
+    }
+  });
+  const entries = Array.from(entryMap.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+  const grouped: Record<string, HistoryEntry[]> = {};
+  entries.forEach((e) => {
+    const key = dateLabel(e.timestamp);
     if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(o);
+    grouped[key].push(e);
   });
 
   return (
@@ -2518,31 +2674,75 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
             {lang === "en" ? "No completed orders yet" : "ยังไม่มีออเดอร์ที่เสร็จสิ้น"}
           </div>
         ) : (
-          Object.entries(grouped).map(([dateStr, dayOrders]) => {
-            const dayTotal = dayOrders.reduce((s, o) => s + orderTotal(o), 0);
+          Object.entries(grouped).map(([dateStr, dayEntries]) => {
+            const dayTotal = dayEntries.reduce((s, e) => s + e.total, 0);
+            const isDayCollapsed = collapsedDays.has(dateStr);
             return (
               <div key={dateStr} className="mb-6">
-                <div className="flex items-center justify-between mb-2.5">
-                  <h3 className="font-semibold text-foreground text-sm">{dateStr}</h3>
+                <button
+                  onClick={() => toggleDay(dateStr)}
+                  className="w-full flex items-center justify-between mb-2.5"
+                >
+                  <div className="flex items-center gap-1.5">
+                    {isDayCollapsed ? <ChevronRight size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                    <h3 className="font-semibold text-foreground text-sm">{dateStr}</h3>
+                  </div>
                   <span className="text-muted-foreground text-xs">
-                    {dayOrders.length} {t.rounds} · {t.thb}{dayTotal}
+                    {dayEntries.length} {t.rounds} · {t.thb}{dayTotal}
                   </span>
-                </div>
-                <div className="space-y-2">
-                  {dayOrders.map((o) => (
-                    <div key={o.id} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium text-foreground">
-                          {t.tableLabel} {o.tableNumber}
+                </button>
+                {!isDayCollapsed && (
+                  <div className="space-y-2">
+                    {dayEntries.map((e, idx) => {
+                      const entryKey = `${dateStr}-${idx}`;
+                      const isExpanded = expandedEntry === entryKey;
+                      return (
+                        <div key={idx} className="bg-card rounded-xl border border-border overflow-hidden">
+                          <button
+                            onClick={() => setExpandedEntry(isExpanded ? null : entryKey)}
+                            className="w-full p-3 flex items-center justify-between"
+                          >
+                            <div className="text-left">
+                              <div className="text-sm font-medium text-foreground">
+                                {e.isTakeaway ? e.takeawayLabel : `${t.tableLabel} ${e.tableNumber}`}
+                              </div>
+                              <div className="text-muted-foreground text-xs">
+                                {formatClock(e.timestamp)} · {e.itemCount} {t.items}
+                                {e.orders.length > 1 ? ` · ${e.orders.length} ${e.orders.length === 1 ? t.rounds : t.roundsPlural}` : ""}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-semibold text-primary text-sm">{t.thb}{e.total}</div>
+                              {isExpanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+                            </div>
+                          </button>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 pt-1 border-t border-border space-y-1.5">
+                              {e.orders.flatMap((o) => o.items).map((ci, ciIdx) => (
+                                <div key={ciIdx} className="flex items-start justify-between text-sm">
+                                  <div>
+                                    <div className="text-foreground">
+                                      {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                                    </div>
+                                    {formatOptionDetails(ci, lang) && (
+                                      <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
+                                    )}
+                                  </div>
+                                  <span className="text-muted-foreground flex-shrink-0">{t.thb}{cartItemTotal(ci)}</span>
+                                </div>
+                              ))}
+                              {e.orders[0]?.paymentMethod && (
+                                <div className="text-muted-foreground text-xs pt-1">
+                                  {e.orders[0].paymentMethod === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="text-muted-foreground text-xs">
-                          {formatClock(o.timestamp)} · {o.items.reduce((s, ci) => s + ci.quantity, 0)} {t.items}
-                        </div>
-                      </div>
-                      <div className="font-semibold text-primary text-sm">{t.thb}{orderTotal(o)}</div>
-                    </div>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })
@@ -2583,13 +2783,55 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
   const cashRevenue = filtered.filter((o) => o.paymentMethod === "cash").reduce((s, o) => s + orderTotal(o), 0);
   const transferRevenue = filtered.filter((o) => o.paymentMethod === "transfer").reduce((s, o) => s + orderTotal(o), 0);
   const orderCount = filtered.length;
+  const uniqueGroups = new Set(
+    filtered.filter((o) => !o.isTakeaway).map((o) => o.paymentBatchId || o.id)
+  ).size;
 
-  const menuCounts: Record<string, { nameEn: string; nameTh: string; qty: number; revenue: number }> = {};
+  function optionKey(ci: CartItem): string {
+    const parts: string[] = [];
+    if (ci.meat) parts.push(ci.meat);
+    if (ci.portion === "special") parts.push("special");
+    if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(`spice${ci.spiceLevel}`);
+    if (ci.addEgg) parts.push("egg");
+    ci.addOns.forEach((id) => parts.push(id));
+    ci.item.customGroups?.forEach((group) => {
+      const selected = ci.customSelections?.[group.id] || [];
+      selected.forEach((cid) => parts.push(cid));
+    });
+    return parts.join(",");
+  }
+
+  function optionLabel(ci: CartItem, lang: Language): string {
+    const parts: string[] = [];
+    if (ci.meat) parts.push(T[lang].meats[ci.meat]);
+    if (ci.portion === "special") parts.push(T[lang].special);
+    if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(T[lang].spiceLevels[ci.spiceLevel]);
+    if (ci.addEgg) parts.push(T[lang].eggAdded);
+    ci.addOns.forEach((id) => {
+      const addon = ADD_ONS.find((a) => a.id === id);
+      if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
+    });
+    ci.item.customGroups?.forEach((group) => {
+      const selected = ci.customSelections?.[group.id] || [];
+      group.choices.forEach((choice) => {
+        if (selected.includes(choice.id)) parts.push(lang === "en" ? choice.labelEn : choice.labelTh);
+      });
+    });
+    return parts.join(", ");
+  }
+
+  const menuCounts: Record<string, { nameEn: string; nameTh: string; optionLabel: string; qty: number; revenue: number }> = {};
   filtered.forEach((o) => {
     o.items.forEach((ci) => {
-      const key = ci.item.id;
+      const key = `${ci.item.id}|${optionKey(ci)}`;
       if (!menuCounts[key]) {
-        menuCounts[key] = { nameEn: ci.item.name.en, nameTh: ci.item.name.th, qty: 0, revenue: 0 };
+        menuCounts[key] = {
+          nameEn: ci.item.name.en,
+          nameTh: ci.item.name.th,
+          optionLabel: optionLabel(ci, lang),
+          qty: 0,
+          revenue: 0,
+        };
       }
       menuCounts[key].qty += ci.quantity;
       menuCounts[key].revenue += cartItemTotal(ci);
@@ -2613,12 +2855,6 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
         <div className="flex gap-2 mb-3">
           <button onClick={() => setPreset(1)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
             {lang === "en" ? "Today" : "วันนี้"}
-          </button>
-          <button onClick={() => setPreset(7)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
-            {lang === "en" ? "7 Days" : "7 วัน"}
-          </button>
-          <button onClick={() => setPreset(30)} className="flex-1 py-2 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all">
-            {lang === "en" ? "30 Days" : "30 วัน"}
           </button>
         </div>
 
@@ -2647,8 +2883,8 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
             <div className="font-display font-bold text-2xl text-primary">{t.thb}{totalRevenue}</div>
           </div>
           <div className="bg-card rounded-2xl border border-border p-4">
-            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Orders" : "จำนวนออเดอร์"}</div>
-            <div className="font-display font-bold text-2xl text-foreground">{orderCount}</div>
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Customer Groups" : "จำนวนกลุ่มลูกค้า"}</div>
+            <div className="font-display font-bold text-2xl text-foreground">{uniqueGroups}</div>
           </div>
           <div className="bg-card rounded-2xl border border-border p-4">
             <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Cash" : "เงินสด"}</div>
@@ -2676,7 +2912,10 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
                     {idx + 1}
                   </div>
                   <div>
-                    <div className="text-sm font-medium text-foreground">{lang === "en" ? m.nameEn : m.nameTh}</div>
+                    <div className="text-sm font-medium text-foreground">
+                      {lang === "en" ? m.nameEn : m.nameTh}
+                      {m.optionLabel && <span className="text-muted-foreground font-normal"> · {m.optionLabel}</span>}
+                    </div>
                     <div className="text-muted-foreground text-xs">{m.qty} {t.items}</div>
                   </div>
                 </div>
@@ -2703,28 +2942,59 @@ function getTableFromUrl(): string | null {
   }
 }
 
-const TABLE_SESSION_HOURS = 3;
+// ─── useViewHistory: sync `view` state กับ browser history ────────────────
+// วางไว้เหนือ export default function App() (เช่น หลังฟังก์ชัน getTableFromUrl())
 
-function isTableSessionExpired(tableNum: string): boolean {
-  const key = `table-session-${tableNum}`;
-  const stored = localStorage.getItem(key);
-  if (!stored) {
-    // ยังไม่เคยสแกนโต๊ะนี้มาก่อน = ถือว่าสแกนครั้งแรกตอนนี้
-    localStorage.setItem(key, Date.now().toString());
-    return false;
-  }
-  const scannedAt = Number(stored);
-  const hoursPassed = (Date.now() - scannedAt) / (1000 * 60 * 60);
-  return hoursPassed >= TABLE_SESSION_HOURS;
+function useViewHistory<T extends string>(initial: T | (() => T)) {
+  // รองรับทั้ง useViewHistory("menu") และ useViewHistory(() => cond ? "menu" : "staff-login")
+  const resolveInitial = (): T =>
+    typeof initial === "function" ? (initial as () => T)() : initial;
+
+  const [view, setViewState] = useState<T>(() => {
+    // ถ้ามี state ติดมากับ history อยู่แล้ว (เช่น refresh หน้า) ให้ใช้ค่านั้น
+    return (window.history.state?.view as T) ?? resolveInitial();
+  });
+
+  // ตอน mount ครั้งแรก ให้แน่ใจว่า entry แรกมี state ผูกอยู่
+  useEffect(() => {
+    if (!window.history.state?.view) {
+      window.history.replaceState({ view }, "");
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      // ผู้ใช้กดปุ่ม back/forward ของ browser
+      const targetView = event.state?.view as T | undefined;
+      if (targetView) {
+        setViewState(targetView);
+      } else {
+        // เผื่อกรณี state เป็น null (เช่น กด back จนสุด) — กันไม่ให้แอปหลุดไปหน้าอื่น
+        const fallback = resolveInitial();
+        setViewState(fallback);
+        window.history.replaceState({ view: fallback }, "");
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ตัวนี้แทนที่ setView เดิม — รองรับทั้ง setView("cart") และ setView(v => ...) เหมือน useState จริง
+  const setView = (next: T | ((prev: T) => T)) => {
+    setViewState((prev) => {
+      const resolved = typeof next === "function" ? (next as (prev: T) => T)(prev) : next;
+      if (prev === resolved) return prev; // ไม่ push ซ้ำถ้า view เดิม
+      window.history.pushState({ view: resolved }, "");
+      return resolved;
+    });
+  };
+
+  return [view, setView] as const;
 }
 
 export default function App() {
   const [lang, setLang] = useState<Language>("th");
-  const [view, setView] = useState<View>(() => {
-    const tn = getTableFromUrl();
-    if (!tn) return "staff-login";
-    return isTableSessionExpired(tn) ? "link-expired" : "menu";
-  });
+  const [view, setView] = useViewHistory<View>(() => (getTableFromUrl() ? "menu" : "staff-login"));
   const [tableNumber, setTableNumber] = useState<string | null>(() => getTableFromUrl());
 
   // Customer state
@@ -2746,6 +3016,29 @@ export default function App() {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
       setAllCategories(data);
       setCategories(data.filter((c) => c.active !== false));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const tn = getTableFromUrl();
+    if (!tn) return;
+    const q = query(collection(db, "orders"), where("tableNumber", "==", tn), orderBy("createdAt", "asc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs
+        .map((d) => {
+          const raw = d.data();
+          return {
+            id: d.id,
+            tableNumber: raw.tableNumber,
+            timestamp: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
+            items: raw.items,
+            status: raw.status,
+            isTakeaway: raw.isTakeaway,
+          } as Order;
+        })
+        .filter((o) => o.status !== "paid");
+      setCustomerOrders(data);
     });
     return () => unsubscribe();
   }, []);
@@ -2777,6 +3070,7 @@ export default function App() {
           cashReceived: raw.cashReceived,
           isTakeaway: raw.isTakeaway,
           takeawayLabel: raw.takeawayLabel,
+          paymentBatchId: raw.paymentBatchId,
         } as Order;
       });
       setOrders(data);
@@ -2789,7 +3083,7 @@ export default function App() {
   const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history" | "stats">("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm }); const [takeawayCart, setTakeawayCart] = useState<CartItem[]>([]);
+  const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm });
   const [busyTables, setBusyTables] = useState(0);
   const [busyItems, setBusyItems] = useState(0);
 
@@ -2813,8 +3107,12 @@ export default function App() {
   }, [orders]);
 
   const isBusy = busyTables >= 4 || busyItems > 10;
-  const [takeawayCategory, setTakeawayCategory] = useState<string>("");
-  const [takeawaySelectedItem, setTakeawaySelectedItem] = useState<MenuItem | null>(null);
+  const [manualTable, setManualTable] = useState<string | null>(null);
+  const [manualCart, setManualCart] = useState<CartItem[]>([]);
+  const [manualCategory, setManualCategory] = useState<string>("");
+  const [manualSelectedItem, setManualSelectedItem] = useState<MenuItem | null>(null);
+  const [manualIsTakeaway, setManualIsTakeaway] = useState(false);
+  const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -2829,8 +3127,8 @@ export default function App() {
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
   useEffect(() => {
     if (!activeCategory && categories.length > 0) setActiveCategory(categories[0].id);
-    if (!takeawayCategory && categories.length > 0) setTakeawayCategory(categories[0].id);
-  }, [categories, activeCategory, takeawayCategory]);
+    if (!manualCategory && categories.length > 0) setManualCategory(categories[0].id);
+  }, [categories, activeCategory, manualCategory]);
 
   const handleSelectItem = (item: MenuItem) => {
     setSelectedItem(item);
@@ -2838,7 +3136,7 @@ export default function App() {
   };
 
   const handleAddToCart = (ci: CartItem) => {
-    setCart((prev) => [...prev, ci]);
+    setCart((prev) => mergeIntoCart(prev, ci));
     setView("menu");
   };
 
@@ -2868,52 +3166,93 @@ export default function App() {
     }
   };
 
-  const handleStartTakeaway = () => {
-    setTakeawayCart([]);
-    setTakeawayCategory(categories[0]?.id || "");
-    setView("staff-takeaway-menu");
+  const handleStartManualOrder = () => {
+    setManualTable(null);
+    setManualIsTakeaway(false);
+    setManualCart([]);
+    setManualCategory(categories[0]?.id || "");
+    setView("staff-manual-table");
   };
 
-  const handleTakeawayAddToCart = (ci: CartItem) => {
-    setTakeawayCart((prev) => [...prev, ci]);
-    setView("staff-takeaway-menu");
+  const handlePickManualTable = (tn: string) => {
+    setManualTable(tn);
+    setManualIsTakeaway(false);
+    setView("staff-manual-menu");
   };
 
-  const handleTakeawayUpdateQty = (cartId: string, qty: number) => {
+  const handlePickManualTakeaway = () => {
+    setManualTable(null);
+    setManualIsTakeaway(true);
+    setView("staff-manual-menu");
+  };
+
+  const handleManualAddToCart = (ci: CartItem) => {
+    setManualCart((prev) => mergeIntoCart(prev, ci));
+    setView("staff-manual-menu");
+  };
+
+  const handleManualUpdateQty = (cartId: string, qty: number) => {
     if (qty <= 0) {
-      setTakeawayCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
+      setManualCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
     } else {
-      setTakeawayCart((prev) => prev.map((ci) => (ci.cartId === cartId ? { ...ci, quantity: qty } : ci)));
+      setManualCart((prev) => prev.map((ci) => (ci.cartId === cartId ? { ...ci, quantity: qty } : ci)));
     }
   };
 
-  const handleTakeawayRemove = (cartId: string) => {
-    setTakeawayCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
+  const handleManualRemove = (cartId: string) => {
+    setManualCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
+  };
+
+  const handleExitManualOrder = () => {
+    const reset = () => {
+      setManualCart([]);
+      setManualTable(null);
+      setManualIsTakeaway(false);
+      setView("staff-orders");
+    };
+    if (manualCart.length > 0) {
+      askConfirm(lang === "en" ? "Discard this order?" : "ยกเลิกออเดอร์นี้?", reset);
+    } else {
+      reset();
+    }
+  };
+
+  const handleConfirmManualOrder = async () => {
+    if (manualCart.length === 0) return;
+    if (!manualIsTakeaway && !manualTable) return;
+    const cleanItems = JSON.parse(JSON.stringify(manualCart));
+    if (manualIsTakeaway) {
+      const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
+      const nextNumber = await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(counterRef);
+        const current = snap.exists() ? (snap.data().count || 0) : 0;
+        const next = current + 1;
+        transaction.set(counterRef, { count: next });
+        return next;
+      });
+      await addDoc(collection(db, "orders"), {
+        tableNumber: "0",
+        isTakeaway: true,
+        takeawayLabel: `T-${nextNumber}`,
+        items: cleanItems,
+        status: "in-progress",
+        createdAt: serverTimestamp(),
+      });
+    } else {
+      await addDoc(collection(db, "orders"), {
+        tableNumber: manualTable,
+        items: cleanItems,
+        status: "in-progress",
+        createdAt: serverTimestamp(),
+      });
+    }
+    setManualCart([]);
+    setManualTable(null);
+    setManualIsTakeaway(false);
+    setView("staff-orders");
   };
 
   const takeawayCounterRef = { current: 0 };
-  const handleConfirmTakeaway = async () => {
-    if (takeawayCart.length === 0) return;
-    const cleanItems = JSON.parse(JSON.stringify(takeawayCart));
-    const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
-    const nextNumber = await runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(counterRef);
-      const current = snap.exists() ? (snap.data().count || 0) : 0;
-      const next = current + 1;
-      transaction.set(counterRef, { count: next });
-      return next;
-    });
-    await addDoc(collection(db, "orders"), {
-      tableNumber: 0,
-      isTakeaway: true,
-      takeawayLabel: `T-${nextNumber}`,
-      items: cleanItems,
-      status: "in-progress",
-      createdAt: serverTimestamp(),
-    });
-    setTakeawayCart([]);
-    setView("staff-orders");
-  };
 
   // Staff handlers
   const STAFF_EMAIL = "admin@hueanyong.local";
@@ -2952,11 +3291,13 @@ export default function App() {
     const toClose = orders.filter(
       (o) => o.tableNumber === tableNum && o.status === "awaiting-payment"
     );
+    const batchId = uid();
     await Promise.all(
       toClose.map((o) =>
         updateDoc(doc(db, "orders", o.id), {
           status: "paid",
           paymentMethod,
+          paymentBatchId: batchId,
           ...(cashReceived !== undefined ? { cashReceived } : {}),
         })
       )
@@ -2970,6 +3311,42 @@ export default function App() {
       paymentMethod,
       ...(cashReceived !== undefined ? { cashReceived } : {}),
     });
+  };
+
+  const handleAdjustPaymentItem = async (contributingOrders: Order[], key: string, delta: number) => {
+    for (const order of contributingOrders) {
+      const idx = order.items.findIndex((ci) => cartItemKey(ci) === key);
+      if (idx === -1) continue;
+      const newItems = [...order.items];
+      const newQty = newItems[idx].quantity + delta;
+      if (newQty <= 0) {
+        newItems.splice(idx, 1);
+      } else {
+        newItems[idx] = { ...newItems[idx], quantity: newQty };
+      }
+      if (newItems.length === 0) {
+        await deleteDoc(doc(db, "orders", order.id));
+      } else {
+        await updateDoc(doc(db, "orders", order.id), { items: newItems });
+      }
+      return;
+    }
+  };
+
+  const handleAdjustTakeawayItem = async (orderId: string, key: string, delta: number) => {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+    const idx = order.items.findIndex((ci) => cartItemKey(ci) === key);
+    if (idx === -1) return;
+    const newItems = [...order.items];
+    const newQty = newItems[idx].quantity + delta;
+    if (newQty <= 0) newItems.splice(idx, 1);
+    else newItems[idx] = { ...newItems[idx], quantity: newQty };
+    if (newItems.length === 0) {
+      await deleteDoc(doc(db, "orders", orderId));
+    } else {
+      await updateDoc(doc(db, "orders", orderId), { items: newItems });
+    }
   };
 
   const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history" | "stats") => {
@@ -3014,6 +3391,21 @@ export default function App() {
     await updateDoc(doc(db, "menuItems", item.id), { active });
   };
 
+  const handleMoveMenuItem = async (itemId: string, categoryId: string, direction: "up" | "down") => {
+    const itemsInCat = allMenuItems
+      .filter((m) => m.categoryId === categoryId)
+      .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
+    // backfill order ให้ทุกเมนูในหมวดนี้ก่อน (เผื่อเมนูเก่ายังไม่มีค่า order)
+    const withOrder = itemsInCat.map((m, i) => ({ ...m, order: i }));
+    const idx = withOrder.findIndex((m) => m.id === itemId);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= withOrder.length) return;
+    const a = withOrder[idx];
+    const b = withOrder[swapIdx];
+    [a.order, b.order] = [b.order, a.order];
+    await Promise.all(withOrder.map((m) => updateDoc(doc(db, "menuItems", m.id), { order: m.order })));
+  };
+
   const handleDeleteItem = async (itemId: string) => {
     await deleteDoc(doc(db, "menuItems", itemId));
   };
@@ -3028,6 +3420,19 @@ export default function App() {
   const handleAddCategory = async (nameEn: string, nameTh: string) => {
     const newOrder = allCategories.length > 0 ? Math.max(...allCategories.map((c) => c.order)) + 1 : 0;
     await addDoc(collection(db, "categories"), { nameEn, nameTh, order: newOrder, active: true, signature: false });
+  };
+
+  const handleMoveCategory = async (categoryId: string, direction: "up" | "down") => {
+    const sorted = [...allCategories].sort((a, b) => a.order - b.order);
+    const idx = sorted.findIndex((c) => c.id === categoryId);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= sorted.length) return;
+    const a = sorted[idx];
+    const b = sorted[swapIdx];
+    await Promise.all([
+      updateDoc(doc(db, "categories", a.id), { order: b.order }),
+      updateDoc(doc(db, "categories", b.id), { order: a.order }),
+    ]);
   };
 
   const handleDeleteCategory = async (categoryId: string) => {
@@ -3062,25 +3467,25 @@ export default function App() {
       break;
 
     case "item-detail": {
-      const isTakeawayFlow = !!takeawaySelectedItem;
-      const activeItem = isTakeawayFlow ? takeawaySelectedItem : selectedItem;
+      const isManualFlow = !!manualSelectedItem;
+      const activeItem = isManualFlow ? manualSelectedItem : selectedItem;
       content = activeItem ? (
         <ItemDetailScreen
           lang={lang}
-          tableNumber={isTakeawayFlow ? "0" : tableNumber!}
+          tableNumber={isManualFlow ? (manualIsTakeaway ? "0" : manualTable!) : tableNumber!}
           item={activeItem}
-          cart={isTakeawayFlow ? takeawayCart : cart}
+          cart={isManualFlow ? manualCart : cart}
           onBack={() => {
-            if (isTakeawayFlow) { setTakeawaySelectedItem(null); setView("staff-takeaway-menu"); }
+            if (isManualFlow) { setManualSelectedItem(null); setView("staff-manual-menu"); }
             else setView("menu");
           }}
           onAddToCart={(ci) => {
-            if (isTakeawayFlow) { handleTakeawayAddToCart(ci); setTakeawaySelectedItem(null); }
+            if (isManualFlow) { handleManualAddToCart(ci); setManualSelectedItem(null); }
             else handleAddToCart(ci);
           }}
-          onViewCart={() => setView(isTakeawayFlow ? "staff-takeaway-cart" : "cart")}
+          onViewCart={() => setView(isManualFlow ? "staff-manual-cart" : "cart")}
           onLangToggle={toggleLang}
-          isTakeaway={isTakeawayFlow}
+          isTakeaway={isManualFlow && manualIsTakeaway}
         />
       ) : null;
       break;
@@ -3135,7 +3540,7 @@ export default function App() {
           onLogout={handleLogout}
           onLangToggle={toggleLang}
           onAskConfirm={askConfirm}
-          onStartTakeaway={handleStartTakeaway}
+          onStartManualOrder={handleStartManualOrder}
         />
       );
       break;
@@ -3145,10 +3550,12 @@ export default function App() {
         <StaffPaymentScreen
           lang={lang}
           orders={orders}
-          selectedTable={selectedPayTable}
-          onSelectTable={setSelectedPayTable}
           onCloseTable={handleCloseTable}
           onCloseTakeaway={handleCloseTakeawayOrder}
+          onAdjustItem={handleAdjustPaymentItem}
+          onAdjustTakeawayItem={handleAdjustTakeawayItem}
+          onCancelOrder={handleCancelOrder}
+          onAskConfirm={askConfirm}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
@@ -3173,6 +3580,8 @@ export default function App() {
           onLogout={handleLogout}
           onLangToggle={toggleLang}
           onAskConfirm={askConfirm}
+          onMoveCategory={handleMoveCategory}
+          onMoveMenuItem={handleMoveMenuItem}
         />
       );
       break;
@@ -3214,36 +3623,49 @@ export default function App() {
       );
       break;
 
-    case "staff-takeaway-menu":
+    case "staff-manual-table":
       content = (
-        <MenuScreen
+        <StaffManualTableScreen
           lang={lang}
-          tableNumber={"0"}
-          cart={takeawayCart}
-          menuItems={menuItems}
-          activeCategory={takeawayCategory}
-          onCategoryChange={setTakeawayCategory}
-          onItemClick={(item) => { setTakeawaySelectedItem(item); setView("item-detail"); }}
-          onViewCart={() => setView("staff-takeaway-cart")}
+          onSelect={handlePickManualTable}
+          onSelectTakeaway={handlePickManualTakeaway}
+          onCancel={() => setView("staff-orders")}
           onLangToggle={toggleLang}
-          isTakeaway={true}
-          categories={categories}
         />
       );
       break;
 
-    case "staff-takeaway-cart":
+    case "staff-manual-menu":
+      content = (
+        <MenuScreen
+          lang={lang}
+          tableNumber={manualIsTakeaway ? "0" : (manualTable || "")}
+          cart={manualCart}
+          menuItems={menuItems}
+          categories={categories}
+          activeCategory={manualCategory}
+          onCategoryChange={setManualCategory}
+          onItemClick={(item) => { setManualSelectedItem(item); setView("item-detail"); }}
+          onViewCart={() => setView("staff-manual-cart")}
+          onLangToggle={toggleLang}
+          isTakeaway={manualIsTakeaway}
+          onExit={handleExitManualOrder}
+        />
+      );
+      break;
+
+    case "staff-manual-cart":
       content = (
         <CartScreen
           lang={lang}
-          tableNumber={"0"}
-          cart={takeawayCart}
-          onBack={() => setView("staff-takeaway-menu")}
-          onUpdateQty={handleTakeawayUpdateQty}
-          onRemove={handleTakeawayRemove}
-          onConfirm={handleConfirmTakeaway}
+          tableNumber={manualTable || ""}
+          cart={manualCart}
+          onBack={() => setView("staff-manual-menu")}
+          onUpdateQty={handleManualUpdateQty}
+          onRemove={handleManualRemove}
+          onConfirm={handleConfirmManualOrder}
           onLangToggle={toggleLang}
-          isTakeaway={true}
+          isTakeaway={manualIsTakeaway}
         />
       );
       break;
