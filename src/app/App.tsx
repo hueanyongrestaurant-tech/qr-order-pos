@@ -1125,9 +1125,10 @@ interface CartProps {
   onConfirm: () => void;
   onLangToggle: () => void;
   isTakeaway?: boolean;
+  submitting?: boolean;
 }
 
-function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway }: CartProps) {
+function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting }: CartProps) {
   const t = T[lang];
   const total = cartTotal(cart);
 
@@ -1261,7 +1262,9 @@ function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, on
           </div>
           <button
             onClick={onConfirm}
-            className="w-full bg-secondary text-secondary-foreground py-4 rounded-2xl font-semibold text-lg shadow-lg hover:bg-secondary/90 transition-all active:scale-95"
+            disabled={submitting}
+            className={`w-full bg-secondary text-secondary-foreground py-4 rounded-2xl font-semibold text-lg shadow-lg transition-all ${submitting ? "opacity-60 cursor-not-allowed" : "hover:bg-secondary/90 active:scale-95"
+              }`}
           >
             {t.confirmOrder}
           </button>
@@ -3603,8 +3606,17 @@ export default function App() {
     setCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
   };
 
+  const isSubmittingOrderRef = useRef(false);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+
   const handleConfirmOrder = async () => {
-    if (tableNumber && cart.length > 0) {
+    // กันกดปุ่ม/แตะจอซ้ำเร็ว ๆ (พบบ่อยทั้ง iOS และ Android) ที่ทำให้ยิง addDoc สองครั้ง
+    // กลายเป็นออเดอร์เบิ้ล — เช็คด้วย ref เพราะ state อาจอัปเดตไม่ทันถ้าแตะรัวมาก
+    if (isSubmittingOrderRef.current) return;
+    if (!(tableNumber && cart.length > 0)) return;
+    isSubmittingOrderRef.current = true;
+    setIsSubmittingOrder(true);
+    try {
       const cleanItems = JSON.parse(JSON.stringify(cart)); // ตัดฟิลด์ที่เป็น undefined ทิ้งอัตโนมัติ
       await addDoc(collection(db, "orders"), {
         tableNumber,
@@ -3614,6 +3626,9 @@ export default function App() {
       });
       setCart([]);
       setView("order-sent");
+    } finally {
+      isSubmittingOrderRef.current = false;
+      setIsSubmittingOrder(false);
     }
   };
 
@@ -3668,39 +3683,50 @@ export default function App() {
     }
   };
 
+  const isSubmittingManualOrderRef = useRef(false);
+  const [isSubmittingManualOrder, setIsSubmittingManualOrder] = useState(false);
+
   const handleConfirmManualOrder = async () => {
+    if (isSubmittingManualOrderRef.current) return; // กันแตะซ้ำเช่นเดียวกับฝั่งลูกค้า
     if (manualCart.length === 0) return;
     if (!manualIsTakeaway && !manualTable) return;
-    const cleanItems = JSON.parse(JSON.stringify(manualCart));
-    if (manualIsTakeaway) {
-      const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
-      const nextNumber = await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(counterRef);
-        const current = snap.exists() ? (snap.data().count || 0) : 0;
-        const next = current + 1;
-        transaction.set(counterRef, { count: next });
-        return next;
-      });
-      await addDoc(collection(db, "orders"), {
-        tableNumber: "0",
-        isTakeaway: true,
-        takeawayLabel: `T-${nextNumber}`,
-        items: cleanItems,
-        status: "in-progress",
-        createdAt: serverTimestamp(),
-      });
-    } else {
-      await addDoc(collection(db, "orders"), {
-        tableNumber: manualTable,
-        items: cleanItems,
-        status: "in-progress",
-        createdAt: serverTimestamp(),
-      });
+    isSubmittingManualOrderRef.current = true;
+    setIsSubmittingManualOrder(true);
+    try {
+      const cleanItems = JSON.parse(JSON.stringify(manualCart));
+      if (manualIsTakeaway) {
+        const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
+        const nextNumber = await runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(counterRef);
+          const current = snap.exists() ? (snap.data().count || 0) : 0;
+          const next = current + 1;
+          transaction.set(counterRef, { count: next });
+          return next;
+        });
+        await addDoc(collection(db, "orders"), {
+          tableNumber: "0",
+          isTakeaway: true,
+          takeawayLabel: `T-${nextNumber}`,
+          items: cleanItems,
+          status: "in-progress",
+          createdAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, "orders"), {
+          tableNumber: manualTable,
+          items: cleanItems,
+          status: "in-progress",
+          createdAt: serverTimestamp(),
+        });
+      }
+      setManualCart([]);
+      setManualTable(null);
+      setManualIsTakeaway(false);
+      setView("staff-orders");
+    } finally {
+      isSubmittingManualOrderRef.current = false;
+      setIsSubmittingManualOrder(false);
     }
-    setManualCart([]);
-    setManualTable(null);
-    setManualIsTakeaway(false);
-    setView("staff-orders");
   };
 
   const takeawayCounterRef = { current: 0 };
@@ -3984,6 +4010,7 @@ export default function App() {
           onRemove={handleRemoveItem}
           onConfirm={handleConfirmOrder}
           onLangToggle={toggleLang}
+          submitting={isSubmittingOrder}
         />
       );
       break;
@@ -4165,6 +4192,7 @@ export default function App() {
           onConfirm={handleConfirmManualOrder}
           onLangToggle={toggleLang}
           isTakeaway={manualIsTakeaway}
+          submitting={isSubmittingManualOrder}
         />
       );
       break;
