@@ -2969,20 +2969,10 @@ function StaffExpensesScreen({
   const [unit, setUnit] = useState("");
   const [amount, setAmount] = useState("");
 
-  // ช่วงวันที่สำหรับดูสรุปรวม (แยกจากวันที่กำลังกรอกของด้านบน)
-  const [summaryStart, setSummaryStart] = useState(today);
-  const [summaryEnd, setSummaryEnd] = useState(today);
-
   const sortedCatalog = [...catalog].sort((a, b) => b.usageCount - a.usageCount);
   const currentDay = expenseDays.find((e) => e.id === selectedDate);
   const dayItems = currentDay?.items || [];
   const dayTotal = currentDay?.totalAmount || 0;
-
-  const summaryDays = expenseDays.filter((e) => e.date >= summaryStart && e.date <= summaryEnd);
-  const summaryTotal = summaryDays.reduce((s, e) => s + e.totalAmount, 0);
-  const summaryLines = summaryDays
-    .flatMap((e) => e.items.map((it) => ({ ...it, date: e.date })))
-    .sort((a, b) => b.date.localeCompare(a.date));
 
   // ถ้าพิมพ์ชื่อตรงกับของที่เคยกรอกไว้เป๊ะ (เลือกจาก autocomplete) เติมหน่วย/จำนวน/ราคาล่าสุดให้อัตโนมัติ แก้ไขได้
   const handleNameChange = (value: string) => {
@@ -3083,97 +3073,57 @@ function StaffExpensesScreen({
           </button>
         </div>
 
-        {/* รายการของวันที่เลือก */}
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold text-foreground text-sm">
-            {lang === "en" ? "Purchases" : "รายการที่ซื้อ"} ({selectedDate})
-          </h3>
-          <div className="font-display font-bold text-sm text-destructive">
-            {lang === "en" ? "Total" : "รวม"} {t.thb}{dayTotal}
+        {/* สรุปรายการที่ซื้อของวันที่เลือก — โชว์ในหน้าเดียวแบบใบเสร็จ ไม่ต้องเลื่อนอ่านทีละรายการ */}
+        <div className="bg-card border border-border rounded-xl p-4 font-mono">
+          <div className="text-center mb-2">
+            <div className="font-semibold text-foreground text-sm">
+              {lang === "en" ? "Purchase List" : "รายการที่ซื้อ"}
+            </div>
+            <div className="text-muted-foreground text-xs">{selectedDate}</div>
           </div>
-        </div>
 
-        {dayItems.length === 0 ? (
-          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
-            {lang === "en" ? "No purchases logged for this date" : "ยังไม่มีรายการซื้อของวันนี้"}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {dayItems.map((it, idx) => (
-              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-foreground">{it.name}</div>
-                  <div className="text-muted-foreground text-xs">
-                    {it.quantity}{it.unit ? ` ${it.unit}` : ""}
+          <div className="border-t border-dashed border-border my-2" />
+
+          {dayItems.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground text-xs">
+              {lang === "en" ? "No purchases logged for this date" : "ยังไม่มีรายการซื้อของวันนี้"}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {dayItems.map((it, idx) => (
+                <div key={idx} className="flex items-center justify-between gap-2 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-foreground truncate">{it.name}</div>
+                    <div className="text-muted-foreground text-xs">
+                      {it.quantity}{it.unit ? ` ${it.unit}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="text-foreground">{t.thb}{it.amount}</div>
+                    <button
+                      onClick={() =>
+                        onAskConfirm(
+                          lang === "en" ? "Delete this item?" : "ลบรายการนี้?",
+                          () => onDeleteItem(selectedDate, idx)
+                        )
+                      }
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="font-semibold text-foreground text-sm">{t.thb}{it.amount}</div>
-                  <button
-                    onClick={() =>
-                      onAskConfirm(
-                        lang === "en" ? "Delete this item?" : "ลบรายการนี้?",
-                        () => onDeleteItem(selectedDate, idx)
-                      )
-                    }
-                    className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+
+          <div className="border-t border-dashed border-border my-2" />
+
+          <div className="flex items-center justify-between font-semibold text-sm">
+            <div className="text-foreground">{lang === "en" ? "Total" : "รวม"}</div>
+            <div className="text-destructive">{t.thb}{dayTotal}</div>
           </div>
-        )}
-
-        {/* สรุปรวมรายจ่าย ตามช่วงวันที่ */}
-        <h3 className="font-semibold text-foreground text-sm mb-3 mt-8">
-          {lang === "en" ? "Expense Summary" : "สรุปรวมรายจ่าย"}
-        </h3>
-
-        <div className="flex items-center gap-2 mb-4">
-          <input
-            type="date"
-            value={summaryStart}
-            max={summaryEnd}
-            onChange={(e) => setSummaryStart(e.target.value)}
-            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-          />
-          <span className="text-muted-foreground text-sm">–</span>
-          <input
-            type="date"
-            value={summaryEnd}
-            min={summaryStart}
-            max={today}
-            onChange={(e) => setSummaryEnd(e.target.value)}
-            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-          />
         </div>
-
-        <div className="bg-card rounded-2xl border border-border p-4 mb-4">
-          <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Total Expenses" : "รายจ่ายรวม"}</div>
-          <div className="font-display font-bold text-2xl text-destructive">{t.thb}{summaryTotal}</div>
-        </div>
-
-        {summaryLines.length === 0 ? (
-          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
-            {lang === "en" ? "No expenses for this period" : "ไม่มีรายจ่ายในช่วงนี้"}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {summaryLines.map((line, idx) => (
-              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-foreground">{line.name}</div>
-                  <div className="text-muted-foreground text-xs">
-                    {line.date} · {line.quantity}{line.unit ? ` ${line.unit}` : ""}
-                  </div>
-                </div>
-                <div className="font-semibold text-destructive text-sm">{t.thb}{line.amount}</div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
