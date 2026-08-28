@@ -1494,7 +1494,7 @@ function kitchenOptionSummary(ci: CartItem, lang: Language): string {
   return parts.join(", ");
 }
 
-// ─── Bluetooth Thermal Printer (ESC/POS via BLE) ─────────────────────────────
+/* ─── Bluetooth Thermal Printer (ESC/POS via BLE) — พักไว้ก่อน (ยังไม่เสถียร จับคู่ช้า) ───
 
 const PRINTER_SERVICE_UUID = "0000ff00-0000-1000-8000-00805f9b34fb";
 const PRINTER_CHARACTERISTIC_UUID = "0000ff02-0000-1000-8000-00805f9b34fb";
@@ -1616,6 +1616,8 @@ async function printKitchenTicketBLE(order: Order, lang: Language) {
   }
 }
 
+*/
+
 function KitchenTicket({ order, lang }: { order: Order; lang: Language }) {
   const label = order.isTakeaway
     ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")
@@ -1720,7 +1722,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
             {lang === "en" ? "Create Order for Table" : "สร้างออเดอร์ให้โต๊ะ"}
           </button>
 
-          {/* ปุ่มทดสอบพิมพ์จริงผ่าน Bluetooth — ลบออกทีหลังได้เมื่อเทสเสร็จ */}
+          {/* ปุ่มทดสอบพิมพ์จริงผ่าน Bluetooth (BLE) — พักไว้ก่อน ยังจับคู่ช้าอยู่ ค่อยกลับมาแก้ต่อ
           <button
             onClick={() => {
               const testOrder = [...takeawayOrders, ...inProgress][0];
@@ -1731,6 +1733,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
           >
             🖨️ ทดสอบพิมพ์จริง (BLE)
           </button>
+          */}
 
           {/* Takeaway orders */}
           {takeawayOrders.length > 0 && (
