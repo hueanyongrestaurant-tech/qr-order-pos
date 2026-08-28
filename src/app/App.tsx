@@ -1494,42 +1494,125 @@ function kitchenOptionSummary(ci: CartItem, lang: Language): string {
   return parts.join(", ");
 }
 
-// ─── Web Bluetooth Test ──────────────────────────────────────────────────────
+// ─── Bluetooth Thermal Printer (ESC/POS via BLE) ─────────────────────────────
 
-async function testBluetoothScan() {
+const PRINTER_SERVICE_UUID = "0000ff00-0000-1000-8000-00805f9b34fb";
+const PRINTER_CHARACTERISTIC_UUID = "0000ff02-0000-1000-8000-00805f9b34fb";
+const PRINTER_WIDTH_PX = 384; // 58mm ที่ 203dpi
+
+let cachedPrinterDevice: any = null;
+
+async function getPrinterCharacteristic() {
   if (!("bluetooth" in navigator)) {
-    alert("เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (ต้องใช้ Chrome บน Android)");
-    return;
+    throw new Error("เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (ต้องใช้ Chrome บน Android)");
   }
-  try {
-    const device = await (navigator as any).bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        "000018f0-0000-1000-8000-00805f9b34fb", // service ที่เครื่องปริ้นความร้อนราคาประหยัดส่วนใหญ่ใช้
-        "0000ff00-0000-1000-8000-00805f9b34fb",
-        "0000ffe0-0000-1000-8000-00805f9b34fb",
-      ],
+  let device = cachedPrinterDevice;
+  if (!device || !device.gatt.connected) {
+    device = await (navigator as any).bluetooth.requestDevice({
+      filters: [{ services: [PRINTER_SERVICE_UUID] }],
     });
+    cachedPrinterDevice = device;
+  }
+  const server = await device.gatt.connect();
+  const service = await server.getPrimaryService(PRINTER_SERVICE_UUID);
+  return await service.getCharacteristic(PRINTER_CHARACTERISTIC_UUID);
+}
 
-    const server = await device.gatt.connect();
-    const services = await server.getPrimaryServices();
+function renderTicketToCanvas(order: Order, lang: Language): HTMLCanvasElement {
+  type Line = { text: string; size: number; bold?: boolean; align?: "left" | "center" };
+  const lines: Line[] = [];
 
-    let report = `เจออุปกรณ์: ${device.name || "(ไม่มีชื่อ)"}\n\nService ที่เจอ:\n`;
-    for (const service of services) {
-      report += `\n• Service: ${service.uuid}`;
-      const characteristics = await service.getCharacteristics();
-      for (const ch of characteristics) {
-        report += `\n   - Characteristic: ${ch.uuid} (write: ${ch.properties.write || ch.properties.writeWithoutResponse})`;
+  lines.push({ text: T[lang].appName, size: 22, bold: true, align: "center" });
+  const label = order.isTakeaway
+    ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")
+    : `${T[lang].tableLabel} ${order.tableNumber}`;
+  lines.push({ text: label, size: 28, bold: true, align: "center" });
+  lines.push({ text: order.timestamp.toLocaleString(lang === "th" ? "th-TH" : "en-US"), size: 16, align: "center" });
+  lines.push({ text: "-".repeat(30), size: 16, align: "left" });
+
+  order.items.forEach((ci) => {
+    lines.push({ text: `${ci.quantity}x ${lang === "en" ? ci.item.name.en : ci.item.name.th}`, size: 22, bold: true, align: "left" });
+    const opt = kitchenOptionSummary(ci, lang);
+    if (opt) lines.push({ text: "   " + opt, size: 16, align: "left" });
+    if (ci.note) lines.push({ text: `   "${ci.note}"`, size: 16, align: "left" });
+  });
+  lines.push({ text: "-".repeat(30), size: 16, align: "left" });
+
+  const lineGap = 6;
+  let totalHeight = 20;
+  lines.forEach((l) => { totalHeight += l.size + lineGap; });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = PRINTER_WIDTH_PX;
+  canvas.height = totalHeight + 20;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#000";
+
+  let y = 14;
+  lines.forEach((l) => {
+    ctx.font = `${l.bold ? "bold " : ""}${l.size}px 'Tahoma', sans-serif`;
+    ctx.textBaseline = "top";
+    let x = 8;
+    if (l.align === "center") {
+      const w = ctx.measureText(l.text).width;
+      x = Math.max(8, (canvas.width - w) / 2);
+    }
+    ctx.fillText(l.text, x, y);
+    y += l.size + lineGap;
+  });
+
+  return canvas;
+}
+
+function canvasToEscPosRaster(canvas: HTMLCanvasElement): Uint8Array {
+  const ctx = canvas.getContext("2d")!;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height).data;
+  const widthBytes = Math.ceil(width / 8);
+  const bitmap = new Uint8Array(widthBytes * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const brightness = (imageData[idx] + imageData[idx + 1] + imageData[idx + 2]) / 3;
+      if (brightness < 128) {
+        bitmap[y * widthBytes + (x >> 3)] |= 0x80 >> (x % 8);
       }
     }
-    alert(report);
-    console.log(report);
+  }
+
+  const header = new Uint8Array([
+    0x1d, 0x76, 0x30, 0x00,
+    widthBytes & 0xff, (widthBytes >> 8) & 0xff,
+    height & 0xff, (height >> 8) & 0xff,
+  ]);
+  const feed = new Uint8Array([0x0a, 0x0a, 0x0a, 0x0a]); // เลื่อนกระดาษออกมาให้ฉีกง่าย
+
+  const result = new Uint8Array(header.length + bitmap.length + feed.length);
+  result.set(header, 0);
+  result.set(bitmap, header.length);
+  result.set(feed, header.length + bitmap.length);
+  return result;
+}
+
+async function writeInChunks(characteristic: any, data: Uint8Array, chunkSize = 180) {
+  for (let i = 0; i < data.length; i += chunkSize) {
+    const chunk = data.slice(i, i + chunkSize);
+    await characteristic.writeValue(chunk);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+async function printKitchenTicketBLE(order: Order, lang: Language) {
+  try {
+    const characteristic = await getPrinterCharacteristic();
+    const canvas = renderTicketToCanvas(order, lang);
+    const escposData = canvasToEscPosRaster(canvas);
+    await writeInChunks(characteristic, escposData);
   } catch (err: any) {
-    if (err.name === "NotFoundError") {
-      alert("ไม่เจออุปกรณ์ หรือกดยกเลิก");
-    } else {
-      alert("เกิดข้อผิดพลาด: " + err.message + "\n\n" + err.stack);
-    }
+    alert("พิมพ์ไม่สำเร็จ: " + err.message);
   }
 }
 
@@ -1637,12 +1720,16 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
             {lang === "en" ? "Create Order for Table" : "สร้างออเดอร์ให้โต๊ะ"}
           </button>
 
-          {/* ปุ่มทดสอบ Bluetooth — ลบออกทีหลังได้เมื่อเทสเสร็จ */}
+          {/* ปุ่มทดสอบพิมพ์จริงผ่าน Bluetooth — ลบออกทีหลังได้เมื่อเทสเสร็จ */}
           <button
-            onClick={testBluetoothScan}
+            onClick={() => {
+              const testOrder = [...takeawayOrders, ...inProgress][0];
+              if (!testOrder) { alert("ยังไม่มีออเดอร์ให้ทดสอบพิมพ์ ลองสร้างออเดอร์ก่อน"); return; }
+              printKitchenTicketBLE(testOrder, lang);
+            }}
             className="w-full mb-5 bg-muted text-foreground py-2.5 rounded-xl font-semibold text-xs hover:bg-muted/80 transition-all active:scale-95"
           >
-            📡 ทดสอบ Bluetooth
+            🖨️ ทดสอบพิมพ์จริง (BLE)
           </button>
 
           {/* Takeaway orders */}
