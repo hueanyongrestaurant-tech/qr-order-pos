@@ -1504,14 +1504,31 @@ async function testBluetoothScan() {
   try {
     const device = await (navigator as any).bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [],
+      optionalServices: [
+        "000018f0-0000-1000-8000-00805f9b34fb", // service ที่เครื่องปริ้นความร้อนราคาประหยัดส่วนใหญ่ใช้
+        "0000ff00-0000-1000-8000-00805f9b34fb",
+        "0000ffe0-0000-1000-8000-00805f9b34fb",
+      ],
     });
-    alert(`เจออุปกรณ์!\nชื่อ: ${device.name || "(ไม่มีชื่อ)"}\nID: ${device.id}`);
+
+    const server = await device.gatt.connect();
+    const services = await server.getPrimaryServices();
+
+    let report = `เจออุปกรณ์: ${device.name || "(ไม่มีชื่อ)"}\n\nService ที่เจอ:\n`;
+    for (const service of services) {
+      report += `\n• Service: ${service.uuid}`;
+      const characteristics = await service.getCharacteristics();
+      for (const ch of characteristics) {
+        report += `\n   - Characteristic: ${ch.uuid} (write: ${ch.properties.write || ch.properties.writeWithoutResponse})`;
+      }
+    }
+    alert(report);
+    console.log(report);
   } catch (err: any) {
     if (err.name === "NotFoundError") {
-      alert("ไม่เจออุปกรณ์ หรือกดยกเลิก — ถ้าไม่เห็นชื่อเครื่องปริ้นในรายการเลย แปลว่าเครื่องปริ้นนี้ใช้ Bluetooth Classic ไม่ใช่ BLE");
+      alert("ไม่เจออุปกรณ์ หรือกดยกเลิก");
     } else {
-      alert("เกิดข้อผิดพลาด: " + err.message);
+      alert("เกิดข้อผิดพลาด: " + err.message + "\n\n" + err.stack);
     }
   }
 }
