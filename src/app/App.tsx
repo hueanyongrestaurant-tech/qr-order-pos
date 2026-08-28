@@ -1494,6 +1494,28 @@ function kitchenOptionSummary(ci: CartItem, lang: Language): string {
   return parts.join(", ");
 }
 
+// ─── Web Bluetooth Test ──────────────────────────────────────────────────────
+
+async function testBluetoothScan() {
+  if (!("bluetooth" in navigator)) {
+    alert("เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (ต้องใช้ Chrome บน Android)");
+    return;
+  }
+  try {
+    const device = await (navigator as any).bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [],
+    });
+    alert(`เจออุปกรณ์!\nชื่อ: ${device.name || "(ไม่มีชื่อ)"}\nID: ${device.id}`);
+  } catch (err: any) {
+    if (err.name === "NotFoundError") {
+      alert("ไม่เจออุปกรณ์ หรือกดยกเลิก — ถ้าไม่เห็นชื่อเครื่องปริ้นในรายการเลย แปลว่าเครื่องปริ้นนี้ใช้ Bluetooth Classic ไม่ใช่ BLE");
+    } else {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    }
+  }
+}
+
 function KitchenTicket({ order, lang }: { order: Order; lang: Language }) {
   const label = order.isTakeaway
     ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")
@@ -1596,6 +1618,14 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
           >
             <Plus size={16} />
             {lang === "en" ? "Create Order for Table" : "สร้างออเดอร์ให้โต๊ะ"}
+          </button>
+
+          {/* ปุ่มทดสอบ Bluetooth — ลบออกทีหลังได้เมื่อเทสเสร็จ */}
+          <button
+            onClick={testBluetoothScan}
+            className="w-full mb-5 bg-muted text-foreground py-2.5 rounded-xl font-semibold text-xs hover:bg-muted/80 transition-all active:scale-95"
+          >
+            📡 ทดสอบ Bluetooth
           </button>
 
           {/* Takeaway orders */}
