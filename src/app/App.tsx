@@ -3428,7 +3428,7 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
       menuCounts[key].revenue += cartItemTotal(ci);
     });
   });
-  const topMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty).slice(0, 10);
+  const topMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -3474,7 +3474,7 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
         </div>
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
-          {lang === "en" ? "Top Menu Items" : "เมนูขายดี"}
+          {lang === "en" ? "Items Ordered" : "รายการที่ขายทั้งหมด"}
         </h3>
         {topMenus.length === 0 ? (
           <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
