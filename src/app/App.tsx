@@ -1636,18 +1636,18 @@ function KitchenTicket({ order, lang }: { order: Order; lang: Language }) {
       </div>
       <div style={{ borderTop: "1px dashed #000", margin: "6px 0" }} />
       {order.items.map((ci) => (
-        <div key={ci.cartId} style={{ marginBottom: "8px" }}>
-          <div style={{ display: "flex", fontSize: "14px", fontWeight: 700 }}>
+        <div key={ci.cartId} style={{ marginBottom: "10px" }}>
+          <div style={{ display: "flex", fontSize: "20px", fontWeight: 700 }}>
             <span style={{ marginRight: "6px" }}>{ci.quantity}x</span>
             <span>{lang === "en" ? ci.item.name.en : ci.item.name.th}</span>
           </div>
           {kitchenOptionSummary(ci, lang) && (
-            <div style={{ fontSize: "12px", marginLeft: "20px" }}>
+            <div style={{ fontSize: "18px", marginLeft: "20px" }}>
               {kitchenOptionSummary(ci, lang)}
             </div>
           )}
           {ci.note && (
-            <div style={{ fontSize: "12px", marginLeft: "20px", fontStyle: "italic" }}>
+            <div style={{ fontSize: "18px", marginLeft: "20px", fontStyle: "italic" }}>
               "{ci.note}"
             </div>
           )}
