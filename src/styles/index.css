@@ -7,10 +7,13 @@
     visibility: hidden;
   }
   #kitchen-ticket-print,
-  #kitchen-ticket-print * {
+  #kitchen-ticket-print *,
+  #receipt-print,
+  #receipt-print * {
     visibility: visible;
   }
-  #kitchen-ticket-print {
+  #kitchen-ticket-print,
+  #receipt-print {
     position: absolute;
     top: 0;
     left: 0;
