@@ -1637,7 +1637,7 @@ function ReceiptTicket({ data, lang }: { data: ReceiptData; lang: Language }) {
   return (
     <div id="receipt-print">
       <div style={{ textAlign: "center", marginBottom: "6px" }}>
-        <img src={logoImg} alt="" style={{ width: "22mm", display: "block", margin: "0 auto" }} />
+        <img src={logoImg} alt="" style={{ width: "15mm", display: "block", margin: "0 auto" }} />
       </div>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: "16px", marginBottom: "2px" }}>
         {t.appName}
