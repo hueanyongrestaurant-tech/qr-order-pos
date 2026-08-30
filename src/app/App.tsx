@@ -1637,8 +1637,7 @@ function ReceiptTicket({ data, lang }: { data: ReceiptData; lang: Language }) {
   return (
     <div id="receipt-print">
       <div style={{ textAlign: "center", marginBottom: "6px" }}>
-        <img src={logoImg} alt="" style={{ width: "40mm", margin: "0 auto" }} />
-      </div>
+        <img src={logoImg} alt="" style={{ width: "40mm", display: "block", margin: "0 auto" }} /></div>
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: "16px", marginBottom: "2px" }}>
         {t.appName}
       </div>
@@ -2184,7 +2183,15 @@ function StaffPaymentScreen({
 
   const handlePrintReceipt = (data: ReceiptData) => {
     setPrintReceiptData(data);
-    setTimeout(() => window.print(), 50);
+    const img = new Image();
+    img.src = logoImg;
+    const doPrint = () => setTimeout(() => window.print(), 50);
+    if (img.complete) {
+      doPrint();
+    } else {
+      img.onload = doPrint;
+      img.onerror = doPrint; // ถ้าโหลดรูปไม่สำเร็จ ก็ยังปริ้นต่อได้ (แค่ไม่มีโลโก้)
+    }
   };
 
   const select = (key: string) => {
