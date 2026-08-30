@@ -3596,6 +3596,11 @@ export default function App() {
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
+  const [staffLoggedIn, setStaffLoggedIn] = useState(false);
+  const allMenuItemsRef = useRef(allMenuItems);
+  useEffect(() => {
+    allMenuItemsRef.current = allMenuItems;
+  }, [allMenuItems]);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(query(collection(db, "categories"), orderBy("order", "asc")), (snapshot) => {
@@ -3784,10 +3789,44 @@ export default function App() {
           return "staff-orders";
         });
       }
+      setStaffLoggedIn(!!user);
       setAuthChecked(true);
     });
     return () => unsubscribe();
   }, []);
+
+  // รีเซ็ตเมนูที่ถูกปิดไว้ให้กลับมาเปิดทั้งหมดเมื่อขึ้นวันใหม่
+  // ทำงานเฉพาะฝั่งพนักงานที่ login อยู่ (เพราะ security rules อนุญาตให้เขียน menuItems ได้เฉพาะ auth != null)
+  // เช็คทันทีตอน login/เปิดแอป และเช็คซ้ำทุก 1 นาที เผื่อเปิดแท็บค้างข้ามเที่ยงคืนโดยไม่รีเฟรช
+  useEffect(() => {
+    if (!staffLoggedIn) return;
+
+    const checkAndResetDailyMenu = async () => {
+      const todayKey = getTodayKey();
+      const lockRef = doc(db, "counters", `menu-reset-${todayKey}`);
+      try {
+        const claimed = await runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(lockRef);
+          if (snap.exists()) return false; // มีเครื่องอื่นรีเซ็ตของวันนี้ไปแล้ว
+          transaction.set(lockRef, { resetAt: serverTimestamp() });
+          return true;
+        });
+        if (!claimed) return;
+
+        const toReset = allMenuItemsRef.current.filter((m) => m.active === false);
+        if (toReset.length === 0) return;
+        await Promise.all(
+          toReset.map((m) => updateDoc(doc(db, "menuItems", m.id), { active: true }))
+        );
+      } catch {
+        // เงียบไว้ก่อน เดี๋ยวรอบถัดไป (นาทีถัดไป) จะลองใหม่เอง
+      }
+    };
+
+    checkAndResetDailyMenu();
+    const interval = setInterval(checkAndResetDailyMenu, 60_000);
+    return () => clearInterval(interval);
+  }, [staffLoggedIn]);
 
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
   useEffect(() => {
