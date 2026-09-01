@@ -3337,17 +3337,17 @@ function StaffExpensesScreen({
       <StaffHeader lang={lang} activeTab="expenses" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-        <div className="flex items-center gap-2 mb-5">
+        <div className="flex items-stretch gap-2 mb-5">
           <input
             type="date"
             value={selectedDate}
             max={today}
             onChange={(e) => setSelectedDate(e.target.value)}
-            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
           <button
             onClick={() => setSelectedDate(today)}
-            className="py-2 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap"
+            className="h-11 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap flex items-center justify-center flex-shrink-0"
           >
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
@@ -3551,22 +3551,22 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
       <StaffHeader lang={lang} activeTab="stats" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-        <div className="flex items-center gap-2 mb-5">
+        <div className="flex items-stretch gap-2 mb-5">
           <input
             type="date"
             value={startDate}
             max={endDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
-          <span className="text-muted-foreground text-sm">–</span>
+          <span className="text-muted-foreground text-sm self-center">–</span>
           <input
             type="date"
             value={endDate}
             min={startDate}
             max={today}
             onChange={(e) => setEndDate(e.target.value)}
-            className="flex-1 bg-card border-2 border-border rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
         </div>
 
