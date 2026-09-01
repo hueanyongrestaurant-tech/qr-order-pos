@@ -1695,6 +1695,7 @@ function KitchenTicket({ order, lang }: { order: Order; lang: Language }) {
 
   return (
     <div id="kitchen-ticket-print">
+      <div style={{ height: "20mm" }} />
       <div style={{ textAlign: "center", fontWeight: 700, fontSize: "16px", marginBottom: "4px" }}>
         {T[lang].appName}
       </div>
