@@ -228,6 +228,8 @@ const T = {
     freeLabel: "Free",
     rounds: "round",
     roundsPlural: "rounds",
+    bills: "bill",
+    billsPlural: "bills",
     items: "items",
     spiceLevels: ["No Spice", "Mild", "Medium", "Very Spicy"],
     meats: { pork: "Pork", chicken: "Chicken", beef: "Beef" },
@@ -294,6 +296,8 @@ const T = {
     freeLabel: "ฟรี",
     rounds: "รอบ",
     roundsPlural: "รอบ",
+    bills: "บิล",
+    billsPlural: "บิล",
     items: "รายการ",
     spiceLevels: ["ไม่เผ็ด", "เผ็ดน้อย", "เผ็ดกลาง", "เผ็ดมาก"],
     meats: { pork: "หมู", chicken: "ไก่", beef: "เนื้อ" },
@@ -3239,7 +3243,7 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
                     <h2 className="font-display font-bold text-foreground text-base">{monthData.label}</h2>
                   </div>
                   <span className="text-muted-foreground text-xs font-medium">
-                    {monthData.entries.length} {t.rounds} · {t.thb}{monthTotal}
+                    {monthData.entries.length} {monthData.entries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{monthTotal}
                   </span>
                 </button>
 
@@ -3260,7 +3264,7 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
                               <h3 className="font-semibold text-foreground text-sm">{dateStr}</h3>
                             </div>
                             <span className="text-muted-foreground text-xs">
-                              {dayEntries.length} {t.rounds} · {t.thb}{dayTotal}
+                              {dayEntries.length} {dayEntries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{dayTotal}
                             </span>
                           </button>
                           {!isDayCollapsed && (
