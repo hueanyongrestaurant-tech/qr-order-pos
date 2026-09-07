@@ -28,12 +28,15 @@ import {
   Pencil,
   Camera,
   Loader2,
+  ClipboardList,
+  Ban,
+  AlertTriangle,
 } from "lucide-react";
 
 import { toPng } from "html-to-image";
 
 import { db, auth } from "../lib/firebase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -53,9 +56,12 @@ type View =
   | "staff-history"
   | "staff-stats"
   | "staff-expenses"
+  | "staff-activity"
   | "staff-manual-table"
   | "staff-manual-menu"
   | "staff-manual-cart";;
+
+type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses" | "activity";
 type MeatChoice = "pork" | "chicken" | "beef";
 type SpiceLevel = 0 | 1 | 2 | 3;
 type Portion = "regular" | "special";
@@ -74,8 +80,31 @@ interface CustomGroup {
   choices: CustomChoice[];
   required?: boolean;
 }
-type OrderStatus = "in-progress" | "awaiting-payment" | "paid";
+type OrderStatus = "in-progress" | "awaiting-payment" | "paid" | "cancelled";
 type PaymentMethod = "cash" | "transfer";
+
+// ─── Activity Log (บันทึกกิจกรรมที่มีความเสี่ยงด้านการเงิน/ข้อมูล) ─────────────
+type ActivityAction =
+  | "void_item"
+  | "cancel_order"
+  | "payment_confirmed"
+  | "menu_item_added"
+  | "menu_item_edited"
+  | "menu_item_deleted"
+  | "category_deleted"
+  | "expense_deleted";
+
+interface ActivityLog {
+  id: string;
+  action: ActivityAction;
+  createdAt: Date;
+  orderId?: string;
+  tableNumber?: string;
+  itemName?: string;
+  amount?: number;
+  reason?: string;
+  details?: Record<string, any>;
+}
 
 interface MenuItem {
   id: string;
@@ -108,6 +137,9 @@ interface CartItem {
   addEgg: boolean;
   addOns: string[];
   quantity: number;
+  voided?: boolean;       // true = ถูกยกเลิก แต่ยังคงอยู่ใน items[] เสมอ ห้ามลบออกจาก array เด็ดขาด
+  voidReason?: string;
+  voidedAt?: Date;
 }
 
 interface Order {
@@ -121,6 +153,8 @@ interface Order {
   isTakeaway?: boolean;
   takeawayLabel?: string;
   paymentBatchId?: string;
+  cancelReason?: string;
+  cancelledAt?: Date;
 }
 
 // ─── บัญชีรายจ่าย (Expenses) ───────────────────────────────────────────────────
@@ -229,6 +263,24 @@ const T = {
     thb: "฿",
     popular: "Signature",
     back: "Back",
+    activityTab: "Activity",
+    activityTitle: "Activity Log",
+    voidItemReasonTitle: "Reason for removing this item",
+    cancelOrderReasonTitle: "Reason for cancelling this order",
+    voidedLabel: "Cancelled",
+    voidCancelSummary: "Voided / cancelled today",
+    filterAllActions: "All actions",
+    noActivity: "No activity for this day",
+    actionLabels: {
+      void_item: "Item removed",
+      cancel_order: "Order cancelled",
+      payment_confirmed: "Payment received",
+      menu_item_added: "Menu item added",
+      menu_item_edited: "Menu item edited",
+      menu_item_deleted: "Menu item deleted",
+      category_deleted: "Category deleted",
+      expense_deleted: "Expense deleted",
+    },
     eggAdded: "+ Fried Egg",
     freeLabel: "Free",
     rounds: "round",
@@ -297,6 +349,24 @@ const T = {
     thb: "฿",
     popular: "เมนูเด่น",
     back: "ย้อนกลับ",
+    activityTab: "กิจกรรม",
+    activityTitle: "ประวัติกิจกรรม",
+    voidItemReasonTitle: "เหตุผลที่ลบรายการนี้",
+    cancelOrderReasonTitle: "เหตุผลที่ยกเลิกออเดอร์นี้",
+    voidedLabel: "ยกเลิกแล้ว",
+    voidCancelSummary: "ยอดที่ถูกยกเลิก/void วันนี้",
+    filterAllActions: "ทุกประเภท",
+    noActivity: "ไม่มีกิจกรรมในวันนี้",
+    actionLabels: {
+      void_item: "ลบรายการ",
+      cancel_order: "ยกเลิกออเดอร์",
+      payment_confirmed: "รับชำระเงิน",
+      menu_item_added: "เพิ่มเมนู",
+      menu_item_edited: "แก้ไขเมนู",
+      menu_item_deleted: "ลบเมนู",
+      category_deleted: "ลบหมวดหมู่",
+      expense_deleted: "ลบรายจ่าย",
+    },
     eggAdded: "+ ไข่ดาว",
     freeLabel: "ฟรี",
     rounds: "รอบ",
@@ -343,8 +413,23 @@ function itemPrice(
   return price;
 }
 
+// ราคาต่อหน่วยของรายการ (ยังไม่คูณจำนวน) — ใช้ตอนต้องบันทึกมูลค่าที่ถูก void ลง log
+function cartItemUnitPrice(ci: CartItem): number {
+  return itemPrice(ci.item, ci.meat, ci.portion, ci.addEgg, ci.addOns, ci.customSelections);
+}
+
 function cartItemTotal(ci: CartItem): number {
-  return itemPrice(ci.item, ci.meat, ci.portion, ci.addEgg, ci.addOns, ci.customSelections) * ci.quantity;
+  if (ci.voided) return 0; // รายการที่ถูกยกเลิก ไม่นับรวมยอดเงินในบิล
+  return cartItemUnitPrice(ci) * ci.quantity;
+}
+
+// รายการที่ยังมีผล (ตัดรายการที่ถูก void ออก) — ใช้ตอนคิดยอด/นับจำนวน ไม่ใช่ตอนแสดงผล
+function liveItems(items: CartItem[]): CartItem[] {
+  return items.filter((ci) => !ci.voided);
+}
+
+function liveItemCount(items: CartItem[]): number {
+  return liveItems(items).reduce((s, ci) => s + ci.quantity, 0);
 }
 
 function cartTotal(cart: CartItem[]): number {
@@ -462,6 +547,33 @@ function compressImage(file: File, maxWidth = 600, quality = 0.7): Promise<strin
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// ─── Activity Log helpers ─────────────────────────────────────────────────────
+
+// เขียน 1 บรรทัดลง activityLogs — ตัด field ที่เป็น undefined ออกก่อน (Firestore ไม่รับ undefined)
+async function logActivity(entry: Omit<ActivityLog, "id" | "createdAt">): Promise<void> {
+  const clean: Record<string, any> = {};
+  Object.entries(entry).forEach(([k, v]) => {
+    if (v !== undefined) clean[k] = v;
+  });
+  try {
+    await addDoc(collection(db, "activityLogs"), { ...clean, createdAt: serverTimestamp() });
+  } catch (err) {
+    // ไม่ให้ log ที่ล้มเหลวมาบล็อกงานหน้าร้าน แต่แจ้งไว้ใน console
+    console.error("logActivity failed", err);
+  }
+}
+
+// เพิ่มเหตุผลใหม่เข้า list ที่ใช้เลือกซ้ำได้ (ไม่ต้องมีหน้าจัดการแยก)
+async function addVoidReason(reason: string): Promise<void> {
+  const r = reason.trim();
+  if (!r) return;
+  try {
+    await setDoc(doc(db, "voidReasons", "list"), { reasons: arrayUnion(r) }, { merge: true });
+  } catch (err) {
+    console.error("addVoidReason failed", err);
+  }
 }
 
 // ─── Shared UI primitives ─────────────────────────────────────────────────────
@@ -583,6 +695,79 @@ function ConfirmModal({ message, onConfirm, onCancel, lang }: { message: string;
           <button
             onClick={onConfirm}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-all"
+          >
+            {lang === "en" ? "Confirm" : "ยืนยัน"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reason Picker (บังคับกรอก/เลือกเหตุผลก่อน void / cancel) ──────────────────
+
+interface ReasonPickerModalProps {
+  title: string;
+  reasons: string[];
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+  lang: Language;
+}
+
+function ReasonPickerModal({ title, reasons, onConfirm, onCancel, lang }: ReasonPickerModalProps) {
+  const [selected, setSelected] = useState<string>("");
+  const [typed, setTyped] = useState<string>("");
+  const reason = (typed.trim() || selected).trim();
+  const canConfirm = reason.length > 0;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center px-6" onClick={onCancel}>
+      <div
+        className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-foreground text-sm font-semibold mb-1">{title}</p>
+        <p className="text-muted-foreground text-xs mb-4">
+          {lang === "en" ? "Pick or type a reason — required" : "เลือกหรือพิมพ์เหตุผล — จำเป็นต้องกรอก"}
+        </p>
+
+        {reasons.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {reasons.map((r) => (
+              <button
+                key={r}
+                onClick={() => { setSelected(r); setTyped(""); }}
+                className={`px-2.5 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
+                  !typed.trim() && selected === r
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border text-foreground hover:border-primary/40"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <input
+          type="text"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder={lang === "en" ? "Other reason…" : "เหตุผลอื่น…"}
+          className="w-full bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary mb-4"
+        />
+
+        <div className="flex gap-2.5">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
+          >
+            {lang === "en" ? "Cancel" : "ยกเลิก"}
+          </button>
+          <button
+            onClick={() => { if (canConfirm) onConfirm(reason); }}
+            disabled={!canConfirm}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {lang === "en" ? "Confirm" : "ยืนยัน"}
           </button>
@@ -1431,8 +1616,8 @@ function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }: StaffL
 
 interface StaffHeaderProps {
   lang: Language;
-  activeTab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses";
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  activeTab: StaffTab;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -1454,7 +1639,7 @@ function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, }: 
         </div>
       </div>
       <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-        {(["orders", "payment", "menu", "history", "expenses", "stats"] as const).map((tab) => (
+        {(["orders", "payment", "menu", "history", "expenses", "stats", "activity"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}
@@ -1463,8 +1648,8 @@ function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, }: 
               : "border-transparent text-[#E6D5BA]/60 hover:text-[#E6D5BA]"
               }`}
           >
-            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : tab === "expenses" ? <Receipt size={14} /> : <Star size={14} />}
-            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : tab === "expenses" ? (lang === "en" ? "Expenses" : "รายจ่าย") : (lang === "en" ? "Stats" : "สถิติ")}
+            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : tab === "expenses" ? <Receipt size={14} /> : tab === "activity" ? <ClipboardList size={14} /> : <Star size={14} />}
+            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : tab === "expenses" ? (lang === "en" ? "Expenses" : "รายจ่าย") : tab === "activity" ? t.activityTab : (lang === "en" ? "Stats" : "สถิติ")}
           </button>
         ))}
       </div>
@@ -1480,7 +1665,7 @@ interface StaffOrdersProps {
   onMarkServed: (orderId: string) => void;
   onRemoveItem: (orderId: string, cartId: string) => void;
   onCancelOrder: (orderId: string) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
@@ -1540,7 +1725,7 @@ function renderTicketToCanvas(order: Order, lang: Language): HTMLCanvasElement {
   lines.push({ text: order.timestamp.toLocaleString(lang === "th" ? "th-TH" : "en-US"), size: 16, align: "center" });
   lines.push({ text: "-".repeat(30), size: 16, align: "left" });
 
-  order.items.forEach((ci) => {
+  liveItems(order.items).forEach((ci) => {
     lines.push({ text: `${ci.quantity}x ${lang === "en" ? ci.item.name.en : ci.item.name.th}`, size: 22, bold: true, align: "left" });
     const opt = kitchenOptionSummary(ci, lang);
     if (opt) lines.push({ text: "   " + opt, size: 16, align: "left" });
@@ -1715,7 +1900,7 @@ function KitchenTicket({ order, lang }: { order: Order; lang: Language }) {
         {order.timestamp.toLocaleString(lang === "th" ? "th-TH" : "en-US")}
       </div>
       <div style={{ borderTop: "1px dashed #000", margin: "6px 0" }} />
-      {order.items.map((ci) => (
+      {liveItems(order.items).map((ci) => (
         <div key={ci.cartId} style={{ marginBottom: "10px" }}>
           <div style={{ display: "flex", fontSize: "20px", fontWeight: 700 }}>
             <span style={{ marginRight: "6px" }}>{ci.quantity}x</span>
@@ -1836,7 +2021,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                         <div className="font-semibold text-foreground text-sm">{timeAgo(order.timestamp)}</div>
                       </div>
                       <button
-                        onClick={() => { if (window.confirm(t.confirmCancelOrder)) onCancelOrder(order.id); }}
+                        onClick={() => onCancelOrder(order.id)}
                         className="text-destructive/60 hover:text-destructive transition-colors"
                       >
                         <Trash2 size={14} />
@@ -1844,12 +2029,17 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                     </div>
                     <div className="px-4 py-3 space-y-2.5">
                       {order.items.map((ci) => (
-                        <div key={ci.cartId} className="flex items-start gap-2.5">
-                          <div className="bg-primary/15 text-primary font-bold text-xs w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <div key={ci.cartId} className={`flex items-start gap-2.5 ${ci.voided ? "opacity-50" : ""}`}>
+                          <div className={`font-bold text-xs w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${ci.voided ? "bg-muted text-muted-foreground" : "bg-primary/15 text-primary"}`}>
                             {ci.quantity}
                           </div>
-                          <div className="text-foreground text-sm font-medium leading-tight">
+                          <div className={`text-sm font-medium leading-tight ${ci.voided ? "line-through text-muted-foreground" : "text-foreground"}`}>
                             {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                            {ci.voided && (
+                              <span className="text-destructive not-italic no-underline ml-1">
+                                ({t.voidedLabel}{ci.voidReason ? `: ${ci.voidReason}` : ""})
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1911,7 +2101,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                           <span>{formatClock(order.timestamp)}</span>
                         </div>
                         <button
-                          onClick={() => onAskConfirm(t.confirmCancelOrder, () => onCancelOrder(order.id))}
+                          onClick={() => onCancelOrder(order.id)}
                           className="text-destructive/60 hover:text-destructive transition-colors"
                           title={t.cancelOrder}
                         >
@@ -1923,12 +2113,12 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                     {/* Items */}
                     <div className="px-4 py-3 space-y-2.5">
                       {order.items.map((ci) => (
-                        <div key={ci.cartId} className="flex items-start gap-2.5">
-                          <div className="bg-primary/15 text-primary font-bold text-xs w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <div key={ci.cartId} className={`flex items-start gap-2.5 ${ci.voided ? "opacity-50" : ""}`}>
+                          <div className={`font-bold text-xs w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${ci.voided ? "bg-muted text-muted-foreground" : "bg-primary/15 text-primary"}`}>
                             {ci.quantity}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-foreground text-sm font-medium leading-tight">
+                            <div className={`text-sm font-medium leading-tight ${ci.voided ? "line-through text-muted-foreground" : "text-foreground"}`}>
                               {lang === "en" ? ci.item.name.en : ci.item.name.th}
                             </div>
                             {optionSummary(ci) && (
@@ -1937,13 +2127,20 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                             {ci.note && (
                               <div className="text-amber-700 text-xs mt-0.5 italic">"{ci.note}"</div>
                             )}
+                            {ci.voided && (
+                              <div className="text-destructive text-xs mt-0.5">
+                                {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
+                              </div>
+                            )}
                           </div>
-                          <button
-                            onClick={() => onAskConfirm(t.confirmRemoveItem, () => onRemoveItem(order.id, ci.cartId))}
-                            className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 mt-0.5"
-                          >
-                            <X size={14} />
-                          </button>
+                          {!ci.voided && (
+                            <button
+                              onClick={() => onRemoveItem(order.id, ci.cartId)}
+                              className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 mt-0.5"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -2013,7 +2210,7 @@ function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelO
                     </div>
                     <div className="px-4 py-2.5">
                       <div className="text-xs text-muted-foreground">
-                        {data.orders.reduce((s, o) => s + o.items.length, 0)} {t.items} · {t.awaitingPayment}
+                        {data.orders.reduce((s, o) => s + liveItems(o.items).length, 0)} {t.items} · {t.awaitingPayment}
                       </div>
                     </div>
                   </div>
@@ -2038,8 +2235,9 @@ interface StaffPaymentProps {
   onAdjustItem: (contributingOrders: Order[], key: string, delta: number) => void;
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
+  onCancelOrders: (orderIds: string[]) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -2050,6 +2248,7 @@ interface PaymentCardProps {
   subtitle: string;
   total: number;
   items: CartItem[];
+  voidedItems?: CartItem[];
   onAdjust: (key: string, delta: number) => void;
   total2: number;
   closeAction: () => void;
@@ -2066,7 +2265,7 @@ interface PaymentCardProps {
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, onAdjust, total2, closeAction, cancelAction, printReceiptAction,
+  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, printReceiptAction,
   expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
@@ -2114,6 +2313,19 @@ function PaymentCard({
                 </div>
               );
             })}
+            {voidedItems && voidedItems.length > 0 && voidedItems.map((ci, ciIdx) => (
+              <div key={`voided-${ciIdx}`} className="flex items-center justify-between py-1 opacity-50">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium line-through text-muted-foreground truncate">
+                    {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                  </div>
+                  <div className="text-destructive text-xs">
+                    {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
+                  </div>
+                </div>
+                <span className="text-muted-foreground text-sm flex-shrink-0 ml-2 line-through">{t.thb}0</span>
+              </div>
+            ))}
           </div>
 
           {cancelAction && (
@@ -2184,7 +2396,7 @@ function PaymentCard({
 
 function StaffPaymentScreen({
   lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
-  onCancelOrder, onAskConfirm, onTabChange, onLogout, onLangToggle,
+  onCancelOrder, onCancelOrders, onAskConfirm, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -2217,7 +2429,8 @@ function StaffPaymentScreen({
   const tableNumbers = [...new Set(awaitingPayment.map((o) => o.tableNumber))].sort(compareTables);
   const tableGroups = tableNumbers.map((tn) => {
     const tableOrders = awaitingPayment.filter((o) => o.tableNumber === tn);
-    const allItems = tableOrders.flatMap((o) => o.items);
+    const allItems = tableOrders.flatMap((o) => o.items).filter((ci) => !ci.voided);
+    const voidedItems = tableOrders.flatMap((o) => o.items).filter((ci) => ci.voided);
     const groupedItems = (() => {
       const map = new Map<string, CartItem>();
       allItems.forEach((ci) => {
@@ -2231,6 +2444,7 @@ function StaffPaymentScreen({
       tableNumber: tn,
       orders: tableOrders,
       items: groupedItems,
+      voidedItems,
       total: tableOrders.reduce((s, o) => s + orderTotal(o), 0),
       itemCount: allItems.reduce((s, ci) => s + ci.quantity, 0),
       rounds: tableOrders.length,
@@ -2266,6 +2480,7 @@ function StaffPaymentScreen({
                         total={g.total}
                         total2={g.total}
                         items={g.items}
+                        voidedItems={g.voidedItems}
                         onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
                         closeAction={() => onCloseTable(g.tableNumber, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
                         printReceiptAction={() =>
@@ -2277,12 +2492,10 @@ function StaffPaymentScreen({
                             cashReceived: paymentMethod === "cash" ? Number(cashInput || 0) : undefined,
                           })
                         }
-                        cancelAction={() =>
-                          onAskConfirm(t.confirmCancelOrder, () => {
-                            g.orders.forEach((o) => onCancelOrder(o.id));
-                            setExpandedKey(null);
-                          })
-                        }
+                        cancelAction={() => {
+                          onCancelOrders(g.orders.map((o) => o.id));
+                          setExpandedKey(null);
+                        }}
                         expandedKey={expandedKey}
                         select={select}
                         paymentMethod={paymentMethod}
@@ -2308,22 +2521,23 @@ function StaffPaymentScreen({
                         key={order.id}
                         keyId={`takeaway:${order.id}`}
                         label={order.takeawayLabel || "T"}
-                        subtitle={`${order.items.reduce((s, ci) => s + ci.quantity, 0)} ${t.items}`}
+                        subtitle={`${liveItemCount(order.items)} ${t.items}`}
                         total={orderTotal(order)}
                         total2={orderTotal(order)}
-                        items={order.items}
+                        items={order.items.filter((ci) => !ci.voided)}
+                        voidedItems={order.items.filter((ci) => ci.voided)}
                         onAdjust={(key, delta) => onAdjustTakeawayItem(order.id, key, delta)}
                         closeAction={() => onCloseTakeaway(order.id, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
                         printReceiptAction={() =>
                           handlePrintReceipt({
                             label: order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"),
-                            items: order.items,
+                            items: order.items.filter((ci) => !ci.voided),
                             total: orderTotal(order),
                             paymentMethod,
                             cashReceived: paymentMethod === "cash" ? Number(cashInput || 0) : undefined,
                           })
                         }
-                        cancelAction={() => onAskConfirm(t.confirmCancelOrder, () => { onCancelOrder(order.id); setExpandedKey(null); })}
+                        cancelAction={() => { onCancelOrder(order.id); setExpandedKey(null); }}
                         expandedKey={expandedKey}
                         select={select}
                         paymentMethod={paymentMethod}
@@ -2435,7 +2649,7 @@ interface StaffMenuProps {
   onEdit: (item: MenuItem) => void;
   onToggleActive: (item: MenuItem, active: boolean) => void;
   onDelete: (itemId: string) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
@@ -3128,7 +3342,7 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categ
 interface StaffHistoryProps {
   lang: Language;
   orders: Order[];
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -3191,7 +3405,7 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
     if (existing) {
       existing.orders.push(o);
       existing.total += orderTotal(o);
-      existing.itemCount += o.items.reduce((s, ci) => s + ci.quantity, 0);
+      existing.itemCount += liveItemCount(o.items);
       if (o.timestamp < existing.timestamp) existing.timestamp = o.timestamp;
     } else {
       entryMap.set(key, {
@@ -3201,7 +3415,7 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
         timestamp: o.timestamp,
         orders: [o],
         total: orderTotal(o),
-        itemCount: o.items.reduce((s, ci) => s + ci.quantity, 0),
+        itemCount: liveItemCount(o.items),
       });
     }
   });
@@ -3300,13 +3514,18 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
                                     {isExpanded && (
                                       <div className="px-3 pb-3 pt-1 border-t border-border space-y-1.5">
                                         {e.orders.flatMap((o) => o.items).map((ci, ciIdx) => (
-                                          <div key={ciIdx} className="flex items-start justify-between text-sm">
+                                          <div key={ciIdx} className={`flex items-start justify-between text-sm ${ci.voided ? "opacity-50" : ""}`}>
                                             <div>
-                                              <div className="text-foreground">
+                                              <div className={ci.voided ? "line-through text-muted-foreground" : "text-foreground"}>
                                                 {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
                                               </div>
                                               {formatOptionDetails(ci, lang) && (
                                                 <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
+                                              )}
+                                              {ci.voided && (
+                                                <div className="text-destructive text-xs">
+                                                  {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
+                                                </div>
                                               )}
                                             </div>
                                             <span className="text-muted-foreground flex-shrink-0">{t.thb}{cartItemTotal(ci)}</span>
@@ -3348,7 +3567,7 @@ interface StaffExpensesProps {
   onEditItem: (date: string, index: number, item: ExpenseLineItem) => void;
   onDeleteItem: (date: string, index: number) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -3698,7 +3917,7 @@ function StaffExpensesScreen({
 interface StaffStatsProps {
   lang: Language;
   orders: Order[];
-  onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
+  onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
@@ -3766,6 +3985,7 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
   const menuCounts: Record<string, { nameEn: string; nameTh: string; optionLabel: string; qty: number; revenue: number }> = {};
   filtered.forEach((o) => {
     o.items.forEach((ci) => {
+      if (ci.voided) return; // รายการที่ถูกยกเลิก ไม่นับในสถิติ
       const key = `${ci.item.id}|${optionKey(ci)}`;
       if (!menuCounts[key]) {
         menuCounts[key] = {
@@ -3864,6 +4084,162 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
   );
 }
 
+// ─── Staff Activity Log Screen ────────────────────────────────────────────────
+
+interface StaffActivityProps {
+  lang: Language;
+  logs: ActivityLog[];
+  onTabChange: (tab: StaffTab) => void;
+  onLogout: () => void;
+  onLangToggle: () => void;
+}
+
+function StaffActivityScreen({ lang, logs, onTabChange, onLogout, onLangToggle }: StaffActivityProps) {
+  const t = T[lang];
+  const today = formatDateInput(new Date());
+  const [date, setDate] = useState(today);
+  const [actionFilter, setActionFilter] = useState<ActivityAction | "all">("all");
+
+  const dayStart = new Date(`${date}T00:00:00`);
+  const dayEnd = new Date(`${date}T23:59:59`);
+  const dayLogs = logs.filter((l) => l.createdAt >= dayStart && l.createdAt <= dayEnd);
+  const visibleLogs = dayLogs.filter((l) => actionFilter === "all" || l.action === actionFilter);
+
+  // ยอดรวมเงินที่ถูก void/cancel ของวันที่เลือก — ให้เจ้าของร้านเทียบกับเงินสดในลิ้นชักได้ทันที
+  const voidCancelTotal = dayLogs
+    .filter((l) => l.action === "void_item" || l.action === "cancel_order")
+    .reduce((s, l) => s + (l.amount || 0), 0);
+
+  const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
+  const actionOptions: (ActivityAction | "all")[] = [
+    "all", "void_item", "cancel_order", "payment_confirmed",
+    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_deleted",
+  ];
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <StaffHeader lang={lang} activeTab="activity" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
+
+      <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        <h2 className="font-display font-bold text-foreground text-base mb-3">{t.activityTitle}</h2>
+
+        <div className="flex items-stretch gap-2 mb-4">
+          <input
+            type="date"
+            value={date}
+            max={today}
+            onChange={(e) => setDate(e.target.value)}
+            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
+          />
+          <button
+            onClick={() => setDate(today)}
+            className="h-11 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap flex-shrink-0"
+          >
+            {lang === "en" ? "Today" : "วันนี้"}
+          </button>
+        </div>
+
+        <div className="bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle size={16} className="text-destructive flex-shrink-0" />
+            <span className="text-sm text-foreground">{t.voidCancelSummary}</span>
+          </div>
+          <span className="font-display font-bold text-lg text-destructive flex-shrink-0">{t.thb}{voidCancelTotal}</span>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          {actionOptions.map((a) => (
+            <button
+              key={a}
+              onClick={() => setActionFilter(a)}
+              className={`px-2.5 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
+                actionFilter === a
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border text-foreground hover:border-primary/40"
+              }`}
+            >
+              {a === "all" ? t.filterAllActions : t.actionLabels[a]}
+            </button>
+          ))}
+        </div>
+
+        {visibleLogs.length === 0 ? (
+          <div className="text-center py-16 text-muted-foreground text-sm">{t.noActivity}</div>
+        ) : (
+          <div className="space-y-2">
+            {visibleLogs.map((l) => (
+              <div
+                key={l.id}
+                className={`rounded-xl border p-3 ${
+                  isHighlight(l.action) ? "bg-destructive/5 border-destructive/25" : "bg-card border-border"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {l.action === "void_item" ? (
+                      <X size={14} className="text-destructive flex-shrink-0" />
+                    ) : l.action === "cancel_order" ? (
+                      <Ban size={14} className="text-destructive flex-shrink-0" />
+                    ) : l.action === "payment_confirmed" ? (
+                      <CheckCircle size={14} className="text-secondary flex-shrink-0" />
+                    ) : (
+                      <ClipboardList size={14} className="text-muted-foreground flex-shrink-0" />
+                    )}
+                    <span className="text-sm font-semibold text-foreground truncate">{t.actionLabels[l.action]}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground flex-shrink-0">{formatClock(l.createdAt)}</span>
+                </div>
+
+                <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5">
+                  {l.tableNumber && <span>{lang === "en" ? "Table/Ref" : "โต๊ะ/อ้างอิง"}: {l.tableNumber}</span>}
+                  {l.itemName && <span className="text-foreground">{l.itemName}</span>}
+                  {typeof l.amount === "number" && (
+                    <span className="font-semibold text-foreground">{t.thb}{l.amount}</span>
+                  )}
+                </div>
+
+                {l.reason && (
+                  <div className="mt-1 text-xs text-destructive">
+                    {lang === "en" ? "Reason" : "เหตุผล"}: {l.reason}
+                  </div>
+                )}
+
+                {l.action === "menu_item_edited" && l.details && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {t.thb}{l.details.oldPrice} → {t.thb}{l.details.newPrice}
+                  </div>
+                )}
+
+                {l.details?.paymentMethod && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {l.details.paymentMethod === "cash"
+                      ? (lang === "en" ? "Cash" : "เงินสด")
+                      : (lang === "en" ? "Transfer" : "เงินโอน")}
+                    {typeof l.details.cashReceived === "number"
+                      ? ` · ${lang === "en" ? "received" : "รับ"} ${t.thb}${l.details.cashReceived}`
+                      : ""}
+                  </div>
+                )}
+
+                {l.action === "cancel_order" && Array.isArray(l.details?.items) && (
+                  <div className="mt-1.5 border-t border-border pt-1.5 space-y-0.5">
+                    {l.details.items.map((it: any, i: number) => (
+                      <div key={i} className={`text-xs ${it.voided ? "line-through text-muted-foreground" : "text-muted-foreground"}`}>
+                        {it.quantity}× {it.name}
+                        {typeof it.unitPrice === "number" ? ` · ${t.thb}${it.unitPrice}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 function getTableFromUrl(): string | null {
@@ -3907,7 +4283,6 @@ function writeSession(key: string, value: unknown) {
 // เฉพาะวิวเหล่านี้ที่ฝั่งลูกค้าจะถูกจำไว้ตอนรีเฟรช (ตัดพวกที่ sub-state เสี่ยงเกินไปออก)
 const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-sent"];
 
-type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses";
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
   payment: "staff-payment",
@@ -3915,9 +4290,11 @@ const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   history: "staff-history",
   stats: "staff-stats",
   expenses: "staff-expenses",
+  activity: "staff-activity",
 };
+const STAFF_TABS: StaffTab[] = ["orders", "payment", "menu", "history", "expenses", "stats", "activity"];
 function isStaffTab(v: unknown): v is StaffTab {
-  return v === "orders" || v === "payment" || v === "menu" || v === "history" || v === "stats" || v === "expenses";
+  return typeof v === "string" && (STAFF_TABS as string[]).includes(v);
 }
 
 export default function App() {
@@ -3950,6 +4327,8 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [expenseDays, setExpenseDays] = useState<ExpenseDay[]>([]);
   const [expenseCatalog, setExpenseCatalog] = useState<ExpenseCatalogEntry[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [voidReasons, setVoidReasons] = useState<string[]>([]);
 
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -3986,7 +4365,7 @@ export default function App() {
             isTakeaway: raw.isTakeaway,
           } as Order;
         })
-        .filter((o) => o.status !== "paid");
+        .filter((o) => o.status !== "paid" && o.status !== "cancelled");
       setCustomerOrders(data);
     });
     return () => unsubscribe();
@@ -4059,6 +4438,8 @@ export default function App() {
           isTakeaway: raw.isTakeaway,
           takeawayLabel: raw.takeawayLabel,
           paymentBatchId: raw.paymentBatchId,
+          cancelReason: raw.cancelReason,
+          cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
         } as Order;
       });
       setOrders(data);
@@ -4097,13 +4478,53 @@ export default function App() {
     };
   }, [authChecked]);
 
+  // Activity Log + รายการเหตุผลที่ใช้ซ้ำได้ — เฉพาะฝั่งพนักงานเท่านั้น
+  useEffect(() => {
+    if (!authChecked) return;
+    const isStaff = getTableFromUrl() === null;
+    if (!isStaff) return;
+
+    const unsubscribeLogs = onSnapshot(
+      query(collection(db, "activityLogs"), orderBy("createdAt", "desc")),
+      (snapshot) => {
+        const data = snapshot.docs.map((d) => {
+          const raw = d.data();
+          return {
+            id: d.id,
+            action: raw.action,
+            createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
+            orderId: raw.orderId,
+            tableNumber: raw.tableNumber,
+            itemName: raw.itemName,
+            amount: raw.amount,
+            reason: raw.reason,
+            details: raw.details,
+          } as ActivityLog;
+        });
+        setActivityLogs(data);
+      }
+    );
+
+    const unsubscribeReasons = onSnapshot(doc(db, "voidReasons", "list"), (snap) => {
+      const raw = snap.data();
+      setVoidReasons(Array.isArray(raw?.reasons) ? raw!.reasons : []);
+    });
+
+    return () => {
+      unsubscribeLogs();
+      unsubscribeReasons();
+    };
+  }, [authChecked]);
+
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
-  const [staffTab, setStaffTab] = useState<"orders" | "payment" | "menu" | "history" | "stats" | "expenses">("orders");
+  const [staffTab, setStaffTab] = useState<StaffTab>("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const menuScrollTopRef = useRef(0);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm });
+  const [reasonPrompt, setReasonPrompt] = useState<{ title: string; onConfirm: (reason: string) => void } | null>(null);
+  const askReason = (title: string, onConfirm: (reason: string) => void) => setReasonPrompt({ title, onConfirm });
   const [busyTables, setBusyTables] = useState(0);
   const [busyItems, setBusyItems] = useState(0);
 
@@ -4122,7 +4543,7 @@ export default function App() {
     const dineInProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
     const allInProgress = orders.filter((o) => o.status === "in-progress");
     const tables = new Set(dineInProgress.map((o) => o.tableNumber)).size;
-    const items = allInProgress.reduce((s, o) => s + o.items.reduce((s2, ci) => s2 + ci.quantity, 0), 0);
+    const items = allInProgress.reduce((s, o) => s + liveItemCount(o.items), 0);
     setDoc(doc(db, "status", "live"), { busyTables: tables, busyItems: items }).catch(() => { });
   }, [orders]);
 
@@ -4358,26 +4779,80 @@ export default function App() {
     await updateDoc(doc(db, "orders", orderId), { status: "awaiting-payment" });
   };
 
-  const handleRemoveOrderItem = async (orderId: string, cartId: string) => {
-    const order = orders.find((o) => o.id === orderId);
-    if (!order) return;
-    const newItems = order.items.filter((ci) => ci.cartId !== cartId);
-    if (newItems.length === 0) {
-      await deleteDoc(doc(db, "orders", orderId));
-    } else {
-      await updateDoc(doc(db, "orders", orderId), { items: newItems });
-    }
+  // ตัดรูป base64 ของรายการทิ้ง (ใช้ตอน void/cancel) — เก็บชื่อ/ราคา/ตัวเลือกไว้ครบสำหรับตรวจสอบ
+  const stripItemPhoto = (ci: CartItem): CartItem => ({ ...ci, item: { ...ci.item, photo: "" } });
+
+  // mark 1 รายการใน order เป็น voided — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array)
+  // + ตัดรูปทิ้ง + เขียน log void_item ถ้าทุกรายการถูก void หมด เปลี่ยน status เป็น "cancelled" (ไม่ลบ doc)
+  const voidOrderItem = async (order: Order, cartId: string, reason: string) => {
+    const target = order.items.find((ci) => ci.cartId === cartId);
+    if (!target || target.voided) return;
+    const amount = cartItemUnitPrice(target) * target.quantity;
+    const newItems = order.items.map((ci) =>
+      ci.cartId === cartId
+        ? stripItemPhoto({ ...ci, voided: true, voidReason: reason, voidedAt: new Date() })
+        : ci
+    );
+    const allVoided = newItems.every((ci) => ci.voided);
+    await logActivity({
+      action: "void_item",
+      orderId: order.id,
+      tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
+      itemName: target.item.name.th,
+      amount,
+      reason,
+    });
+    await addVoidReason(reason);
+    await updateDoc(doc(db, "orders", order.id), {
+      items: newItems,
+      ...(allVoided
+        ? { status: "cancelled", cancelReason: reason, cancelledAt: new Date() }
+        : {}),
+    });
   };
 
-  const handleCancelOrder = async (orderId: string) => {
-    await deleteDoc(doc(db, "orders", orderId));
+  const handleRemoveOrderItem = async (orderId: string, cartId: string, reason: string) => {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+    await voidOrderItem(order, cartId, reason);
+  };
+
+  const handleCancelOrder = async (orderId: string, reason: string) => {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+    await logActivity({
+      action: "cancel_order",
+      orderId,
+      tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
+      amount: orderTotal(order),
+      reason,
+      details: {
+        isTakeaway: !!order.isTakeaway,
+        takeawayLabel: order.takeawayLabel ?? null,
+        items: order.items.map((ci) => ({
+          name: ci.item.name.th,
+          quantity: ci.quantity,
+          unitPrice: cartItemUnitPrice(ci),
+          voided: !!ci.voided,
+        })),
+      },
+    });
+    await addVoidReason(reason);
+    await updateDoc(doc(db, "orders", orderId), {
+      status: "cancelled",
+      cancelReason: reason,
+      cancelledAt: new Date(),
+      items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
+    });
   };
 
   const handleCloseTable = async (tableNum: string, paymentMethod: PaymentMethod, cashReceived?: number) => {
     const toClose = orders.filter(
       (o) => o.tableNumber === tableNum && o.status === "awaiting-payment"
     );
+    if (toClose.length === 0) return;
     const batchId = uid();
+    const amount = toClose.reduce((s, o) => s + orderTotal(o), 0);
     await Promise.all(
       toClose.map((o) =>
         updateDoc(doc(db, "orders", o.id), {
@@ -4388,32 +4863,54 @@ export default function App() {
         })
       )
     );
+    await logActivity({
+      action: "payment_confirmed",
+      tableNumber: tableNum,
+      amount,
+      details: {
+        paymentMethod,
+        rounds: toClose.length,
+        ...(cashReceived !== undefined ? { cashReceived } : {}),
+      },
+    });
     setSelectedPayTable(null);
   };
 
   const handleCloseTakeawayOrder = async (orderId: string, paymentMethod: PaymentMethod, cashReceived?: number) => {
+    const order = orders.find((o) => o.id === orderId);
     await updateDoc(doc(db, "orders", orderId), {
       status: "paid",
       paymentMethod,
       ...(cashReceived !== undefined ? { cashReceived } : {}),
     });
+    await logActivity({
+      action: "payment_confirmed",
+      orderId,
+      tableNumber: order?.takeawayLabel ?? order?.tableNumber,
+      amount: order ? orderTotal(order) : undefined,
+      details: {
+        paymentMethod,
+        isTakeaway: true,
+        ...(cashReceived !== undefined ? { cashReceived } : {}),
+      },
+    });
   };
 
+  // ปรับจำนวนรายการตอนชำระเงิน — ลดจนเหลือ 0 = void (ต้องกรอกเหตุผลก่อน) แทนการลบออกจาก array
   const handleAdjustPaymentItem = async (contributingOrders: Order[], key: string, delta: number) => {
     for (const order of contributingOrders) {
-      const idx = order.items.findIndex((ci) => cartItemKey(ci) === key);
-      if (idx === -1) continue;
-      const newItems = [...order.items];
-      const newQty = newItems[idx].quantity + delta;
-      if (newQty <= 0) {
-        newItems.splice(idx, 1);
-      } else {
-        newItems[idx] = { ...newItems[idx], quantity: newQty };
-      }
-      if (newItems.length === 0) {
-        await deleteDoc(doc(db, "orders", order.id));
-      } else {
+      const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
+      if (!target) continue;
+      const newQty = target.quantity + delta;
+      if (newQty > 0) {
+        const newItems = order.items.map((ci) =>
+          ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
+        );
         await updateDoc(doc(db, "orders", order.id), { items: newItems });
+      } else {
+        askReason(T[lang].voidItemReasonTitle, (reason) => {
+          void voidOrderItem(order, target.cartId, reason);
+        });
       }
       return;
     }
@@ -4422,29 +4919,25 @@ export default function App() {
   const handleAdjustTakeawayItem = async (orderId: string, key: string, delta: number) => {
     const order = orders.find((o) => o.id === orderId);
     if (!order) return;
-    const idx = order.items.findIndex((ci) => cartItemKey(ci) === key);
-    if (idx === -1) return;
-    const newItems = [...order.items];
-    const newQty = newItems[idx].quantity + delta;
-    if (newQty <= 0) newItems.splice(idx, 1);
-    else newItems[idx] = { ...newItems[idx], quantity: newQty };
-    if (newItems.length === 0) {
-      await deleteDoc(doc(db, "orders", orderId));
-    } else {
+    const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
+    if (!target) return;
+    const newQty = target.quantity + delta;
+    if (newQty > 0) {
+      const newItems = order.items.map((ci) =>
+        ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
+      );
       await updateDoc(doc(db, "orders", orderId), { items: newItems });
+    } else {
+      askReason(T[lang].voidItemReasonTitle, (reason) => {
+        void voidOrderItem(order, target.cartId, reason);
+      });
     }
   };
 
-  const handleStaffTabChange = (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => {
+  const handleStaffTabChange = (tab: StaffTab) => {
     setStaffTab(tab);
     writeSession("staffTab", tab);
-    setView(
-      tab === "orders" ? "staff-orders" :
-        tab === "payment" ? "staff-payment" :
-          tab === "menu" ? "staff-menu" :
-            tab === "history" ? "staff-history" :
-              tab === "expenses" ? "staff-expenses" : "staff-stats"
-    );
+    setView(STAFF_TAB_VIEW[tab]);
   };
 
   const handleAddNewItem = () => {
@@ -4470,7 +4963,17 @@ export default function App() {
   };
 
   const handleSaveItem = async (item: MenuItem) => {
+    const prev = allMenuItems.find((m) => m.id === item.id);
     await setDoc(doc(db, "menuItems", item.id), { ...item, active: (item as any).active ?? true });
+    if (!prev) {
+      await logActivity({ action: "menu_item_added", itemName: item.name.th, details: { price: item.price } });
+    } else if (prev.price !== item.price) {
+      await logActivity({
+        action: "menu_item_edited",
+        itemName: item.name.th,
+        details: { oldPrice: prev.price, newPrice: item.price },
+      });
+    }
     setEditingItem(null);
     setView("staff-menu");
   };
@@ -4487,6 +4990,12 @@ export default function App() {
   };
 
   const handleDeleteItem = async (itemId: string) => {
+    const item = allMenuItems.find((m) => m.id === itemId);
+    await logActivity({
+      action: "menu_item_deleted",
+      itemName: item?.name.th,
+      details: item ? { price: item.price } : undefined,
+    });
     await deleteDoc(doc(db, "menuItems", itemId));
   };
 
@@ -4510,6 +5019,12 @@ export default function App() {
   };
 
   const handleDeleteCategory = async (categoryId: string) => {
+    const cat = allCategories.find((c) => c.id === categoryId);
+    await logActivity({
+      action: "category_deleted",
+      itemName: cat?.nameTh,
+      details: cat ? { nameEn: cat.nameEn } : undefined,
+    });
     await deleteDoc(doc(db, "categories", categoryId));
   };
 
@@ -4559,8 +5074,17 @@ export default function App() {
   const handleDeleteExpenseItem = async (date: string, index: number) => {
     const existing = expenseDays.find((e) => e.id === date);
     if (!existing) return;
+    const removed = existing.items[index];
     const newItems = existing.items.filter((_, i) => i !== index);
     const totalAmount = newItems.reduce((s, i) => s + i.amount, 0);
+    if (removed) {
+      await logActivity({
+        action: "expense_deleted",
+        itemName: removed.name,
+        amount: removed.amount,
+        details: { quantity: removed.quantity, unit: removed.unit ?? null, date },
+      });
+    }
     if (newItems.length === 0) {
       await deleteDoc(doc(db, "expenses", date));
     } else {
@@ -4665,8 +5189,12 @@ export default function App() {
           lang={lang}
           orders={orders}
           onMarkServed={handleMarkServed}
-          onRemoveItem={handleRemoveOrderItem}
-          onCancelOrder={handleCancelOrder}
+          onRemoveItem={(orderId, cartId) =>
+            askReason(T[lang].voidItemReasonTitle, (reason) => handleRemoveOrderItem(orderId, cartId, reason))
+          }
+          onCancelOrder={(orderId) =>
+            askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
+          }
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
@@ -4685,7 +5213,14 @@ export default function App() {
           onCloseTakeaway={handleCloseTakeawayOrder}
           onAdjustItem={handleAdjustPaymentItem}
           onAdjustTakeawayItem={handleAdjustTakeawayItem}
-          onCancelOrder={handleCancelOrder}
+          onCancelOrder={(orderId) =>
+            askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
+          }
+          onCancelOrders={(orderIds) =>
+            askReason(T[lang].cancelOrderReasonTitle, (reason) =>
+              orderIds.forEach((id) => handleCancelOrder(id, reason))
+            )
+          }
           onAskConfirm={askConfirm}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
@@ -4772,6 +5307,18 @@ export default function App() {
       );
       break;
 
+    case "staff-activity":
+      content = (
+        <StaffActivityScreen
+          lang={lang}
+          logs={activityLogs}
+          onTabChange={handleStaffTabChange}
+          onLogout={handleLogout}
+          onLangToggle={toggleLang}
+        />
+      );
+      break;
+
     case "staff-manual-table":
       content = (
         <StaffManualTableScreen
@@ -4836,6 +5383,18 @@ export default function App() {
             setConfirmDialog(null);
           }}
           onCancel={() => setConfirmDialog(null)}
+        />
+      )}
+      {reasonPrompt && (
+        <ReasonPickerModal
+          title={reasonPrompt.title}
+          reasons={voidReasons}
+          lang={lang}
+          onConfirm={(reason) => {
+            reasonPrompt.onConfirm(reason);
+            setReasonPrompt(null);
+          }}
+          onCancel={() => setReasonPrompt(null)}
         />
       )}
     </>
