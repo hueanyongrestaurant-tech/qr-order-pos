@@ -44,14 +44,14 @@
 
 | field | type | หมายเหตุ |
 |---|---|---|
-| `action` | enum | `void_item \| cancel_order \| payment_confirmed \| menu_item_added \| menu_item_edited \| menu_item_deleted \| category_deleted \| expense_deleted` |
+| `action` | enum | `void_item \| cancel_order \| menu_item_added \| menu_item_edited \| menu_item_deleted \| category_deleted \| expense_deleted` |
 | `createdAt` | Timestamp | `serverTimestamp()` |
 | `orderId` | string? | |
 | `tableNumber` | string? | โต๊ะ หรือ `takeawayLabel` |
 | `itemName` | string? | ชื่อเมนู/หมวด/รายจ่ายที่เกี่ยวข้อง (ภาษาไทย) |
 | `amount` | number? | มูลค่าเงินที่เกี่ยวข้อง (void = ราคา×จำนวน, cancel/payment = ยอดรวม) |
 | `reason` | string? | เหตุผล (สำหรับ `void_item` / `cancel_order`) |
-| `details` | map? | ข้อมูลเสริม เช่น `{oldPrice,newPrice}` ตอนแก้เมนู, `{items:[…]}` snapshot ตอน cancel, `{paymentMethod,cashReceived}` ตอนปิดบิล |
+| `details` | map? | ข้อมูลเสริม เช่น `{oldPrice,newPrice}` ตอนแก้เมนู, `{items:[…]}` snapshot ตอน cancel |
 
 ไม่มีการระบุตัวตนพนักงานรายคน — ใช้ `createdAt` เทียบกับกล้องวงจรปิด
 

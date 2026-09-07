@@ -87,7 +87,6 @@ type PaymentMethod = "cash" | "transfer";
 type ActivityAction =
   | "void_item"
   | "cancel_order"
-  | "payment_confirmed"
   | "menu_item_added"
   | "menu_item_edited"
   | "menu_item_deleted"
@@ -274,7 +273,6 @@ const T = {
     actionLabels: {
       void_item: "Item removed",
       cancel_order: "Order cancelled",
-      payment_confirmed: "Payment received",
       menu_item_added: "Menu item added",
       menu_item_edited: "Menu item edited",
       menu_item_deleted: "Menu item deleted",
@@ -360,7 +358,6 @@ const T = {
     actionLabels: {
       void_item: "ลบรายการ",
       cancel_order: "ยกเลิกออเดอร์",
-      payment_confirmed: "รับชำระเงิน",
       menu_item_added: "เพิ่มเมนู",
       menu_item_edited: "แก้ไขเมนู",
       menu_item_deleted: "ลบเมนู",
@@ -4112,7 +4109,7 @@ function StaffActivityScreen({ lang, logs, onTabChange, onLogout, onLangToggle }
 
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
-    "all", "void_item", "cancel_order", "payment_confirmed",
+    "all", "void_item", "cancel_order",
     "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_deleted",
   ];
 
@@ -4180,8 +4177,6 @@ function StaffActivityScreen({ lang, logs, onTabChange, onLogout, onLangToggle }
                       <X size={14} className="text-destructive flex-shrink-0" />
                     ) : l.action === "cancel_order" ? (
                       <Ban size={14} className="text-destructive flex-shrink-0" />
-                    ) : l.action === "payment_confirmed" ? (
-                      <CheckCircle size={14} className="text-secondary flex-shrink-0" />
                     ) : (
                       <ClipboardList size={14} className="text-muted-foreground flex-shrink-0" />
                     )}
@@ -4852,7 +4847,6 @@ export default function App() {
     );
     if (toClose.length === 0) return;
     const batchId = uid();
-    const amount = toClose.reduce((s, o) => s + orderTotal(o), 0);
     await Promise.all(
       toClose.map((o) =>
         updateDoc(doc(db, "orders", o.id), {
@@ -4863,36 +4857,14 @@ export default function App() {
         })
       )
     );
-    await logActivity({
-      action: "payment_confirmed",
-      tableNumber: tableNum,
-      amount,
-      details: {
-        paymentMethod,
-        rounds: toClose.length,
-        ...(cashReceived !== undefined ? { cashReceived } : {}),
-      },
-    });
     setSelectedPayTable(null);
   };
 
   const handleCloseTakeawayOrder = async (orderId: string, paymentMethod: PaymentMethod, cashReceived?: number) => {
-    const order = orders.find((o) => o.id === orderId);
     await updateDoc(doc(db, "orders", orderId), {
       status: "paid",
       paymentMethod,
       ...(cashReceived !== undefined ? { cashReceived } : {}),
-    });
-    await logActivity({
-      action: "payment_confirmed",
-      orderId,
-      tableNumber: order?.takeawayLabel ?? order?.tableNumber,
-      amount: order ? orderTotal(order) : undefined,
-      details: {
-        paymentMethod,
-        isTakeaway: true,
-        ...(cashReceived !== undefined ? { cashReceived } : {}),
-      },
     });
   };
 
