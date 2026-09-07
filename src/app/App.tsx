@@ -25,7 +25,12 @@ import {
   GripVertical,
   Receipt,
   Printer,
+  Pencil,
+  Camera,
+  Loader2,
 } from "lucide-react";
+
+import { toPng } from "html-to-image";
 
 import { db, auth } from "../lib/firebase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction } from "firebase/firestore";
@@ -3340,6 +3345,7 @@ interface StaffExpensesProps {
   expenseDays: ExpenseDay[];
   catalog: ExpenseCatalogEntry[];
   onAddItem: (date: string, item: ExpenseLineItem) => void;
+  onEditItem: (date: string, index: number, item: ExpenseLineItem) => void;
   onDeleteItem: (date: string, index: number) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
   onTabChange: (tab: "orders" | "payment" | "menu" | "history" | "stats" | "expenses") => void;
@@ -3348,7 +3354,7 @@ interface StaffExpensesProps {
 }
 
 function StaffExpensesScreen({
-  lang, expenseDays, catalog, onAddItem, onDeleteItem, onAskConfirm, onTabChange, onLogout, onLangToggle,
+  lang, expenseDays, catalog, onAddItem, onEditItem, onDeleteItem, onAskConfirm, onTabChange, onLogout, onLangToggle,
 }: StaffExpensesProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
@@ -3358,6 +3364,13 @@ function StaffExpensesScreen({
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
   const [amount, setAmount] = useState("");
+  // โหมดแก้ไข: null = เพิ่มรายการใหม่, มีค่า = กำลังแก้รายการเดิม (วันที่ + index)
+  const [editing, setEditing] = useState<{ date: string; index: number } | null>(null);
+
+  // บันทึกการ์ด "รายการที่ซื้อ" เป็นรูปภาพ
+  const receiptRef = useRef<HTMLDivElement>(null);
+  const [savingImage, setSavingImage] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const isSingleDay = startDate === endDate;
   // ของที่เพิ่มใหม่ จะถูกบันทึกลงวันที่ล่าสุดของช่วงที่เลือก (ปกติคือวันเดียวกับ endDate ที่กำลังดูอยู่)
@@ -3381,21 +3394,92 @@ function StaffExpensesScreen({
     }
   };
 
+  const resetForm = () => {
+    setName("");
+    setQuantity("");
+    setUnit("");
+    setAmount("");
+  };
+
   const handleAdd = () => {
     const trimmedName = name.trim();
     const qty = parseFloat(quantity);
     const amt = parseFloat(amount);
     if (!trimmedName || !qty || qty <= 0 || isNaN(amt) || amt < 0) return;
-    onAddItem(entryDate, {
+    const item: ExpenseLineItem = {
       name: trimmedName,
       quantity: qty,
       unit: unit.trim() || undefined,
       amount: amt,
-    });
-    setName("");
-    setQuantity("");
-    setUnit("");
-    setAmount("");
+    };
+    if (editing) {
+      onEditItem(editing.date, editing.index, item);
+      setEditing(null);
+    } else {
+      onAddItem(entryDate, item);
+    }
+    resetForm();
+  };
+
+  // กดดินสอ: เข้าโหมดแก้ไข + เติมค่าเดิมของรายการลงฟอร์ม
+  const handleStartEdit = (date: string, index: number, item: ExpenseLineItem) => {
+    setEditing({ date, index });
+    setName(item.name);
+    setQuantity(String(item.quantity));
+    setUnit(item.unit || "");
+    setAmount(String(item.amount));
+  };
+
+  const handleCancelEdit = () => {
+    setEditing(null);
+    resetForm();
+  };
+
+  const handleSaveAsImage = async () => {
+    const node = receiptRef.current;
+    if (!node || savingImage) return;
+    setSavingImage(true);
+    try {
+      // รอฟอนต์โหลดเสร็จก่อน ไม่งั้นตัวอักษรอาจเพี้ยนตอน capture
+      if (document.fonts?.ready) await document.fonts.ready;
+      const bg =
+        getComputedStyle(node).backgroundColor ||
+        getComputedStyle(document.body).backgroundColor ||
+        "#ffffff";
+      const dataUrl = await toPng(node, {
+        pixelRatio: 2,
+        backgroundColor: bg,
+        // capture ตามความสูงจริงของ div ทั้งก้อน ไม่ใช่แค่ที่เห็นบนจอ
+        width: node.scrollWidth,
+        height: node.scrollHeight,
+      });
+
+      const fileName = `expenses-${isSingleDay ? startDate : `${startDate}_${endDate}`}.png`;
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], fileName, { type: "image/png" });
+      const title = lang === "en" ? "Expense Receipt" : "ใบสรุปรายจ่าย";
+
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.canShare &&
+        navigator.canShare({ files: [file] })
+      ) {
+        try {
+          await navigator.share({ files: [file], title });
+        } catch (err) {
+          // ผู้ใช้กดยกเลิก share sheet — ไม่ต้องทำอะไร
+          if ((err as Error)?.name !== "AbortError") setPreviewImage(dataUrl);
+        }
+      } else {
+        // fallback (เช่นเปิดจากคอม): โชว์รูปให้คลิกขวา/กดค้างเพื่อเซฟ
+        setPreviewImage(dataUrl);
+      }
+    } catch (err) {
+      console.error("save expenses image failed", err);
+      alert(lang === "en" ? "Could not create image" : "สร้างรูปภาพไม่สำเร็จ");
+    } finally {
+      setSavingImage(false);
+    }
   };
 
   const setToday = () => {
@@ -3436,8 +3520,12 @@ function StaffExpensesScreen({
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
         <div className="bg-card border border-border rounded-xl p-3 mb-6">
           <h3 className="font-semibold text-foreground text-sm mb-2.5">
-            {lang === "en" ? "Add Purchase" : "บันทึกของที่ซื้อ"}
-            <span className="text-muted-foreground font-normal ml-1.5">({entryDate})</span>
+            {editing
+              ? (lang === "en" ? "Edit Item" : "แก้ไขรายการ")
+              : (lang === "en" ? "Add Purchase" : "บันทึกของที่ซื้อ")}
+            <span className="text-muted-foreground font-normal ml-1.5">
+              ({editing ? editing.date : entryDate})
+            </span>
           </h3>
           <input
             list="expense-catalog-list"
@@ -3479,13 +3567,23 @@ function StaffExpensesScreen({
             onClick={handleAdd}
             className="w-full bg-primary text-primary-foreground py-2.5 rounded-lg font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
           >
-            <Plus size={16} />
-            {lang === "en" ? "Add Item" : "เพิ่มรายการ"}
+            {editing ? <Check size={16} /> : <Plus size={16} />}
+            {editing
+              ? (lang === "en" ? "Save Changes" : "บันทึกการแก้ไข")
+              : (lang === "en" ? "Add Item" : "เพิ่มรายการ")}
           </button>
+          {editing && (
+            <button
+              onClick={handleCancelEdit}
+              className="w-full mt-2 bg-muted text-foreground py-2.5 rounded-lg font-medium text-sm hover:bg-muted/70 transition-all"
+            >
+              {lang === "en" ? "Cancel" : "ยกเลิก"}
+            </button>
+          )}
         </div>
 
         {/* สรุปรายการที่ซื้อของช่วงวันที่ที่เลือก — โชว์ในหน้าเดียวแบบใบเสร็จ ไม่ต้องเลื่อนอ่านทีละรายการ */}
-        <div className="bg-card border border-border rounded-xl p-4 font-mono">
+        <div ref={receiptRef} className="bg-card border border-border rounded-xl p-4 font-mono">
           <div className="text-center mb-2">
             <div className="font-semibold text-foreground text-sm">
               {lang === "en" ? "Purchase List" : "รายการที่ซื้อ"}
@@ -3520,6 +3618,13 @@ function StaffExpensesScreen({
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <div className="text-foreground">{t.thb}{it.amount}</div>
                           <button
+                            onClick={() => handleStartEdit(day.date, idx, it)}
+                            className="text-muted-foreground hover:text-primary transition-colors"
+                            aria-label={lang === "en" ? "Edit item" : "แก้ไขรายการ"}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
                             onClick={() =>
                               onAskConfirm(
                                 lang === "en" ? "Delete this item?" : "ลบรายการนี้?",
@@ -3527,6 +3632,7 @@ function StaffExpensesScreen({
                               )
                             }
                             className="text-muted-foreground hover:text-destructive transition-colors"
+                            aria-label={lang === "en" ? "Delete item" : "ลบรายการ"}
                           >
                             <Trash2 size={13} />
                           </button>
@@ -3546,7 +3652,45 @@ function StaffExpensesScreen({
             <div className="text-destructive">{t.thb}{rangeTotal}</div>
           </div>
         </div>
+
+        {filteredDays.length > 0 && (
+          <button
+            onClick={handleSaveAsImage}
+            disabled={savingImage}
+            className="w-full mt-3 bg-card border border-border text-foreground py-2.5 rounded-xl font-medium text-sm hover:border-primary/40 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+          >
+            {savingImage ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+            {savingImage
+              ? (lang === "en" ? "Creating image…" : "กำลังสร้างรูป…")
+              : (lang === "en" ? "Save as Image" : "บันทึกเป็นรูปภาพ")}
+          </button>
+        )}
       </div>
+
+      {previewImage && (
+        <div
+          className="fixed inset-0 bg-black/70 z-[100] flex flex-col items-center justify-center px-4 py-6"
+          onClick={() => setPreviewImage(null)}
+        >
+          <p className="text-white text-sm mb-3 text-center">
+            {lang === "en"
+              ? "Right-click or press and hold the image to save it"
+              : "คลิกขวา หรือกดค้างที่รูปเพื่อบันทึกรูปภาพ"}
+          </p>
+          <img
+            src={previewImage}
+            alt={lang === "en" ? "Expense receipt" : "ใบสรุปรายจ่าย"}
+            className="max-w-full max-h-[75vh] object-contain rounded-lg border border-border bg-card"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setPreviewImage(null)}
+            className="mt-4 bg-white text-black px-5 py-2 rounded-xl font-medium text-sm"
+          >
+            {lang === "en" ? "Close" : "ปิด"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -4398,6 +4542,20 @@ export default function App() {
     });
   };
 
+  // แก้ไขรายการที่บันทึกไปแล้ว 1 บรรทัด — แทนที่เฉพาะ item ที่ index นั้น แล้ว setDoc ทับทั้ง document ของวันนั้น
+  const handleEditExpenseItem = async (date: string, index: number, updatedItem: ExpenseLineItem) => {
+    const existing = expenseDays.find((e) => e.id === date);
+    if (!existing || !existing.items[index]) return;
+    const newItems = existing.items.map((it, i) => (i === index ? updatedItem : it));
+    const totalAmount = newItems.reduce((s, i) => s + i.amount, 0);
+    await setDoc(doc(db, "expenses", date), {
+      date,
+      items: newItems,
+      totalAmount,
+      updatedAt: serverTimestamp(),
+    });
+  };
+
   const handleDeleteExpenseItem = async (date: string, index: number) => {
     const existing = expenseDays.find((e) => e.id === date);
     if (!existing) return;
@@ -4604,6 +4762,7 @@ export default function App() {
           expenseDays={expenseDays}
           catalog={expenseCatalog}
           onAddItem={handleAddExpenseItem}
+          onEditItem={handleEditExpenseItem}
           onDeleteItem={handleDeleteExpenseItem}
           onAskConfirm={askConfirm}
           onTabChange={handleStaffTabChange}
