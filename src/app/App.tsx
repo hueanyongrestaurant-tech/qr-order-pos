@@ -3733,6 +3733,37 @@ function StaffExpensesScreen({
     setEndDate(today);
   };
 
+  // [DEBUG/ชั่วคราว] เช็ค feasibility ของ Web Bluetooth API กับเครื่องพิมพ์ thermal ที่มีอยู่
+  // ไม่เชื่อม GATT ไม่ส่งคำสั่งพิมพ์ แค่เปิด dialog เลือกอุปกรณ์ให้ดูว่าเครื่องพิมพ์โผล่ในลิสต์ไหม
+  const handleTestBluetoothPrinter = async () => {
+    const bt = (navigator as unknown as { bluetooth?: { requestDevice: (opts: unknown) => Promise<{ name?: string; id?: string }> } }).bluetooth;
+    if (!bt || typeof bt.requestDevice !== "function") {
+      alert(
+        "❌ เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (navigator.bluetooth ไม่มี)\n\n" +
+        "ลองใช้ Chrome บน Android และเปิดผ่าน HTTPS\n" +
+        "(iOS Safari / Chrome บน iOS ไม่รองรับ)"
+      );
+      return;
+    }
+    try {
+      const device = await bt.requestDevice({ acceptAllDevices: true, optionalServices: [] });
+      alert(
+        "✅ เจออุปกรณ์ — Web Bluetooth ใช้งานได้\n\n" +
+        `ชื่อ: ${device.name || "(ไม่มีชื่อ)"}\n` +
+        `id: ${device.id || "(ไม่มี id)"}`
+      );
+    } catch (err) {
+      const e = err as { name?: string; message?: string };
+      if (e.name === "NotFoundError") {
+        alert("⚠️ ไม่พบอุปกรณ์ หรือผู้ใช้กดยกเลิก dialog\n\n(ถ้า dialog เปิดได้แต่ไม่เห็นเครื่องพิมพ์ = เครื่องพิมพ์อาจเป็น Bluetooth Classic ไม่ใช่ BLE)");
+      } else if (e.name === "SecurityError" || e.name === "NotAllowedError") {
+        alert("❌ ถูกบล็อก (SecurityError/NotAllowedError)\n\nต้องเปิดผ่าน HTTPS และกดปุ่มจาก user gesture\n" + (e.message || ""));
+      } else {
+        alert(`❌ เกิดข้อผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}`);
+      }
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <StaffHeader lang={lang} activeTab="expenses" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
@@ -3762,6 +3793,14 @@ function StaffExpensesScreen({
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
         </div>
+
+        {/* [DEBUG/ชั่วคราว] ทดสอบว่าเครื่องพิมพ์ Bluetooth รองรับ Web Bluetooth (BLE) หรือไม่ — ลบทิ้งได้เมื่อประเมินเสร็จ */}
+        <button
+          onClick={handleTestBluetoothPrinter}
+          className="w-full mb-5 h-10 rounded-xl text-xs font-medium bg-muted border border-dashed border-border text-muted-foreground hover:border-primary/40 transition-all"
+        >
+          🔧 ทดสอบ Bluetooth เครื่องพิมพ์
+        </button>
 
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
         <div className="bg-card border border-border rounded-xl p-3 mb-6">
