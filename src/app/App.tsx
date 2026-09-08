@@ -35,6 +35,9 @@ import {
 } from "lucide-react";
 
 import { toPng } from "html-to-image";
+import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
+
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "./components/ui/chart";
 
 import { db, auth } from "../lib/firebase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
@@ -4092,6 +4095,42 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
       menuCounts[key].revenue += cartItemTotal(ci);
     });
   });
+  // ยอดขายรายวันตามช่วงวันที่ที่เลือก — เติมทุกวันให้ครบแม้วันไหนไม่มียอดขาย
+  // ถ้าเลือกวันเดียว (startDate === endDate) จะไม่แสดงกราฟ เพราะมีแท่งเดียวไม่มีประโยชน์
+  const dailyRevenue: { date: string; label: string; revenue: number }[] | null =
+    startDate === endDate
+      ? null
+      : (() => {
+          const revByDay: Record<string, number> = {};
+          filtered.forEach((o) => {
+            const key = formatDateInput(o.timestamp);
+            revByDay[key] = (revByDay[key] || 0) + orderTotal(o);
+          });
+          const days: { date: string; label: string; revenue: number }[] = [];
+          const cursor = new Date(`${startDate}T00:00:00`);
+          const last = new Date(`${endDate}T00:00:00`);
+          while (cursor <= last) {
+            const key = formatDateInput(cursor);
+            days.push({
+              date: key,
+              label: cursor.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
+                day: "numeric",
+                month: "short",
+              }),
+              revenue: revByDay[key] || 0,
+            });
+            cursor.setDate(cursor.getDate() + 1);
+          }
+          return days;
+        })();
+
+  const revenueChartConfig = {
+    revenue: {
+      label: lang === "en" ? "Revenue" : "ยอดขาย",
+      color: "var(--primary)",
+    },
+  } satisfies ChartConfig;
+
   const allTopMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty);
   // กรองด้วยชื่อเมนู (ทั้งไทย/อังกฤษ, ไม่สนตัวพิมพ์, ค้นหาบางส่วนได้) — กระทบเฉพาะการแสดงผล ไม่แตะยอดขาย/รายได้
   const menuSearch = searchQuery.trim().toLowerCase();
@@ -4151,6 +4190,28 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
             <div className="font-display font-bold text-xl text-accent">{t.thb}{transferRevenue}</div>
           </div>
         </div>
+
+        {dailyRevenue && (
+          <div className="bg-card rounded-2xl border border-border p-4 mb-6">
+            <h3 className="font-semibold text-foreground text-sm mb-3">
+              {lang === "en" ? "Daily Revenue" : "ยอดขายรายวัน"}
+            </h3>
+            <ChartContainer config={revenueChartConfig} className="aspect-[16/9] w-full">
+              <BarChart data={dailyRevenue} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  interval="preserveStartEnd"
+                />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Bar dataKey="revenue" fill="var(--color-revenue)" radius={4} />
+              </BarChart>
+            </ChartContainer>
+          </div>
+        )}
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
           {lang === "en" ? "Items Ordered" : "รายการที่ขายทั้งหมด"}
