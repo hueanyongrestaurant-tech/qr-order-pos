@@ -27,6 +27,7 @@ import {
   Printer,
   Pencil,
   Camera,
+  Download,
   Loader2,
   ClipboardList,
   Ban,
@@ -3590,6 +3591,8 @@ function StaffExpensesScreen({
   const receiptRef = useRef<HTMLDivElement>(null);
   const [savingImage, setSavingImage] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // เก็บรูปที่ capture ล่าสุดไว้ ให้ผู้ใช้กดปุ่ม "ดาวน์โหลด" ซ้ำได้เองทุกเมื่อ
+  const [lastImage, setLastImage] = useState<{ dataUrl: string; fileName: string } | null>(null);
 
   const isSingleDay = startDate === endDate;
   // ของที่เพิ่มใหม่ จะถูกบันทึกลงวันที่ล่าสุดของช่วงที่เลือก (ปกติคือวันเดียวกับ endDate ที่กำลังดูอยู่)
@@ -3654,6 +3657,24 @@ function StaffExpensesScreen({
     resetForm();
   };
 
+  // ดาวน์โหลดไฟล์ตรง ๆ ผ่าน Download Manager ของเบราว์เซอร์ (เสถียรกว่า Web Share บน Android หลายรุ่น)
+  // คืนค่า true ถ้าสั่งดาวน์โหลดได้ / false ถ้าล้มเหลว
+  const triggerDownload = (dataUrl: string, fileName: string): boolean => {
+    try {
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = fileName;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return true;
+    } catch (err) {
+      console.error("download image failed", err);
+      return false;
+    }
+  };
+
   const handleSaveAsImage = async () => {
     const node = receiptRef.current;
     if (!node || savingImage) return;
@@ -3678,6 +3699,9 @@ function StaffExpensesScreen({
       const file = new File([blob], fileName, { type: "image/png" });
       const title = lang === "en" ? "Expense Receipt" : "ใบสรุปรายจ่าย";
 
+      // เก็บรูปไว้ให้ปุ่ม "ดาวน์โหลด" ใช้ได้เสมอ ไม่ต้องรอ fallback อัตโนมัติ
+      setLastImage({ dataUrl, fileName });
+
       if (
         typeof navigator !== "undefined" &&
         navigator.canShare &&
@@ -3687,11 +3711,14 @@ function StaffExpensesScreen({
           await navigator.share({ files: [file], title });
         } catch (err) {
           // ผู้ใช้กดยกเลิก share sheet — ไม่ต้องทำอะไร
-          if ((err as Error)?.name !== "AbortError") setPreviewImage(dataUrl);
+          if ((err as Error)?.name !== "AbortError") {
+            // share ล้มเหลวจริง: ลองดาวน์โหลดตรง ก่อนจะ fallback ไปโชว์รูปให้กดค้าง
+            if (!triggerDownload(dataUrl, fileName)) setPreviewImage(dataUrl);
+          }
         }
       } else {
-        // fallback (เช่นเปิดจากคอม): โชว์รูปให้คลิกขวา/กดค้างเพื่อเซฟ
-        setPreviewImage(dataUrl);
+        // fallback (เช่นเปิดจากคอม): ดาวน์โหลดตรง ถ้าไม่ได้ค่อยโชว์รูปให้คลิกขวา/กดค้างเซฟ
+        if (!triggerDownload(dataUrl, fileName)) setPreviewImage(dataUrl);
       }
     } catch (err) {
       console.error("save expenses image failed", err);
@@ -3873,16 +3900,30 @@ function StaffExpensesScreen({
         </div>
 
         {filteredDays.length > 0 && (
-          <button
-            onClick={handleSaveAsImage}
-            disabled={savingImage}
-            className="w-full mt-3 bg-card border border-border text-foreground py-2.5 rounded-xl font-medium text-sm hover:border-primary/40 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
-          >
-            {savingImage ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
-            {savingImage
-              ? (lang === "en" ? "Creating image…" : "กำลังสร้างรูป…")
-              : (lang === "en" ? "Save as Image" : "บันทึกเป็นรูปภาพ")}
-          </button>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={handleSaveAsImage}
+              disabled={savingImage}
+              className="flex-1 bg-card border border-border text-foreground py-2.5 rounded-xl font-medium text-sm hover:border-primary/40 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {savingImage ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+              {savingImage
+                ? (lang === "en" ? "Creating image…" : "กำลังสร้างรูป…")
+                : (lang === "en" ? "Save as Image" : "บันทึกเป็นรูปภาพ")}
+            </button>
+            {lastImage && (
+              <button
+                onClick={() => {
+                  if (!triggerDownload(lastImage.dataUrl, lastImage.fileName))
+                    setPreviewImage(lastImage.dataUrl);
+                }}
+                className="bg-card border border-border text-foreground px-3 py-2.5 rounded-xl font-medium text-sm hover:border-primary/40 transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
+              >
+                <Download size={16} />
+                {lang === "en" ? "Download" : "ดาวน์โหลด"}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -3902,12 +3943,23 @@ function StaffExpensesScreen({
             className="max-w-full max-h-[75vh] object-contain rounded-lg border border-border bg-card"
             onClick={(e) => e.stopPropagation()}
           />
-          <button
-            onClick={() => setPreviewImage(null)}
-            className="mt-4 bg-white text-black px-5 py-2 rounded-xl font-medium text-sm"
-          >
-            {lang === "en" ? "Close" : "ปิด"}
-          </button>
+          <div className="mt-4 flex gap-2" onClick={(e) => e.stopPropagation()}>
+            {lastImage && (
+              <button
+                onClick={() => triggerDownload(lastImage.dataUrl, lastImage.fileName)}
+                className="bg-white text-black px-5 py-2 rounded-xl font-medium text-sm flex items-center gap-1.5"
+              >
+                <Download size={16} />
+                {lang === "en" ? "Download" : "ดาวน์โหลด"}
+              </button>
+            )}
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="bg-white/20 text-white px-5 py-2 rounded-xl font-medium text-sm"
+            >
+              {lang === "en" ? "Close" : "ปิด"}
+            </button>
+          </div>
         </div>
       )}
     </div>
