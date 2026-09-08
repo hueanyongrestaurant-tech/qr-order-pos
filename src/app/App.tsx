@@ -91,6 +91,7 @@ type ActivityAction =
   | "menu_item_edited"
   | "menu_item_deleted"
   | "category_deleted"
+  | "expense_edited"
   | "expense_deleted";
 
 interface ActivityLog {
@@ -277,6 +278,7 @@ const T = {
       menu_item_edited: "Menu item edited",
       menu_item_deleted: "Menu item deleted",
       category_deleted: "Category deleted",
+      expense_edited: "Expense edited",
       expense_deleted: "Expense deleted",
     },
     eggAdded: "+ Fried Egg",
@@ -362,6 +364,7 @@ const T = {
       menu_item_edited: "แก้ไขเมนู",
       menu_item_deleted: "ลบเมนู",
       category_deleted: "ลบหมวดหมู่",
+      expense_edited: "แก้ไขรายจ่าย",
       expense_deleted: "ลบรายจ่าย",
     },
     eggAdded: "+ ไข่ดาว",
@@ -3931,6 +3934,7 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
   const today = formatDateInput(new Date());
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const paidOrders = orders.filter((o) => o.status === "paid");
 
@@ -3997,7 +4001,16 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
       menuCounts[key].revenue += cartItemTotal(ci);
     });
   });
-  const topMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty);
+  const allTopMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty);
+  // กรองด้วยชื่อเมนู (ทั้งไทย/อังกฤษ, ไม่สนตัวพิมพ์, ค้นหาบางส่วนได้) — กระทบเฉพาะการแสดงผล ไม่แตะยอดขาย/รายได้
+  const menuSearch = searchQuery.trim().toLowerCase();
+  const topMenus = menuSearch
+    ? allTopMenus.filter(
+        (m) =>
+          m.nameEn.toLowerCase().includes(menuSearch) ||
+          m.nameTh.toLowerCase().includes(menuSearch)
+      )
+    : allTopMenus;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -4051,9 +4064,18 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
         <h3 className="font-semibold text-foreground text-sm mb-3">
           {lang === "en" ? "Items Ordered" : "รายการที่ขายทั้งหมด"}
         </h3>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={lang === "en" ? "Search menu…" : "ค้นหาเมนู…"}
+          className="w-full h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary mb-3"
+        />
         {topMenus.length === 0 ? (
           <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
-            {lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้"}
+            {menuSearch
+              ? (lang === "en" ? "No menu items match your search" : "ไม่พบเมนูที่ค้นหา")
+              : (lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้")}
           </div>
         ) : (
           <div className="space-y-2">
@@ -4110,7 +4132,7 @@ function StaffActivityScreen({ lang, logs, onTabChange, onLogout, onLangToggle }
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
     "all", "void_item", "cancel_order",
-    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_deleted",
+    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted",
   ];
 
   return (
@@ -4413,6 +4435,31 @@ export default function App() {
     window.addEventListener("pageshow", handlePageShow);
     return () => window.removeEventListener("pageshow", handlePageShow);
   }, []);
+
+  // Watchdog เฉพาะฝั่งลูกค้า (มี ?table= ใน URL): แอปกล้อง/แอปแชทบนมือถือ (โดยเฉพาะ iPhone)
+  // มักจะ preload หน้าเว็บล่วงหน้าก่อนผู้ใช้กดเปิดจริง ทำให้ Firestore onSnapshot เริ่มทำงาน
+  // ตอนแท็บยังไม่ active แล้วค้าง ไม่เคย resolve ข้อมูลกลับมา ลูกค้าเลยเห็นแค่หน้าเปล่าโดยไม่มี error —
+  // ถ้าผ่านไป ~6 วิ แล้ว categories/menuItems ยังว่างอยู่ ให้รีโหลดหน้าอัตโนมัติ 1 ครั้ง
+  // (กัน reload วนลูปด้วย flag ใน sessionStorage เผื่อเน็ตหลุด/Firestore ล่มจริงๆ)
+  useEffect(() => {
+    if (!getTableFromUrl()) return; // ฝั่งพนักงานไม่เกี่ยว
+    const RELOAD_FLAG = "customerDataWatchdogReloaded";
+
+    if (categories.length > 0 || menuItems.length > 0) {
+      // โหลดข้อมูลสำเร็จแล้ว — เคลียร์ flag เผื่อผู้ใช้เปิดหน้าใหม่ในเซสชันเดิมแล้วเจอปัญหาซ้ำ
+      writeSession(RELOAD_FLAG, null);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (categories.length > 0 || menuItems.length > 0) return;
+      if (readSession<boolean>(RELOAD_FLAG)) return; // รีโหลดไปแล้ว 1 รอบ ไม่รีโหลดซ้ำ
+      writeSession(RELOAD_FLAG, true);
+      window.location.reload();
+    }, 6000);
+
+    return () => window.clearTimeout(timer);
+  }, [categories.length, menuItems.length]);
   useEffect(() => {
     if (!authChecked) return;
     const isStaff = getTableFromUrl() === null; // ถ้าไม่มี ?table= = ฝั่งพนักงาน
@@ -5033,6 +5080,7 @@ export default function App() {
   const handleEditExpenseItem = async (date: string, index: number, updatedItem: ExpenseLineItem) => {
     const existing = expenseDays.find((e) => e.id === date);
     if (!existing || !existing.items[index]) return;
+    const before = existing.items[index];
     const newItems = existing.items.map((it, i) => (i === index ? updatedItem : it));
     const totalAmount = newItems.reduce((s, i) => s + i.amount, 0);
     await setDoc(doc(db, "expenses", date), {
@@ -5040,6 +5088,26 @@ export default function App() {
       items: newItems,
       totalAmount,
       updatedAt: serverTimestamp(),
+    });
+    await logActivity({
+      action: "expense_edited",
+      itemName: updatedItem.name,
+      amount: updatedItem.amount,
+      details: {
+        date,
+        before: {
+          name: before.name,
+          quantity: before.quantity,
+          unit: before.unit ?? null,
+          amount: before.amount,
+        },
+        after: {
+          name: updatedItem.name,
+          quantity: updatedItem.quantity,
+          unit: updatedItem.unit ?? null,
+          amount: updatedItem.amount,
+        },
+      },
     });
   };
 
