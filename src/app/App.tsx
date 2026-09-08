@@ -4026,7 +4026,13 @@ function formatDateInput(d: Date): string {
 function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
-  const [startDate, setStartDate] = useState(today);
+  // เริ่มต้นเป็นช่วง 7 วันล่าสุด (ย้อนหลัง 6 วัน + วันนี้) เพื่อให้กราฟยอดขายรายวันแสดงทันทีที่เข้าหน้า
+  const sevenDaysAgo = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    return formatDateInput(d);
+  })();
+  const [startDate, setStartDate] = useState(sevenDaysAgo);
   const [endDate, setEndDate] = useState(today);
   const [searchQuery, setSearchQuery] = useState("");
 
