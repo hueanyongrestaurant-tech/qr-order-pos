@@ -40,7 +40,7 @@ import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "./components/ui/chart";
 
 import { db, auth } from "../lib/firebase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -509,6 +509,47 @@ function formatClock(date: Date): string {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+// แปลง 1 document ของ collection "orders" เป็น Order — ใช้ร่วมกันทั้ง realtime listener
+// (ออเดอร์ที่ active) และ query แบบครั้งเดียวของหน้า History/Stats เพื่อให้ mapping ตรงกันเป๊ะ
+function mapOrderDoc(id: string, raw: any): Order {
+  return {
+    id,
+    tableNumber: raw.tableNumber,
+    timestamp: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
+    items: raw.items,
+    status: raw.status,
+    paymentMethod: raw.paymentMethod,
+    cashReceived: raw.cashReceived,
+    isTakeaway: raw.isTakeaway,
+    takeawayLabel: raw.takeawayLabel,
+    paymentBatchId: raw.paymentBatchId,
+    cancelReason: raw.cancelReason,
+    cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
+  } as Order;
+}
+
+// query ออเดอร์ที่ชำระเงินแล้วตามช่วงเวลา (bin ตาม createdAt เหมือน logic เดิมของ History/Stats)
+// ไม่ใช่ realtime — เรียกตอนเข้าหน้า/เปลี่ยนช่วงวันที่ เพราะเป็นข้อมูลที่ปิดรอบแล้ว
+// ตั้งใจ filter createdAt อย่างเดียว (single-field index อัตโนมัติ) แล้วกรอง status === "paid"
+// ฝั่ง client — จะได้ไม่ต้องสร้าง/รอ composite index และไม่มีอะไรพังตอน deploy
+// (ออเดอร์ in-progress/cancelled ในช่วงย้อนหลัง 30+ วัน แทบไม่มี จึงแทบไม่มี overhead)
+// limit เป็นแค่กันหลุด (safety cap) ไม่ใช่ pagination จริง
+const PAID_ORDERS_QUERY_CAP = 8000;
+async function fetchPaidOrders(startInclusive: Date, endExclusive: Date): Promise<Order[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "orders"),
+      where("createdAt", ">=", startInclusive),
+      where("createdAt", "<", endExclusive),
+      orderBy("createdAt", "asc"),
+      limit(PAID_ORDERS_QUERY_CAP),
+    ),
+  );
+  return snap.docs
+    .map((d) => mapOrderDoc(d.id, d.data()))
+    .filter((o) => o.status === "paid");
 }
 
 // แปลงชื่อของเป็น id ที่ใช้เป็น Firestore doc id ได้ (ตัดอักขระที่ Firestore ไม่รับ)
@@ -3345,7 +3386,6 @@ function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categ
 
 interface StaffHistoryProps {
   lang: Language;
-  orders: Order[];
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
@@ -3361,11 +3401,61 @@ interface HistoryEntry {
   itemCount: number;
 }
 
-function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle }: StaffHistoryProps) {
+const HISTORY_ROLLING_STEP = 30; // จำนวนวันที่ default และที่เพิ่มต่อการกด "โหลดเก่ากว่านี้"
+
+function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffHistoryProps) {
   const t = T[lang];
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
+
+  // โหมดดูข้อมูล: "rolling" = N วันล่าสุดนับถอยหลังจากวันนี้ (default 30, กดโหลดเพิ่มทีละ 30)
+  //              "month"   = เลือกเดือนเจาะจงจาก month picker
+  const [mode, setMode] = useState<"rolling" | "month">("rolling");
+  const [daysBack, setDaysBack] = useState(HISTORY_ROLLING_STEP);
+  const [pickedMonth, setPickedMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const currentMonthKey = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+
+  const [fetchedOrders, setFetchedOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    let startInclusive: Date;
+    let endExclusive: Date;
+    if (mode === "month") {
+      const [y, m] = pickedMonth.split("-").map(Number);
+      startInclusive = new Date(y, m - 1, 1, 0, 0, 0, 0);
+      endExclusive = new Date(y, m, 1, 0, 0, 0, 0);
+    } else {
+      const start = new Date();
+      start.setDate(start.getDate() - (daysBack - 1));
+      start.setHours(0, 0, 0, 0);
+      startInclusive = start;
+      const end = new Date();
+      end.setDate(end.getDate() + 1);
+      end.setHours(0, 0, 0, 0);
+      endExclusive = end;
+    }
+
+    fetchPaidOrders(startInclusive, endExclusive)
+      .then((rows) => { if (!cancelled) setFetchedOrders(rows); })
+      .catch((err) => { console.error("fetchPaidOrders (history) failed", err); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [mode, daysBack, pickedMonth]);
+
+  const rangeLabel = mode === "month"
+    ? new Date(`${pickedMonth}-01T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { month: "long", year: "numeric" })
+    : (lang === "en" ? `Last ${daysBack} days` : `${daysBack} วันล่าสุด`);
   const toggleMonth = (key: string) => {
     setExpandedMonths((prev) => {
       const next = new Set(prev);
@@ -3380,7 +3470,7 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
       return next;
     });
   };
-  const paidOrders = orders
+  const paidOrders = fetchedOrders
     .filter((o) => o.status === "paid")
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
@@ -3439,9 +3529,35 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
       <StaffHeader lang={lang} activeTab="history" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        {/* ตัวเลือกช่วงเวลา: N วันล่าสุด (rolling) หรือเลือกเดือนเจาะจง */}
+        <div className="flex items-stretch gap-2 mb-4">
+          <input
+            type="month"
+            value={pickedMonth}
+            max={currentMonthKey}
+            onChange={(e) => { if (e.target.value) { setPickedMonth(e.target.value); setMode("month"); } }}
+            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
+          />
+          <button
+            onClick={() => { setMode("rolling"); setDaysBack(HISTORY_ROLLING_STEP); }}
+            className={`h-11 px-3 rounded-xl text-xs font-medium border-2 transition-all whitespace-nowrap flex-shrink-0 ${
+              mode === "rolling" ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"
+            }`}
+          >
+            {lang === "en" ? "Recent" : "ล่าสุด"}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 text-muted-foreground text-xs mb-4">
+          {loading && <Loader2 size={14} className="animate-spin" />}
+          <span>{rangeLabel}</span>
+        </div>
+
         {paidOrders.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground text-sm">
-            {lang === "en" ? "No completed orders yet" : "ยังไม่มีออเดอร์ที่เสร็จสิ้น"}
+            {loading
+              ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
+              : (lang === "en" ? "No completed orders in this range" : "ไม่มีออเดอร์ที่เสร็จสิ้นในช่วงนี้")}
           </div>
         ) : (
           monthGroups.map(([monthKey, monthData]) => {
@@ -3556,6 +3672,19 @@ function StaffHistoryScreen({ lang, orders, onTabChange, onLogout, onLangToggle 
             );
           })
         )}
+
+        {/* rolling mode: โหลดข้อมูลเก่าลงไปอีก 30 วัน */}
+        {mode === "rolling" && paidOrders.length > 0 && (
+          <button
+            onClick={() => setDaysBack((d) => d + HISTORY_ROLLING_STEP)}
+            disabled={loading}
+            className="w-full mt-2 py-3 rounded-xl text-sm font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all disabled:opacity-40"
+          >
+            {loading
+              ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
+              : (lang === "en" ? `Load older (+${HISTORY_ROLLING_STEP} days)` : `โหลดเก่ากว่านี้ (+${HISTORY_ROLLING_STEP} วัน)`)}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -3567,6 +3696,9 @@ interface StaffExpensesProps {
   lang: Language;
   expenseDays: ExpenseDay[];
   catalog: ExpenseCatalogEntry[];
+  rangeStart: string;
+  rangeEnd: string;
+  onRangeChange: (start: string, end: string) => void;
   onAddItem: (date: string, item: ExpenseLineItem) => void;
   onEditItem: (date: string, index: number, item: ExpenseLineItem) => void;
   onDeleteItem: (date: string, index: number) => void;
@@ -3577,12 +3709,15 @@ interface StaffExpensesProps {
 }
 
 function StaffExpensesScreen({
-  lang, expenseDays, catalog, onAddItem, onEditItem, onDeleteItem, onAskConfirm, onTabChange, onLogout, onLangToggle,
+  lang, expenseDays, catalog, rangeStart, rangeEnd, onRangeChange, onAddItem, onEditItem, onDeleteItem, onAskConfirm, onTabChange, onLogout, onLangToggle,
 }: StaffExpensesProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(today);
+  // ช่วงวันที่ถูกยกไปเก็บที่ App (เพื่อให้ listener ดึงเฉพาะช่วงนี้) — ที่นี่แค่ alias ให้โค้ดเดิมใช้ต่อได้
+  const startDate = rangeStart;
+  const endDate = rangeEnd;
+  const setStartDate = (v: string) => onRangeChange(v, endDate);
+  const setEndDate = (v: string) => onRangeChange(startDate, v);
   const [name, setName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
@@ -3732,8 +3867,7 @@ function StaffExpensesScreen({
   };
 
   const setToday = () => {
-    setStartDate(today);
-    setEndDate(today);
+    onRangeChange(today, today);
   };
 
   // [DEBUG/ชั่วคราว] สำรวจ Web Bluetooth API กับเครื่องพิมพ์ thermal ที่มีอยู่
@@ -4130,7 +4264,6 @@ function StaffExpensesScreen({
 
 interface StaffStatsProps {
   lang: Language;
-  orders: Order[];
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
@@ -4143,7 +4276,14 @@ function formatDateInput(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
+// ต้นวันถัดจาก dateStr ("YYYY-MM-DD") — ใช้เป็นขอบบนแบบ exclusive ของ query ช่วงวันที่
+function dayAfter(dateStr: string): Date {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
   // เริ่มต้นเป็นช่วง 7 วันล่าสุด (ย้อนหลัง 6 วัน + วันนี้) เพื่อให้กราฟยอดขายรายวันแสดงทันทีที่เข้าหน้า
@@ -4156,7 +4296,18 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
   const [endDate, setEndDate] = useState(today);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const paidOrders = orders.filter((o) => o.status === "paid");
+  // ดึงออเดอร์ที่ชำระแล้วเฉพาะช่วงวันที่ที่เลือก (ไม่ใช่ listener ถาวร) — bin ตาม createdAt เหมือนเดิม
+  const [paidOrders, setPaidOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchPaidOrders(new Date(`${startDate}T00:00:00`), dayAfter(endDate))
+      .then((rows) => { if (!cancelled) setPaidOrders(rows); })
+      .catch((err) => { console.error("fetchPaidOrders (stats) failed", err); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [startDate, endDate]);
 
   const rangeStart = new Date(`${startDate}T00:00:00`);
   const rangeEnd = new Date(`${endDate}T23:59:59`);
@@ -4298,6 +4449,13 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
           </button>
         </div>
 
+        {loading && (
+          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-4">
+            <Loader2 size={14} className="animate-spin" />
+            {lang === "en" ? "Loading…" : "กำลังโหลด…"}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-card rounded-2xl border border-border p-4">
             <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Total Revenue" : "รายได้รวม"}</div>
@@ -4385,13 +4543,12 @@ function StaffStatsScreen({ lang, orders, onTabChange, onLogout, onLangToggle }:
 
 interface StaffActivityProps {
   lang: Language;
-  logs: ActivityLog[];
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
 
-function StaffActivityScreen({ lang, logs, onTabChange, onLogout, onLangToggle }: StaffActivityProps) {
+function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffActivityProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
   const [date, setDate] = useState(today);
@@ -4399,6 +4556,50 @@ function StaffActivityScreen({ lang, logs, onTabChange, onLogout, onLangToggle }
 
   const dayStart = new Date(`${date}T00:00:00`);
   const dayEnd = new Date(`${date}T23:59:59`);
+
+  // ดึง activity log เฉพาะวันที่เลือกไว้ (default วันนี้) — realtime เพราะ void/cancel อาจเกิดระหว่างดูอยู่
+  // limit(500) เป็น safety cap — กิจกรรมต่อวันไม่น่าเกินนี้
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [logsRetry, setLogsRetry] = useState(0);
+  useEffect(() => {
+    let retryTimer: number | undefined;
+    const unsubscribe = onSnapshot(
+      query(
+        collection(db, "activityLogs"),
+        where("createdAt", ">=", dayStart),
+        where("createdAt", "<=", dayEnd),
+        orderBy("createdAt", "desc"),
+        limit(500),
+      ),
+      (snapshot) => {
+        setLogs(snapshot.docs.map((d) => {
+          const raw = d.data();
+          return {
+            id: d.id,
+            action: raw.action,
+            createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
+            orderId: raw.orderId,
+            tableNumber: raw.tableNumber,
+            itemName: raw.itemName,
+            amount: raw.amount,
+            reason: raw.reason,
+            details: raw.details,
+          } as ActivityLog;
+        }));
+      },
+      (err) => {
+        // เช่น permission-denied ชั่วคราวตอน Auth สะดุด — ลอง subscribe ใหม่หลัง 1.5 วิ
+        console.error("activityLogs listener error", err);
+        retryTimer = window.setTimeout(() => setLogsRetry((n) => n + 1), 1500);
+      },
+    );
+    return () => {
+      unsubscribe();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, logsRetry]);
+
   const dayLogs = logs.filter((l) => l.createdAt >= dayStart && l.createdAt <= dayEnd);
   const visibleLogs = dayLogs.filter((l) => actionFilter === "all" || l.action === actionFilter);
 
@@ -4619,16 +4820,23 @@ export default function App() {
   // Staff state
   const [orders, setOrders] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [authChecked, setAuthChecked] = useState(false);
   const [expenseDays, setExpenseDays] = useState<ExpenseDay[]>([]);
   const [expenseCatalog, setExpenseCatalog] = useState<ExpenseCatalogEntry[]>([]);
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [voidReasons, setVoidReasons] = useState<string[]>([]);
+  // ช่วงวันที่ของหน้า Expenses — ยกขึ้นมาไว้ที่ App เพื่อให้ listener ดึงเฉพาะช่วงที่กำลังดู
+  // (handler เพิ่ม/แก้/ลบ ทำงานกับวันที่ในช่วงนี้เสมอ จึงมีข้อมูลครบ)
+  const [expenseRangeStart, setExpenseRangeStart] = useState<string>(getTodayKey());
+  const [expenseRangeEnd, setExpenseRangeEnd] = useState<string>(getTodayKey());
 
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [staffLoggedIn, setStaffLoggedIn] = useState(false);
+  // ต่างจาก staffLoggedIn: latch เป็น true เมื่อ login สำเร็จครั้งแรก แล้วค้าง true จนกว่าจะ
+  // กดปุ่ม logout จริงๆ — ไม่กลับเป็น false เวลา onAuthStateChanged fire null ชั่วคราว
+  // (เช่นตอน Auth IndexedDB สะดุดเพราะเปิดหลายแท็บ) ใช้เป็น gate ของ Firestore listener ฝั่งพนักงาน
+  // เพื่อไม่ให้ listener ถูก unsubscribe ทิ้งกลางคันแล้วข้อมูลหายทั้งที่ยัง login อยู่
+  const [everAuthed, setEverAuthed] = useState(false);
   const allMenuItemsRef = useRef(allMenuItems);
   useEffect(() => {
     allMenuItemsRef.current = allMenuItems;
@@ -4639,29 +4847,6 @@ export default function App() {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
       setAllCategories(data);
       setCategories(data.filter((c) => c.active !== false));
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const tn = getTableFromUrl();
-    if (!tn) return;
-    const q = query(collection(db, "orders"), where("tableNumber", "==", tn), orderBy("createdAt", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs
-        .map((d) => {
-          const raw = d.data();
-          return {
-            id: d.id,
-            tableNumber: raw.tableNumber,
-            timestamp: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
-            items: raw.items,
-            status: raw.status,
-            isTakeaway: raw.isTakeaway,
-          } as Order;
-        })
-        .filter((o) => o.status !== "paid" && o.status !== "cancelled");
-      setCustomerOrders(data);
     });
     return () => unsubscribe();
   }, []);
@@ -4739,102 +4924,90 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [categories.length, menuItems.length]);
   useEffect(() => {
-    if (!authChecked) return;
     const isStaff = getTableFromUrl() === null; // ถ้าไม่มี ?table= = ฝั่งพนักงาน
     if (!isStaff) return; // ลูกค้าไม่ต้องฟัง orders เลย เลี่ยง permission error
+    if (!everAuthed) return; // รอ login สำเร็จจริง (latch) — ทน auth กระพริบ ไม่ unsubscribe กลางคัน
 
-    const q = query(collection(db, "orders"), orderBy("createdAt", "asc"));
+    // ฟังเฉพาะออเดอร์ที่ยัง "ทำงานอยู่" — ครอบคลุมทุกอย่างที่หน้า Orders/Payment,
+    // การคำนวณสถานะยุ่ง และ handler ปิดโต๊ะ/void/cancel ต้องใช้ ส่วนออเดอร์ที่
+    // paid แล้ว หน้า History/Stats จะ query แยกตามช่วงวันที่เอง (ไม่ค้าง listener)
+    // ไม่ใส่ orderBy ที่นี่ตั้งใจ — จะได้ไม่ต้องพึ่ง composite index (ฟิลเตอร์ status "in" อย่างเดียว
+    // ใช้ single-field index อัตโนมัติ) แล้วเรียงลำดับ createdAt ฝั่ง client แทน
+    // limit(300) เป็น safety cap เฉยๆ — ออเดอร์ active พร้อมกัน 300 ใบไม่เกิดขึ้นจริงในร้านนี้
+    const q = query(
+      collection(db, "orders"),
+      where("status", "in", ["in-progress", "awaiting-payment"]),
+      limit(300),
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((d) => {
-        const raw = d.data();
-        return {
-          id: d.id,
-          tableNumber: raw.tableNumber,
-          timestamp: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
-          items: raw.items,
-          status: raw.status,
-          paymentMethod: raw.paymentMethod,
-          cashReceived: raw.cashReceived,
-          isTakeaway: raw.isTakeaway,
-          takeawayLabel: raw.takeawayLabel,
-          paymentBatchId: raw.paymentBatchId,
-          cancelReason: raw.cancelReason,
-          cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
-        } as Order;
-      });
+      const data = snapshot.docs
+        .map((d) => mapOrderDoc(d.id, d.data()))
+        .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
       setOrders(data);
     });
     return () => unsubscribe();
-  }, [authChecked]);
+  }, [everAuthed]);
 
-  // บัญชีรายจ่าย — เฉพาะฝั่งพนักงานเท่านั้น (เหมือน orders ด้านบน)
+  // บัญชีรายจ่าย — ดึงเฉพาะช่วงวันที่ที่หน้า Expenses กำลังดู (1 doc ต่อวัน, id = "YYYY-MM-DD")
+  // re-subscribe เมื่อช่วงวันที่เปลี่ยน — handler เพิ่ม/แก้/ลบ ทำงานกับวันที่ในช่วงนี้เสมอ
   useEffect(() => {
-    if (!authChecked) return;
     const isStaff = getTableFromUrl() === null;
     if (!isStaff) return;
+    if (!everAuthed) return;
 
-    const unsubscribeExpenses = onSnapshot(collection(db, "expenses"), (snapshot) => {
-      const data = snapshot.docs.map((d) => {
-        const raw = d.data();
-        return {
-          id: d.id,
-          date: raw.date,
-          items: raw.items || [],
-          totalAmount: raw.totalAmount || 0,
-          updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate() : new Date(),
-        } as ExpenseDay;
-      });
-      setExpenseDays(data);
-    });
-
-    const unsubscribeCatalog = onSnapshot(collection(db, "expenseItems"), (snapshot) => {
-      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as ExpenseCatalogEntry));
-      setExpenseCatalog(data);
-    });
-
-    return () => {
-      unsubscribeExpenses();
-      unsubscribeCatalog();
-    };
-  }, [authChecked]);
-
-  // Activity Log + รายการเหตุผลที่ใช้ซ้ำได้ — เฉพาะฝั่งพนักงานเท่านั้น
-  useEffect(() => {
-    if (!authChecked) return;
-    const isStaff = getTableFromUrl() === null;
-    if (!isStaff) return;
-
-    const unsubscribeLogs = onSnapshot(
-      query(collection(db, "activityLogs"), orderBy("createdAt", "desc")),
+    const unsubscribeExpenses = onSnapshot(
+      query(
+        collection(db, "expenses"),
+        where("date", ">=", expenseRangeStart),
+        where("date", "<=", expenseRangeEnd),
+        limit(750),
+      ),
       (snapshot) => {
         const data = snapshot.docs.map((d) => {
           const raw = d.data();
           return {
             id: d.id,
-            action: raw.action,
-            createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
-            orderId: raw.orderId,
-            tableNumber: raw.tableNumber,
-            itemName: raw.itemName,
-            amount: raw.amount,
-            reason: raw.reason,
-            details: raw.details,
-          } as ActivityLog;
+            date: raw.date,
+            items: raw.items || [],
+            totalAmount: raw.totalAmount || 0,
+            updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate() : new Date(),
+          } as ExpenseDay;
         });
-        setActivityLogs(data);
-      }
+        setExpenseDays(data);
+      },
     );
+    return () => unsubscribeExpenses();
+  }, [everAuthed, expenseRangeStart, expenseRangeEnd]);
+
+  // รายชื่อของที่เคยกรอก (autocomplete) — เป็น catalog ที่มีจำนวนจำกัด ดึงทั้งหมดได้ แต่ใส่ limit กันหลุด
+  useEffect(() => {
+    const isStaff = getTableFromUrl() === null;
+    if (!isStaff) return;
+    if (!everAuthed) return;
+
+    const unsubscribeCatalog = onSnapshot(
+      query(collection(db, "expenseItems"), limit(1000)),
+      (snapshot) => {
+        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as ExpenseCatalogEntry));
+        setExpenseCatalog(data);
+      },
+    );
+    return () => unsubscribeCatalog();
+  }, [everAuthed]);
+
+  // รายการเหตุผลที่ใช้ซ้ำได้ (void/cancel) — เฉพาะฝั่งพนักงานเท่านั้น
+  // ส่วน activityLogs ย้ายไป query รายวันในหน้า StaffActivityScreen เอง (ไม่ดึงทั้งหมดมาค้าง)
+  useEffect(() => {
+    const isStaff = getTableFromUrl() === null;
+    if (!isStaff) return;
+    if (!everAuthed) return;
 
     const unsubscribeReasons = onSnapshot(doc(db, "voidReasons", "list"), (snap) => {
       const raw = snap.data();
       setVoidReasons(Array.isArray(raw?.reasons) ? raw!.reasons : []);
     });
-
-    return () => {
-      unsubscribeLogs();
-      unsubscribeReasons();
-    };
-  }, [authChecked]);
+    return () => unsubscribeReasons();
+  }, [everAuthed]);
 
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
@@ -4848,24 +5021,52 @@ export default function App() {
   const [busyTables, setBusyTables] = useState(0);
   const [busyItems, setBusyItems] = useState(0);
 
+  // ค่าล่าสุดของ doc status/live ที่ได้จาก listener — ใช้เทียบก่อนเขียน เพื่อกัน write ซ้ำ
+  const liveStatusRef = useRef<{ busyTables: number; busyItems: number }>({ busyTables: 0, busyItems: 0 });
+  const statusWriteTimerRef = useRef<number | null>(null);
+  const pendingStatusRef = useRef<{ busyTables: number; busyItems: number } | null>(null);
+
   // ฟัง status สรุปที่ฝั่งพนักงาน (client ใครก็ตามที่ login อยู่) คำนวณและอัปเดตไว้ให้
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, "status", "live"), (snap) => {
       const data = snap.data();
-      setBusyTables(data?.busyTables || 0);
-      setBusyItems(data?.busyItems || 0);
+      const busyTables = data?.busyTables || 0;
+      const busyItems = data?.busyItems || 0;
+      liveStatusRef.current = { busyTables, busyItems };
+      setBusyTables(busyTables);
+      setBusyItems(busyItems);
     });
     return () => unsubscribe();
   }, []);
 
   // คำนวณสถานะยุ่งจากออเดอร์ที่เห็น (มีผลจริงเฉพาะฝั่งพนักงานที่ login แล้วเท่านั้น เพราะลูกค้าอ่าน orders ไม่ได้)
+  // กัน write storm 2 ชั้น:
+  //  1) guard — เขียนเฉพาะตอนค่าที่คำนวณได้ต่างจาก doc ปัจจุบัน (พนักงานหลายเครื่องคำนวณค่าเดียวกัน)
+  //  2) throttle 4 วิ — เขียนได้มากสุด 1 ครั้ง/4 วิ ต่อเครื่อง โดย flush "ค่าล่าสุด" เสมอ (ไม่ตกหล่นตอนรัชชั่วโมง)
   useEffect(() => {
+    if (!staffLoggedIn) return; // rules อนุญาตเขียนเฉพาะ auth อยู่แล้ว — เลี่ยงยิง setDoc ที่จะโดนปฏิเสธ
     const dineInProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
     const allInProgress = orders.filter((o) => o.status === "in-progress");
     const tables = new Set(dineInProgress.map((o) => o.tableNumber)).size;
     const items = allInProgress.reduce((s, o) => s + liveItemCount(o.items), 0);
-    setDoc(doc(db, "status", "live"), { busyTables: tables, busyItems: items }).catch(() => { });
-  }, [orders]);
+
+    if (liveStatusRef.current.busyTables === tables && liveStatusRef.current.busyItems === items) {
+      pendingStatusRef.current = null;
+      return;
+    }
+    pendingStatusRef.current = { busyTables: tables, busyItems: items };
+    if (statusWriteTimerRef.current !== null) return; // มี flush ค้างอยู่แล้ว — เดี๋ยวมันหยิบค่าล่าสุดไปเอง
+
+    statusWriteTimerRef.current = window.setTimeout(() => {
+      statusWriteTimerRef.current = null;
+      const p = pendingStatusRef.current;
+      pendingStatusRef.current = null;
+      if (!p) return;
+      // เช็คอีกรอบ เผื่อเครื่องอื่นเขียนค่านี้ไปแล้วระหว่างรอ
+      if (liveStatusRef.current.busyTables === p.busyTables && liveStatusRef.current.busyItems === p.busyItems) return;
+      setDoc(doc(db, "status", "live"), p).catch(() => { });
+    }, 4000);
+  }, [orders, staffLoggedIn]);
 
   const isBusy = busyTables >= 4 || busyItems > 10;
   const [manualTable, setManualTable] = useState<string | null>(null);
@@ -4873,7 +5074,6 @@ export default function App() {
   const [manualCategory, setManualCategory] = useState<string>("");
   const [manualSelectedItem, setManualSelectedItem] = useState<MenuItem | null>(null);
   const [manualIsTakeaway, setManualIsTakeaway] = useState(false);
-  const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -4889,7 +5089,7 @@ export default function App() {
         });
       }
       setStaffLoggedIn(!!user);
-      setAuthChecked(true);
+      if (user) setEverAuthed(true); // latch — ไม่มีการ set false ตรงนี้ (ทำเฉพาะตอนกด logout)
     });
     return () => unsubscribe();
   }, []);
@@ -5298,6 +5498,7 @@ export default function App() {
 
   const handleLogout = async () => {
     await signOut(auth);
+    setEverAuthed(false); // logout จริง — ปลด latch เพื่อให้ listener ฝั่งพนักงานหยุดทำงาน
     writeSession("staffTab", null);
     setView("staff-login");
   };
@@ -5588,7 +5789,6 @@ export default function App() {
       content = (
         <StaffHistoryScreen
           lang={lang}
-          orders={orders}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
@@ -5600,7 +5800,6 @@ export default function App() {
       content = (
         <StaffStatsScreen
           lang={lang}
-          orders={orders}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
@@ -5614,6 +5813,9 @@ export default function App() {
           lang={lang}
           expenseDays={expenseDays}
           catalog={expenseCatalog}
+          rangeStart={expenseRangeStart}
+          rangeEnd={expenseRangeEnd}
+          onRangeChange={(start, end) => { setExpenseRangeStart(start); setExpenseRangeEnd(end); }}
           onAddItem={handleAddExpenseItem}
           onEditItem={handleEditExpenseItem}
           onDeleteItem={handleDeleteExpenseItem}
@@ -5629,7 +5831,6 @@ export default function App() {
       content = (
         <StaffActivityScreen
           lang={lang}
-          logs={activityLogs}
           onTabChange={handleStaffTabChange}
           onLogout={handleLogout}
           onLangToggle={toggleLang}
