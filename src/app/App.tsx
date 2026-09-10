@@ -427,6 +427,13 @@ function cartItemTotal(ci: CartItem): number {
   return cartItemUnitPrice(ci) * ci.quantity;
 }
 
+// ตัดรูป base64 ของรายการทิ้ง (แตะเฉพาะ item.photo — field อื่นอยู่ครบเป๊ะ)
+// ใช้ตอนบันทึกออเดอร์ใหม่ และตอน void/cancel — ไม่มีหน้าไหนโชว์รูปจากออเดอร์ที่ persist แล้ว
+// แต่รูป base64 ทำให้ doc บวมหนัก (~163 KB/ใบ)
+function stripItemPhoto(ci: CartItem): CartItem {
+  return { ...ci, item: { ...ci.item, photo: "" } };
+}
+
 // รายการที่ยังมีผล (ตัดรายการที่ถูก void ออก) — ใช้ตอนคิดยอด/นับจำนวน ไม่ใช่ตอนแสดงผล
 function liveItems(items: CartItem[]): CartItem[] {
   return items.filter((ci) => !ci.voided);
@@ -5166,7 +5173,8 @@ export default function App() {
     isSubmittingOrderRef.current = true;
     setIsSubmittingOrder(true);
     try {
-      const cleanItems = JSON.parse(JSON.stringify(cart)); // ตัดฟิลด์ที่เป็น undefined ทิ้งอัตโนมัติ
+      // JSON round-trip: ตัดฟิลด์ undefined ให้ Firestore | .map(stripItemPhoto): ตัดรูป base64 ที่ทำ doc บวม
+      const cleanItems = (JSON.parse(JSON.stringify(cart)) as CartItem[]).map(stripItemPhoto);
       await addDoc(collection(db, "orders"), {
         tableNumber,
         items: cleanItems,
@@ -5242,7 +5250,7 @@ export default function App() {
     isSubmittingManualOrderRef.current = true;
     setIsSubmittingManualOrder(true);
     try {
-      const cleanItems = JSON.parse(JSON.stringify(manualCart));
+      const cleanItems = (JSON.parse(JSON.stringify(manualCart)) as CartItem[]).map(stripItemPhoto);
       if (manualIsTakeaway) {
         const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
         const nextNumber = await runTransaction(db, async (transaction) => {
@@ -5298,9 +5306,6 @@ export default function App() {
   const handleMarkServed = async (orderId: string) => {
     await updateDoc(doc(db, "orders", orderId), { status: "awaiting-payment" });
   };
-
-  // ตัดรูป base64 ของรายการทิ้ง (ใช้ตอน void/cancel) — เก็บชื่อ/ราคา/ตัวเลือกไว้ครบสำหรับตรวจสอบ
-  const stripItemPhoto = (ci: CartItem): CartItem => ({ ...ci, item: { ...ci.item, photo: "" } });
 
   // mark 1 รายการใน order เป็น voided — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array)
   // + ตัดรูปทิ้ง + เขียน log void_item ถ้าทุกรายการถูก void หมด เปลี่ยน status เป็น "cancelled" (ไม่ลบ doc)
