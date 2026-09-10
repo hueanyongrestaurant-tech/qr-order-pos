@@ -3736,10 +3736,12 @@ function StaffExpensesScreen({
     setEndDate(today);
   };
 
-  // [DEBUG/ชั่วคราว] เช็ค feasibility ของ Web Bluetooth API กับเครื่องพิมพ์ thermal ที่มีอยู่
-  // ไม่เชื่อม GATT ไม่ส่งคำสั่งพิมพ์ แค่เปิด dialog เลือกอุปกรณ์ให้ดูว่าเครื่องพิมพ์โผล่ในลิสต์ไหม
+  // [DEBUG/ชั่วคราว] สำรวจ Web Bluetooth API กับเครื่องพิมพ์ thermal ที่มีอยู่
+  // ขั้นตอน: requestDevice -> gatt.connect() -> enumerate service + characteristic ทั้งหมด
+  // ไม่ส่งคำสั่งพิมพ์ใด ๆ แค่ดูว่า characteristic ตัวไหนรองรับ write / writeWithoutResponse
   const handleTestBluetoothPrinter = async () => {
-    const bt = (navigator as unknown as { bluetooth?: { requestDevice: (opts: unknown) => Promise<{ name?: string; id?: string }> } }).bluetooth;
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const bt = (navigator as any).bluetooth;
     if (!bt || typeof bt.requestDevice !== "function") {
       alert(
         "❌ เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (navigator.bluetooth ไม่มี)\n\n" +
@@ -3748,13 +3750,29 @@ function StaffExpensesScreen({
       );
       return;
     }
+
+    // UUID ที่พบบ่อยในเครื่องพิมพ์ ESC/POS แบบ BLE + service มาตรฐานบางตัว
+    // Web Bluetooth บังคับให้ประกาศ optionalServices ล่วงหน้า ไม่งั้นจะเข้าถึง service ไม่ได้เลย
+    const KNOWN_PRINTER_SERVICES = [
+      "000018f0-0000-1000-8000-00805f9b34fb", // เครื่องพิมพ์ ESC/POS BLE ยอดฮิต (เช่น รุ่นจีนทั่วไป)
+      "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC / Microchip transparent UART (เครื่องพิมพ์หลายรุ่นใช้)
+      "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // อีกตัวที่พบในเครื่องพิมพ์ label/receipt
+      "0000ff00-0000-1000-8000-00805f9b34fb", // vendor service ทั่วไป
+      "0000ffe0-0000-1000-8000-00805f9b34fb", // HM-10 / โมดูล BLE UART ยอดนิยม
+      "0000ff12-0000-1000-8000-00805f9b34fb",
+      "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Nordic UART Service (NUS)
+      "0000180a-0000-1000-8000-00805f9b34fb", // Device Information
+      "0000180f-0000-1000-8000-00805f9b34fb", // Battery Service
+      "00001800-0000-1000-8000-00805f9b34fb", // Generic Access
+      "00001801-0000-1000-8000-00805f9b34fb", // Generic Attribute
+    ];
+
+    let device: any;
     try {
-      const device = await bt.requestDevice({ acceptAllDevices: true, optionalServices: [] });
-      alert(
-        "✅ เจออุปกรณ์ — Web Bluetooth ใช้งานได้\n\n" +
-        `ชื่อ: ${device.name || "(ไม่มีชื่อ)"}\n` +
-        `id: ${device.id || "(ไม่มี id)"}`
-      );
+      device = await bt.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: KNOWN_PRINTER_SERVICES,
+      });
     } catch (err) {
       const e = err as { name?: string; message?: string };
       if (e.name === "NotFoundError") {
@@ -3762,9 +3780,111 @@ function StaffExpensesScreen({
       } else if (e.name === "SecurityError" || e.name === "NotAllowedError") {
         alert("❌ ถูกบล็อก (SecurityError/NotAllowedError)\n\nต้องเปิดผ่าน HTTPS และกดปุ่มจาก user gesture\n" + (e.message || ""));
       } else {
-        alert(`❌ เกิดข้อผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}`);
+        alert(`❌ requestDevice ผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}`);
       }
+      return;
     }
+
+    const propList = (c: any): string => {
+      const p = c.properties || {};
+      return (
+        [
+          p.read && "read",
+          p.write && "write",
+          p.writeWithoutResponse && "writeWithoutResponse",
+          p.notify && "notify",
+          p.indicate && "indicate",
+          p.broadcast && "broadcast",
+          p.authenticatedSignedWrites && "authenticatedSignedWrites",
+          p.reliableWrite && "reliableWrite",
+        ].filter(Boolean).join(", ") || "(ไม่มี property)"
+      );
+    };
+
+    try {
+      if (!device.gatt) {
+        alert("❌ device.gatt ไม่มี — อุปกรณ์นี้อาจไม่รองรับ GATT");
+        return;
+      }
+      const server = await device.gatt.connect();
+
+      let services: any[] = [];
+      try {
+        services = await server.getPrimaryServices();
+      } catch (svcErr) {
+        const e = svcErr as { message?: string };
+        alert(
+          "⚠️ connect() สำเร็จ แต่ getPrimaryServices() ไม่คืน service เลย\n\n" +
+          `(${e.message || svcErr})\n\n` +
+          "เครื่องพิมพ์อาจใช้ service UUID ที่ไม่ได้อยู่ใน optionalServices\n" +
+          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร KNOWN_PRINTER_SERVICES"
+        );
+        try { server.disconnect(); } catch { /* noop */ }
+        return;
+      }
+
+      if (!services.length) {
+        alert(
+          "⚠️ ไม่พบ service ใด ๆ ที่ตรงกับ optionalServices ที่ระบุไว้\n\n" +
+          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร KNOWN_PRINTER_SERVICES ในโค้ด\n" +
+          "(อาจต้องหา UUID จาก spec ของเครื่องพิมพ์รุ่นนั้น หรือใช้แอป nRF Connect สแกนดู)"
+        );
+        try { server.disconnect(); } catch { /* noop */ }
+        return;
+      }
+
+      const lines: string[] = [];
+      lines.push(`อุปกรณ์: ${device.name || "(ไม่มีชื่อ)"}  [${device.id || "?"}]`);
+      lines.push(`พบ ${services.length} service`);
+      lines.push("");
+
+      const writable: string[] = [];
+
+      for (const svc of services) {
+        lines.push(`▸ SERVICE ${svc.uuid}${svc.isPrimary ? " (primary)" : ""}`);
+        let chars: any[] = [];
+        try {
+          chars = await svc.getCharacteristics();
+        } catch (cErr) {
+          lines.push(`    (อ่าน characteristics ไม่ได้: ${(cErr as { message?: string }).message || cErr})`);
+          continue;
+        }
+        if (!chars.length) {
+          lines.push("    (ไม่มี characteristic)");
+          continue;
+        }
+        for (const c of chars) {
+          const props = propList(c);
+          lines.push(`    • ${c.uuid}`);
+          lines.push(`        [${props}]`);
+          if (c.properties && (c.properties.write || c.properties.writeWithoutResponse)) {
+            writable.push(`service ${svc.uuid}\n  characteristic ${c.uuid}\n  (${props})`);
+          }
+        }
+      }
+
+      lines.push("");
+      if (writable.length) {
+        lines.push("✅ characteristic ที่เขียนได้ (ใช้ส่งข้อมูลพิมพ์):");
+        lines.push(...writable);
+      } else {
+        lines.push("⚠️ ไม่พบ characteristic ที่รองรับ write/writeWithoutResponse");
+      }
+
+      try { server.disconnect(); } catch { /* noop */ }
+
+      const report = lines.join("\n");
+      console.log("[BLE printer enumeration]\n" + report);
+      alert(report);
+    } catch (err) {
+      const e = err as { name?: string; message?: string };
+      alert(
+        `❌ เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}\n\n` +
+        "ลอง: เปิดเครื่องพิมพ์ค้างไว้ / ปิด-เปิด Bluetooth มือถือ / ลองกดปุ่มใหม่อีกครั้ง\n" +
+        "ถ้ายังไม่ได้ อาจต้องเพิ่ม service UUID อื่นใน KNOWN_PRINTER_SERVICES"
+      );
+    }
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   };
 
   return (
