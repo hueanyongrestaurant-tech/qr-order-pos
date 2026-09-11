@@ -3697,6 +3697,156 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
   );
 }
 
+// ─── [DEBUG/ชั่วคราว] BLE printer test — Web Bluetooth feasibility research ────
+// UUID ที่พบบ่อยในเครื่องพิมพ์ ESC/POS แบบ BLE + service มาตรฐานบางตัว
+// Web Bluetooth บังคับให้ประกาศ optionalServices ล่วงหน้า ไม่งั้นจะเข้าถึง service ไม่ได้เลย
+const BLE_PRINTER_OPTIONAL_SERVICES = [
+  "000018f0-0000-1000-8000-00805f9b34fb", // เครื่องพิมพ์ ESC/POS BLE ยอดฮิต (เช่น รุ่นจีนทั่วไป)
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC / Microchip transparent UART (เครื่องพิมพ์หลายรุ่นใช้)
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // อีกตัวที่พบในเครื่องพิมพ์ label/receipt
+  "0000ff00-0000-1000-8000-00805f9b34fb", // vendor service ทั่วไป
+  "0000ffe0-0000-1000-8000-00805f9b34fb", // HM-10 / โมดูล BLE UART ยอดนิยม
+  "0000ff12-0000-1000-8000-00805f9b34fb",
+  "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Nordic UART Service (NUS)
+  "0000180a-0000-1000-8000-00805f9b34fb", // Device Information
+  "0000180f-0000-1000-8000-00805f9b34fb", // Battery Service
+  "00001800-0000-1000-8000-00805f9b34fb", // Generic Access
+  "00001801-0000-1000-8000-00805f9b34fb", // Generic Attribute
+];
+
+// 4 characteristic ที่เขียนได้ ซึ่งเจอจากการ enumerate เครื่องพิมพ์จริงรอบก่อนหน้า
+// hardcode ไว้เพื่อความเร็ว — ไม่ต้อง enumerate ใหม่ทุกครั้งที่จะทดสอบยิงข้อมูล
+interface BlePrinterCandidate {
+  label: string;
+  serviceUuid: string;
+  charUuid: string;
+  properties: string;
+}
+const BLE_PRINTER_WRITE_CANDIDATES: BlePrinterCandidate[] = [
+  {
+    label: "ตัวที่ 1",
+    serviceUuid: "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+    charUuid: "49535343-8841-43f4-a8d4-ecbe34729bb3",
+    properties: "write, writeWithoutResponse",
+  },
+  {
+    label: "ตัวที่ 2",
+    serviceUuid: "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+    charUuid: "49535343-aca3-481c-91ec-d85e28a60318",
+    properties: "write, notify",
+  },
+  {
+    label: "ตัวที่ 3",
+    serviceUuid: "0000ff00-0000-1000-8000-00805f9b34fb",
+    charUuid: "0000ff02-0000-1000-8000-00805f9b34fb",
+    properties: "write, writeWithoutResponse",
+  },
+  {
+    label: "ตัวที่ 4",
+    serviceUuid: "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+    charUuid: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+    properties: "write, writeWithoutResponse, notify",
+  },
+];
+
+// สร้าง ESC/POS test payload แบบง่ายที่สุด: ESC @ (init printer) + ข้อความระบุเลขปุ่ม + feed กระดาษ
+function buildEscPosTestPayload(testNumber: number): Uint8Array {
+  const init = new Uint8Array([0x1b, 0x40]); // ESC @  = initialize printer
+  const text = new TextEncoder().encode(`TEST ${testNumber}/4\n\n\n`);
+  const feed = new Uint8Array([0x0a, 0x0a, 0x0a]); // feed เพิ่มอีก 3 บรรทัด ให้เห็นชัดว่าพิมพ์จริง
+  const out = new Uint8Array(init.length + text.length + feed.length);
+  out.set(init, 0);
+  out.set(text, init.length);
+  out.set(feed, init.length + text.length);
+  return out;
+}
+
+// requestDevice + connect + getPrimaryService + getCharacteristic + write ในตัวเดียว
+// ทำ requestDevice ใหม่ทุกครั้งตามที่ BLE session หลุดง่าย ไม่ cache device/server ข้ามการกดปุ่ม
+async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNumber: number): Promise<void> {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const bt = (navigator as any).bluetooth;
+  if (!bt || typeof bt.requestDevice !== "function") {
+    alert("❌ เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (navigator.bluetooth ไม่มี)");
+    return;
+  }
+
+  let device: any;
+  try {
+    device = await bt.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: BLE_PRINTER_OPTIONAL_SERVICES,
+    });
+  } catch (err) {
+    const e = err as { name?: string; message?: string };
+    if (e.name === "NotFoundError") {
+      alert(`⚠️ [${candidate.label}] ไม่พบอุปกรณ์ หรือผู้ใช้กดยกเลิก dialog`);
+    } else {
+      alert(`❌ [${candidate.label}] requestDevice ผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}`);
+    }
+    return;
+  }
+
+  try {
+    if (!device.gatt) {
+      alert(`❌ [${candidate.label}] device.gatt ไม่มี — อุปกรณ์นี้อาจไม่รองรับ GATT`);
+      return;
+    }
+    const server = await device.gatt.connect();
+
+    let service: any;
+    try {
+      service = await server.getPrimaryService(candidate.serviceUuid);
+    } catch (svcErr) {
+      const e = svcErr as { message?: string };
+      alert(
+        `⚠️ [${candidate.label}] ไม่พบ service ${candidate.serviceUuid}\n\n${e.message || svcErr}\n\n` +
+        "ลอง requestDevice ใหม่ หรือเช็คว่า optionalServices ครอบคลุม UUID นี้"
+      );
+      try { server.disconnect(); } catch { /* noop */ }
+      return;
+    }
+
+    let characteristic: any;
+    try {
+      characteristic = await service.getCharacteristic(candidate.charUuid);
+    } catch (charErr) {
+      const e = charErr as { message?: string };
+      alert(`⚠️ [${candidate.label}] ไม่พบ characteristic ${candidate.charUuid}\n\n${e.message || charErr}`);
+      try { server.disconnect(); } catch { /* noop */ }
+      return;
+    }
+
+    const payload = buildEscPosTestPayload(testNumber);
+    const props = characteristic.properties || {};
+    try {
+      if (props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function") {
+        await characteristic.writeValueWithoutResponse(payload);
+      } else if (typeof characteristic.writeValue === "function") {
+        await characteristic.writeValue(payload);
+      } else {
+        alert(`❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก`);
+        try { server.disconnect(); } catch { /* noop */ }
+        return;
+      }
+      alert(
+        `✅ [${candidate.label}] ส่งข้อมูลสำเร็จ!\n\n` +
+        `service: ${candidate.serviceUuid}\ncharacteristic: ${candidate.charUuid}\n\n` +
+        "เช็คกระดาษที่ออกมาว่ามีข้อความ \"TEST " + testNumber + "/4\" หรือไม่"
+      );
+    } catch (writeErr) {
+      const e = writeErr as { name?: string; message?: string };
+      alert(`❌ [${candidate.label}] เขียนข้อมูลไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(writeErr)}`);
+    } finally {
+      try { server.disconnect(); } catch { /* noop */ }
+    }
+  } catch (err) {
+    const e = err as { name?: string; message?: string };
+    alert(`❌ [${candidate.label}] เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}`);
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
 // ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
 
 interface StaffExpensesProps {
@@ -3892,27 +4042,11 @@ function StaffExpensesScreen({
       return;
     }
 
-    // UUID ที่พบบ่อยในเครื่องพิมพ์ ESC/POS แบบ BLE + service มาตรฐานบางตัว
-    // Web Bluetooth บังคับให้ประกาศ optionalServices ล่วงหน้า ไม่งั้นจะเข้าถึง service ไม่ได้เลย
-    const KNOWN_PRINTER_SERVICES = [
-      "000018f0-0000-1000-8000-00805f9b34fb", // เครื่องพิมพ์ ESC/POS BLE ยอดฮิต (เช่น รุ่นจีนทั่วไป)
-      "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC / Microchip transparent UART (เครื่องพิมพ์หลายรุ่นใช้)
-      "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // อีกตัวที่พบในเครื่องพิมพ์ label/receipt
-      "0000ff00-0000-1000-8000-00805f9b34fb", // vendor service ทั่วไป
-      "0000ffe0-0000-1000-8000-00805f9b34fb", // HM-10 / โมดูล BLE UART ยอดนิยม
-      "0000ff12-0000-1000-8000-00805f9b34fb",
-      "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Nordic UART Service (NUS)
-      "0000180a-0000-1000-8000-00805f9b34fb", // Device Information
-      "0000180f-0000-1000-8000-00805f9b34fb", // Battery Service
-      "00001800-0000-1000-8000-00805f9b34fb", // Generic Access
-      "00001801-0000-1000-8000-00805f9b34fb", // Generic Attribute
-    ];
-
     let device: any;
     try {
       device = await bt.requestDevice({
         acceptAllDevices: true,
-        optionalServices: KNOWN_PRINTER_SERVICES,
+        optionalServices: BLE_PRINTER_OPTIONAL_SERVICES,
       });
     } catch (err) {
       const e = err as { name?: string; message?: string };
@@ -3958,7 +4092,7 @@ function StaffExpensesScreen({
           "⚠️ connect() สำเร็จ แต่ getPrimaryServices() ไม่คืน service เลย\n\n" +
           `(${e.message || svcErr})\n\n` +
           "เครื่องพิมพ์อาจใช้ service UUID ที่ไม่ได้อยู่ใน optionalServices\n" +
-          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร KNOWN_PRINTER_SERVICES"
+          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร BLE_PRINTER_OPTIONAL_SERVICES"
         );
         try { server.disconnect(); } catch { /* noop */ }
         return;
@@ -3967,7 +4101,7 @@ function StaffExpensesScreen({
       if (!services.length) {
         alert(
           "⚠️ ไม่พบ service ใด ๆ ที่ตรงกับ optionalServices ที่ระบุไว้\n\n" +
-          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร KNOWN_PRINTER_SERVICES ในโค้ด\n" +
+          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร BLE_PRINTER_OPTIONAL_SERVICES ในโค้ด\n" +
           "(อาจต้องหา UUID จาก spec ของเครื่องพิมพ์รุ่นนั้น หรือใช้แอป nRF Connect สแกนดู)"
         );
         try { server.disconnect(); } catch { /* noop */ }
@@ -4022,7 +4156,7 @@ function StaffExpensesScreen({
       alert(
         `❌ เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}\n\n` +
         "ลอง: เปิดเครื่องพิมพ์ค้างไว้ / ปิด-เปิด Bluetooth มือถือ / ลองกดปุ่มใหม่อีกครั้ง\n" +
-        "ถ้ายังไม่ได้ อาจต้องเพิ่ม service UUID อื่นใน KNOWN_PRINTER_SERVICES"
+        "ถ้ายังไม่ได้ อาจต้องเพิ่ม service UUID อื่นใน BLE_PRINTER_OPTIONAL_SERVICES"
       );
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -4061,10 +4195,29 @@ function StaffExpensesScreen({
         {/* [DEBUG/ชั่วคราว] ทดสอบว่าเครื่องพิมพ์ Bluetooth รองรับ Web Bluetooth (BLE) หรือไม่ — ลบทิ้งได้เมื่อประเมินเสร็จ */}
         <button
           onClick={handleTestBluetoothPrinter}
-          className="w-full mb-5 h-10 rounded-xl text-xs font-medium bg-muted border border-dashed border-border text-muted-foreground hover:border-primary/40 transition-all"
+          className="w-full mb-2 h-10 rounded-xl text-xs font-medium bg-muted border border-dashed border-border text-muted-foreground hover:border-primary/40 transition-all"
         >
-          🔧 ทดสอบ Bluetooth เครื่องพิมพ์
+          🔧 ทดสอบ Bluetooth เครื่องพิมพ์ (สำรวจ service/characteristic)
         </button>
+
+        {/* [DEBUG/ชั่วคราว] ยิง ESC/POS test payload ไปทีละ characteristic เพื่อหาว่าตัวไหนคือช่องพิมพ์จริง */}
+        <div className="mb-5 p-2 rounded-xl border border-dashed border-border bg-muted/50">
+          <p className="text-[11px] text-muted-foreground mb-1.5 px-0.5">
+            ทดสอบยิงพิมพ์ทีละ characteristic (ต้องเลือกอุปกรณ์ใหม่ทุกครั้ง):
+          </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {BLE_PRINTER_WRITE_CANDIDATES.map((candidate, idx) => (
+              <button
+                key={candidate.charUuid}
+                onClick={() => sendEscPosTestToCandidate(candidate, idx + 1)}
+                className="h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all px-1 truncate"
+                title={`service ${candidate.serviceUuid}\ncharacteristic ${candidate.charUuid}\n(${candidate.properties})`}
+              >
+                🖨️ {candidate.label} ({candidate.charUuid.slice(0, 8)}…)
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
         <div className="bg-card border border-border rounded-xl p-3 mb-6">
