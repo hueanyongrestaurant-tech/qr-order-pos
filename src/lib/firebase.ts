@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { getAuth, type Auth } from "firebase/auth";
 
 const firebaseConfig = {
     apiKey: "AIzaSyAID2jX0PJILzCl5hTKVeMCVKBKHuR0qJI",
@@ -13,4 +13,13 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
-export const auth = getAuth(app);
+
+// เรียก getAuth() แบบ lazy — เฉพาะตอนโค้ดฝั่งพนักงานเรียกใช้จริง (login/logout/onAuthStateChanged)
+// ไม่ใช่ตอนโหลดไฟล์ทันที เพราะ getAuth() เองทำให้ Auth SDK เริ่มเช็ค session ที่ค้างใน
+// IndexedDB + ยิง accounts:lookup/getProjectConfig ไปหา Firebase ทันที ซึ่งฝั่งลูกค้า
+// (สแกน QR สั่งอาหาร) ไม่เกี่ยวกับ auth เลยแม้แต่น้อย
+let _auth: Auth | undefined;
+export function getAuthInstance(): Auth {
+    if (!_auth) _auth = getAuth(app);
+    return _auth;
+}

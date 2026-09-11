@@ -39,7 +39,7 @@ import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "./components/ui/chart";
 
-import { db, auth } from "../lib/firebase";
+import { db, getAuthInstance } from "../lib/firebase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
@@ -949,6 +949,7 @@ function MenuScreen({
                     <img
                       src={resolvePhoto(item.photo, 400, 300)}
                       alt={lang === "en" ? item.name.en : item.name.th}
+                      loading="lazy"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
@@ -5236,7 +5237,9 @@ export default function App() {
   const [manualIsTakeaway, setManualIsTakeaway] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    if (getTableFromUrl()) return; // ฝั่งลูกค้าไม่เกี่ยวกับ auth เลย ไม่ต้อง subscribe แม้แต่เพื่อเช็ค session
+    // (getAuthInstance() ก็เรียกแค่ตรงนี้ — ไม่ใช่ตอนโหลดไฟล์ — เลี่ยง network call เช่น accounts:lookup / getProjectConfig)
+    const unsubscribe = onAuthStateChanged(getAuthInstance(), (user) => {
       if (user && !getTableFromUrl()) {
         setView((v) => {
           if (v !== "staff-login") return v;
@@ -5446,7 +5449,7 @@ export default function App() {
 
   const handleStaffLogin = async (pw: string) => {
     try {
-      await signInWithEmailAndPassword(auth, STAFF_EMAIL, pw);
+      await signInWithEmailAndPassword(getAuthInstance(), STAFF_EMAIL, pw);
       setLoginError(false);
       setStaffTab("orders");
       writeSession("staffTab", "orders");
@@ -5655,7 +5658,7 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await signOut(getAuthInstance());
     setEverAuthed(false); // logout จริง — ปลด latch เพื่อให้ listener ฝั่งพนักงานหยุดทำงาน
     writeSession("staffTab", null);
     setView("staff-login");
