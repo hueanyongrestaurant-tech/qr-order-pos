@@ -4886,7 +4886,14 @@ function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle }: Staf
   // ดึง activity log เฉพาะวันที่เลือกไว้ (default วันนี้) — realtime เพราะ void/cancel อาจเกิดระหว่างดูอยู่
   // limit(500) เป็น safety cap — กิจกรรมต่อวันไม่น่าเกินนี้
   const [logs, setLogs] = useState<ActivityLog[]>([]);
-  const [logsRetry, setLogsRetry] = useState(0);
+  const [logsRetry, setLogsRetry] = useState(0); // bump ค่านี้เพื่อบังคับ effect ด้านล่าง subscribe ใหม่
+  const logsFailureCountRef = useRef(0); // จำนวนครั้งที่ fail ติดกัน — ใช้คำนวณ backoff (ไม่ผูกกับ deps ของ effect)
+
+  // รีเซ็ตตัวนับ backoff ทุกครั้งที่เปลี่ยนวันที่ดู (เริ่มนับใหม่สำหรับวันใหม่ ไม่ลากค่าเก่าข้ามวัน)
+  useEffect(() => {
+    logsFailureCountRef.current = 0;
+  }, [date]);
+
   useEffect(() => {
     let retryTimer: number | undefined;
     const unsubscribe = onSnapshot(
@@ -4898,6 +4905,7 @@ function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle }: Staf
         limit(500),
       ),
       (snapshot) => {
+        logsFailureCountRef.current = 0; // สำเร็จแล้ว รีเซ็ต backoff กลับไปเริ่มต้น
         setLogs(snapshot.docs.map((d) => {
           const raw = d.data();
           return {
@@ -4914,9 +4922,14 @@ function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle }: Staf
         }));
       },
       (err) => {
-        // เช่น permission-denied ชั่วคราวตอน Auth สะดุด — ลอง subscribe ใหม่หลัง 1.5 วิ
+        // เช่น permission-denied ชั่วคราวตอน Auth สะดุด หรือ Firestore โควต้าหมด — ลอง subscribe ใหม่
+        // ถอยห่างแบบทวีคูณเหมือน checkAndResetDailyMenu (เริ่ม 1.5 วิเท่าของเดิม เพิ่มเป็น 2 เท่าทุกครั้ง
+        // ที่ยัง fail ติดกัน สูงสุด 30 นาที) กันไม่ให้ยิงรัวทุก 1.5 วิไม่หยุดถ้า error เกิดต่อเนื่องยาวนาน
         console.error("activityLogs listener error", err);
-        retryTimer = window.setTimeout(() => setLogsRetry((n) => n + 1), 1500);
+        logsFailureCountRef.current += 1;
+        // ครั้งแรก fail = 1.5 วิเท่าเดิมพอดี (2^0), ครั้งถัดไปเพิ่มเป็น 2 เท่าเรื่อยๆ
+        const backoffMs = Math.min(1500 * 2 ** (logsFailureCountRef.current - 1), 30 * 60_000);
+        retryTimer = window.setTimeout(() => setLogsRetry((n) => n + 1), backoffMs);
       },
     );
     return () => {
@@ -5424,7 +5437,10 @@ export default function App() {
 
   // รีเซ็ตเมนูที่ถูกปิดไว้ให้กลับมาเปิดทั้งหมดเมื่อขึ้นวันใหม่
   // ทำงานเฉพาะฝั่งพนักงานที่ login อยู่ (เพราะ security rules อนุญาตให้เขียน menuItems ได้เฉพาะ auth != null)
-  // เช็คทันทีตอน login/เปิดแอป และเช็คซ้ำทุก 1 นาที เผื่อเปิดแท็บค้างข้ามเที่ยงคืนโดยไม่รีเฟรช
+  // เช็คทันทีตอน login/เปิดแอป และเช็คซ้ำทุก 5 นาที เผื่อเปิดแท็บค้างข้ามเที่ยงคืนโดยไม่รีเฟรช
+  // (เดิมเช็คทุก 1 นาที — งานนี้ทำสำเร็จแค่ครั้งเดียว/วันก็พอ ไม่ต้องละเอียดระดับนาที
+  // ลดความถี่ให้กินโควต้า Firestore น้อยลงเป็น baseline โดยไม่กระทบว่าจะรีเซ็ตได้ตรงหรือไม่
+  // — worst case แค่ช้าไปสูงสุด ~5 นาทีหลังเที่ยงคืน แทนที่จะเป็น ~1 นาที)
   useEffect(() => {
     if (!staffLoggedIn) return;
 
@@ -5460,7 +5476,7 @@ export default function App() {
         }
 
         consecutiveFailures = 0;
-        scheduleNext(60_000); // ปกติเช็คทุก 1 นาทีเหมือนเดิม
+        scheduleNext(5 * 60_000); // ปกติเช็คทุก 5 นาที
       } catch (err) {
         consecutiveFailures++;
         console.error("checkAndResetDailyMenu failed", err);
