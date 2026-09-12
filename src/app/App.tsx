@@ -5428,31 +5428,54 @@ export default function App() {
   useEffect(() => {
     if (!staffLoggedIn) return;
 
-    const checkAndResetDailyMenu = async () => {
-      const todayKey = getTodayKey();
-      const lockRef = doc(db, "counters", `menu-reset-${todayKey}`);
+    let stopped = false;
+    let timer: number | undefined;
+    let consecutiveFailures = 0;
+
+    const scheduleNext = (delayMs: number) => {
+      if (stopped) return;
+      timer = window.setTimeout(runOnce, delayMs);
+    };
+
+    // ทำงานทีละรอบ (ไม่ใช้ setInterval คงที่) — รอบถัดไปเริ่มก็ต่อเมื่อรอบก่อนจบแล้วเท่านั้น
+    // กันไม่ให้ยิงซ้อนกันถ้ารอบก่อนค้าง/ช้า (เช่น Firestore โควต้าหมด/unavailable ชั่วคราว)
+    const runOnce = async () => {
       try {
+        const todayKey = getTodayKey();
+        const lockRef = doc(db, "counters", `menu-reset-${todayKey}`);
         const claimed = await runTransaction(db, async (transaction) => {
           const snap = await transaction.get(lockRef);
           if (snap.exists()) return false; // มีเครื่องอื่นรีเซ็ตของวันนี้ไปแล้ว
           transaction.set(lockRef, { resetAt: serverTimestamp() });
           return true;
         });
-        if (!claimed) return;
 
-        const toReset = allMenuItemsRef.current.filter((m) => m.active === false);
-        if (toReset.length === 0) return;
-        await Promise.all(
-          toReset.map((m) => updateDoc(doc(db, "menuItems", m.id), { active: true }))
-        );
-      } catch {
-        // เงียบไว้ก่อน เดี๋ยวรอบถัดไป (นาทีถัดไป) จะลองใหม่เอง
+        if (claimed) {
+          const toReset = (allMenuItemsRef.current || []).filter((m) => m.active === false);
+          if (toReset.length > 0) {
+            await Promise.all(
+              toReset.map((m) => updateDoc(doc(db, "menuItems", m.id), { active: true }))
+            );
+          }
+        }
+
+        consecutiveFailures = 0;
+        scheduleNext(60_000); // ปกติเช็คทุก 1 นาทีเหมือนเดิม
+      } catch (err) {
+        consecutiveFailures++;
+        console.error("checkAndResetDailyMenu failed", err);
+        // error ต่อเนื่อง (เช่น Firestore โควต้าหมด) → ถอยห่างแบบทวีคูณ ลดโหลดแทนการยิงรัวทุกนาที
+        // เริ่ม 2 นาที เพิ่มเป็น 2 เท่าทุกครั้งที่ยัง fail สูงสุด 30 นาที แล้วกลับมาเร็วปกติเองเมื่อสำเร็จ
+        const backoffMs = Math.min(60_000 * 2 ** consecutiveFailures, 30 * 60_000);
+        scheduleNext(backoffMs);
       }
     };
 
-    checkAndResetDailyMenu();
-    const interval = setInterval(checkAndResetDailyMenu, 60_000);
-    return () => clearInterval(interval);
+    runOnce();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [staffLoggedIn]);
 
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
