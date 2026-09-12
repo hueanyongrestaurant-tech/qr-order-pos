@@ -406,7 +406,7 @@ function itemPrice(
   if (meat && item.meatPriceDeltas?.[meat]) price += item.meatPriceDeltas[meat]!;
   if (portion === "special" && item.portionPriceDelta) price += item.portionPriceDelta;
   if (addEgg) price += 15;
-  addOns.forEach((id) => {
+  (addOns || []).forEach((id) => {
     const found = ADD_ONS.find((a) => a.id === id);
     if (found) price += found.price;
   });
@@ -460,7 +460,7 @@ function cartItemKey(ci: CartItem): string {
     portion: ci.portion,
     spiceLevel: ci.spiceLevel,
     addEgg: ci.addEgg,
-    addOns: [...ci.addOns].sort(),
+    addOns: [...(ci.addOns || [])].sort(),
     customSelections: ci.customSelections,
     note: ci.note || "",
   });
@@ -482,7 +482,7 @@ function formatOptionDetails(ci: CartItem, lang: Language): string {
   if (ci.portion === "special") parts.push(t.special);
   if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(t.spiceLevels[ci.spiceLevel]);
   if (ci.addEgg) parts.push(t.eggAdded);
-  ci.addOns.forEach((id) => {
+  (ci.addOns || []).forEach((id) => {
     const addon = ADD_ONS.find((a) => a.id === id);
     if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
   });
@@ -1402,7 +1402,7 @@ function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, on
     if (ci.portion === "special") parts.push(t.special);
     if (ci.item.hasSpice) parts.push(T[lang].spiceLevels[ci.spiceLevel]);
     if (ci.addEgg) parts.push(t.eggAdded);
-    ci.addOns.forEach((id) => {
+    (ci.addOns || []).forEach((id) => {
       const addon = ADD_ONS.find((a) => a.id === id);
       if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
     });
@@ -4637,7 +4637,7 @@ function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffSt
     if (ci.portion === "special") parts.push("special");
     if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(`spice${ci.spiceLevel}`);
     if (ci.addEgg) parts.push("egg");
-    ci.addOns.forEach((id) => parts.push(id));
+    (ci.addOns || []).forEach((id) => parts.push(id));
     ci.item.customGroups?.forEach((group) => {
       const selected = ci.customSelections?.[group.id] || [];
       selected.forEach((cid) => parts.push(cid));
@@ -4651,7 +4651,7 @@ function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffSt
     if (ci.portion === "special") parts.push(T[lang].special);
     if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(T[lang].spiceLevels[ci.spiceLevel]);
     if (ci.addEgg) parts.push(T[lang].eggAdded);
-    ci.addOns.forEach((id) => {
+    (ci.addOns || []).forEach((id) => {
       const addon = ADD_ONS.find((a) => a.id === id);
       if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
     });
