@@ -40,6 +40,7 @@ import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "./components/ui/chart";
 
 import { db, getAuthInstance } from "../lib/firebase";
+import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
@@ -388,8 +389,9 @@ const T = {
 
 function resolvePhoto(photo: string, w = 400, h = 300): string {
   if (!photo) return "";
-  if (photo.startsWith("data:")) return photo; // อัปโหลดเอง (Base64)
-  return `https://images.unsplash.com/photo-${photo}?w=${w}&h=${h}&fit=crop&auto=format`;
+  // data: = base64 เก่า (ก่อน migrate ไป Storage), http = URL เต็มจาก Storage (Supabase) — คืนค่าตรงๆ ทั้งคู่
+  if (photo.startsWith("data:") || photo.startsWith("http")) return photo;
+  return `https://images.unsplash.com/photo-${photo}?w=${w}&h=${h}&fit=crop&auto=format`; // Unsplash photo ID (เมนูตัวอย่างเดิม)
 }
 
 function itemPrice(
@@ -599,6 +601,13 @@ function compressImage(file: File, maxWidth = 600, quality = 0.7): Promise<strin
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
+// (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
 }
 
 // ─── Activity Log helpers ─────────────────────────────────────────────────────
@@ -3762,9 +3771,42 @@ function buildEscPosTestPayload(testNumber: number): Uint8Array {
   return out;
 }
 
-// requestDevice + connect + getPrimaryService + getCharacteristic + write ในตัวเดียว
-// ทำ requestDevice ใหม่ทุกครั้งตามที่ BLE session หลุดง่าย ไม่ cache device/server ข้ามการกดปุ่ม
-async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNumber: number): Promise<void> {
+// [DEBUG/ชั่วคราว] payload ทดสอบการพิมพ์ภาษาไทย 3 แบบในใบเดียวกัน (คั่นด้วยเส้นแบ่ง) เพื่อเทียบผล:
+//   1) UTF-8 ตรง ๆ ไม่สั่ง codepage อะไรเลย
+//   2) สั่ง ESC t (0x1B 0x74) + byte เลือก codepage ก่อนพิมพ์ (ลอง 0x15 — บางเฟิร์มแวร์ ESC/POS
+//      จีนใช้เลขนี้เป็น Thai/TIS-620 แต่ไม่มีมาตรฐานตายตัว แต่ละยี่ห้อ/เฟิร์มแวร์อาจใช้เลขต่างกัน)
+//   3) ข้อความไทย-อังกฤษ-ตัวเลขผสมกัน (พิมพ์ต่อจาก test 2 โดยไม่รีเซ็ต codepage — เอาไว้ดูด้วยว่า
+//      ค่า codepage ที่สั่งไปตอน test 2 ค้างอยู่หรือเปล่า)
+function buildThaiTestPayload(): Uint8Array {
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [
+    new Uint8Array([0x1b, 0x40]), // ESC @ = initialize printer
+    enc.encode("ทดสอบภาษาไทย 1\n"),
+    enc.encode("--------\n"),
+    new Uint8Array([0x1b, 0x74, 0x15]), // ESC t 0x15 — ลอง select code table เผื่อเป็น Thai/TIS-620
+    enc.encode("ทดสอบภาษาไทย 2\n"),
+    enc.encode("--------\n"),
+    enc.encode("Test ไทย 123 ทดสอบ\n"),
+    new Uint8Array([0x0a, 0x0a, 0x0a]), // feed ปิดท้าย 3 บรรทัด
+  ];
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+// requestDevice + connect + getPrimaryService + getCharacteristic + write ในตัวเดียว — ใช้ร่วมกันทั้ง
+// ปุ่มทดสอบ ESC/POS ทั่วไปและปุ่มทดสอบภาษาไทย ทำ requestDevice ใหม่ทุกครั้งตามที่ BLE session หลุดง่าย
+// ไม่ cache device/server ข้ามการกดปุ่ม
+async function connectAndWriteToCandidate(
+  candidate: BlePrinterCandidate,
+  payload: Uint8Array,
+  successHint: string
+): Promise<void> {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const bt = (navigator as any).bluetooth;
   if (!bt || typeof bt.requestDevice !== "function") {
@@ -3818,7 +3860,6 @@ async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNum
       return;
     }
 
-    const payload = buildEscPosTestPayload(testNumber);
     const props = characteristic.properties || {};
     try {
       if (props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function") {
@@ -3833,7 +3874,7 @@ async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNum
       alert(
         `✅ [${candidate.label}] ส่งข้อมูลสำเร็จ!\n\n` +
         `service: ${candidate.serviceUuid}\ncharacteristic: ${candidate.charUuid}\n\n` +
-        "เช็คกระดาษที่ออกมาว่ามีข้อความ \"TEST " + testNumber + "/4\" หรือไม่"
+        successHint
       );
     } catch (writeErr) {
       const e = writeErr as { name?: string; message?: string };
@@ -3846,6 +3887,29 @@ async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNum
     alert(`❌ [${candidate.label}] เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}`);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNumber: number): Promise<void> {
+  const payload = buildEscPosTestPayload(testNumber);
+  await connectAndWriteToCandidate(
+    candidate,
+    payload,
+    `เช็คกระดาษที่ออกมาว่ามีข้อความ "TEST ${testNumber}/4" หรือไม่`
+  );
+}
+
+// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ภาษาไทย" — ใช้ candidate ตัวที่ 4 ที่ยืนยันแล้วว่าพิมพ์ได้จริง
+async function sendThaiTestToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  const payload = buildThaiTestPayload();
+  await connectAndWriteToCandidate(
+    candidate,
+    payload,
+    "เช็คกระดาษ 3 ช่วง (คั่นด้วย --------):\n" +
+    "1) \"ทดสอบภาษาไทย 1\" — พิมพ์ตรง ๆ ไม่สั่ง codepage\n" +
+    "2) \"ทดสอบภาษาไทย 2\" — สั่ง ESC t 0x15 ก่อนพิมพ์\n" +
+    "3) \"Test ไทย 123 ทดสอบ\" — ผสมไทย/อังกฤษ/เลข\n\n" +
+    "ดูว่าบรรทัดไหนอ่านออกเป็นไทยจริง บรรทัดไหนเพี้ยนเป็นกล่อง/อักขระแปลก ๆ"
+  );
 }
 
 // ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
@@ -4218,6 +4282,14 @@ function StaffExpensesScreen({
               </button>
             ))}
           </div>
+          {/* [DEBUG/ชั่วคราว] ทดสอบพิมพ์ภาษาไทย — ใช้ตัวที่ 4 ที่ยืนยันแล้วว่าพิมพ์ได้จริง */}
+          <button
+            onClick={() => sendThaiTestToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title={`service ${BLE_PRINTER_WRITE_CANDIDATES[3].serviceUuid}\ncharacteristic ${BLE_PRINTER_WRITE_CANDIDATES[3].charUuid}`}
+          >
+            🇹🇭 ทดสอบพิมพ์ภาษาไทย (ใช้ตัวที่ 4)
+          </button>
         </div>
 
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
@@ -5622,7 +5694,35 @@ export default function App() {
 
   const handleSaveItem = async (item: MenuItem) => {
     const prev = allMenuItems.find((m) => m.id === item.id);
-    await setDoc(doc(db, "menuItems", item.id), { ...item, active: (item as any).active ?? true });
+    let photo = item.photo;
+
+    if (photo.startsWith("data:")) {
+      // เพิ่งเลือกรูปใหม่รอบนี้ (ยังเป็น base64 จาก compressImage) — อัปโหลดขึ้น Supabase Storage
+      // แทนที่จะเก็บ base64 ตรงๆ ใน Firestore ตั้งชื่อไฟล์ตาม id เมนู เพื่อให้แก้รูปซ้ำ = เขียนทับไฟล์เดิมอัตโนมัติ
+      // (upsert: true จำเป็น — Supabase ปฏิเสธถ้าไม่ใส่และมีไฟล์ชื่อนี้อยู่แล้ว ต่างจาก Firebase ที่ทับให้เลย)
+      const blob = await dataUrlToBlob(photo);
+      const supabase = getSupabaseClient();
+      const path = `menuPhotos/${item.id}.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from(MENU_PHOTOS_BUCKET)
+        .upload(path, blob, { contentType: "image/jpeg", upsert: true });
+      if (uploadError) throw uploadError;
+      const { data } = supabase.storage.from(MENU_PHOTOS_BUCKET).getPublicUrl(path);
+      photo = data.publicUrl;
+    } else if (photo === "" && prev?.photo?.startsWith("http")) {
+      // ลบรูปออก และของเดิมเป็นไฟล์ใน Storage — ลบไฟล์เก่าทิ้งด้วย กันไฟล์กำพร้าค้าง
+      try {
+        const { error } = await getSupabaseClient().storage
+          .from(MENU_PHOTOS_BUCKET)
+          .remove([`menuPhotos/${item.id}.jpg`]);
+        if (error) console.error("remove (menu photo) failed", error); // ไฟล์อาจไม่มีอยู่แล้ว ไม่บล็อกการบันทึก
+      } catch (err) {
+        console.error("remove (menu photo) failed", err);
+      }
+    }
+    // กรณีอื่น (photo ไม่เปลี่ยน / ยังเป็น Unsplash ID เดิม) ไม่ต้องแตะ Storage เลย
+
+    await setDoc(doc(db, "menuItems", item.id), { ...item, photo, active: (item as any).active ?? true });
     if (!prev) {
       await logActivity({ action: "menu_item_added", itemName: item.name.th, details: { price: item.price } });
     } else if (prev.price !== item.price) {
@@ -5654,6 +5754,17 @@ export default function App() {
       itemName: item?.name.th,
       details: item ? { price: item.price } : undefined,
     });
+    if (item?.photo?.startsWith("http")) {
+      // ลบเมนูทั้งตัว — เก็บกวาดไฟล์รูปใน Storage ไปด้วย กันไฟล์กำพร้าค้าง
+      try {
+        const { error } = await getSupabaseClient().storage
+          .from(MENU_PHOTOS_BUCKET)
+          .remove([`menuPhotos/${itemId}.jpg`]);
+        if (error) console.error("remove (menu photo) failed", error);
+      } catch (err) {
+        console.error("remove (menu photo) failed", err);
+      }
+    }
     await deleteDoc(doc(db, "menuItems", itemId));
   };
 
