@@ -5840,7 +5840,9 @@ export default function App() {
         .upload(path, blob, { contentType: "image/jpeg", upsert: true });
       if (uploadError) throw uploadError;
       const { data } = supabase.storage.from(MENU_PHOTOS_BUCKET).getPublicUrl(path);
-      photo = data.publicUrl;
+      // path เดิมซ้ำทุกครั้ง (ตั้งตาม item id) แต่ Supabase CDN cache public URL ไว้แล้วไม่ invalidate
+      // ตอน overwrite — ต่อ ?v=timestamp กันรูปใหม่โดน cache เก่าบังจนกว่า cache จะหมดอายุเอง
+      photo = `${data.publicUrl}?v=${Date.now()}`;
     } else if (photo === "" && prev?.photo?.startsWith("http")) {
       // ลบรูปออก และของเดิมเป็นไฟล์ใน Storage — ลบไฟล์เก่าทิ้งด้วย กันไฟล์กำพร้าค้าง
       try {
