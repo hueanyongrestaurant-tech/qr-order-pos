@@ -561,6 +561,12 @@ async function fetchPaidOrders(startInclusive: Date, endExclusive: Date): Promis
     .filter((o) => o.status === "paid");
 }
 
+// ตั้งค่า retry ร่วมกันของ History/Stats — ถ้า fetchPaidOrders fail (เช่น เครือข่ายสะดุดตอนแท็บ
+// กลับมาจาก background นานๆ) ลอง auto-retry สักพักก่อน ถ้ายัง fail ต่อเนื่องค่อยหยุดแล้วรอผู้ใช้กดเอง
+// แทนที่จะ catch เงียบๆ แล้วปล่อยให้หน้าโล่งไม่มีข้อความอะไรเลย
+const FETCH_RETRY_DELAY_MS = 1500;
+const FETCH_MAX_AUTO_RETRIES = 3;
+
 // แปลงชื่อของเป็น id ที่ใช้เป็น Firestore doc id ได้ (ตัดอักขระที่ Firestore ไม่รับ)
 // รายชื่อของที่ซื้อเข้าร้านมีจำกัด (ไม่กี่สิบ-ร้อยรายการ) จึงใช้ชื่อเป็น id ตรงๆ
 // เพื่อกันไม่ให้มี doc ซ้ำสำหรับของชิ้นเดียวกัน
@@ -3441,9 +3447,14 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
 
   const [fetchedOrders, setFetchedOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
+  const [retrying, setRetrying] = useState(false); // true = พึ่ง fail อยู่ระหว่างรอ auto-retry รอบถัดไป
+  const [loadFailed, setLoadFailed] = useState(false); // true = auto-retry ครบแล้วยังไม่สำเร็จ รอกดเอง
+  const resetRetry = () => { setRetryCount(0); setRetrying(false); setLoadFailed(false); };
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: number | undefined;
     setLoading(true);
 
     let startInclusive: Date;
@@ -3464,11 +3475,31 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
     }
 
     fetchPaidOrders(startInclusive, endExclusive)
-      .then((rows) => { if (!cancelled) setFetchedOrders(rows); })
-      .catch((err) => { console.error("fetchPaidOrders (history) failed", err); })
+      .then((rows) => {
+        if (cancelled) return;
+        setFetchedOrders(rows);
+        setLoadFailed(false);
+      })
+      .catch((err) => {
+        console.error("fetchPaidOrders (history) failed", err);
+        if (cancelled) return;
+        if (retryCount < FETCH_MAX_AUTO_RETRIES) {
+          setRetrying(true);
+          retryTimer = window.setTimeout(() => {
+            setRetrying(false);
+            setRetryCount((n) => n + 1);
+          }, FETCH_RETRY_DELAY_MS);
+        } else {
+          setLoadFailed(true);
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [mode, daysBack, pickedMonth]);
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, daysBack, pickedMonth, retryCount]);
 
   const rangeLabel = mode === "month"
     ? new Date(`${pickedMonth}-01T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { month: "long", year: "numeric" })
@@ -3552,11 +3583,11 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
             type="month"
             value={pickedMonth}
             max={currentMonthKey}
-            onChange={(e) => { if (e.target.value) { setPickedMonth(e.target.value); setMode("month"); } }}
+            onChange={(e) => { if (e.target.value) { setPickedMonth(e.target.value); setMode("month"); resetRetry(); } }}
             className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
           <button
-            onClick={() => { setMode("rolling"); setDaysBack(HISTORY_ROLLING_STEP); }}
+            onClick={() => { setMode("rolling"); setDaysBack(HISTORY_ROLLING_STEP); resetRetry(); }}
             className={`h-11 px-3 rounded-xl text-xs font-medium border-2 transition-all whitespace-nowrap flex-shrink-0 ${
               mode === "rolling" ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"
             }`}
@@ -3566,15 +3597,35 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
         </div>
 
         <div className="flex items-center gap-2 text-muted-foreground text-xs mb-4">
-          {loading && <Loader2 size={14} className="animate-spin" />}
-          <span>{rangeLabel}</span>
+          {(loading || retrying) && <Loader2 size={14} className="animate-spin" />}
+          <span>
+            {retrying || (loading && retryCount > 0)
+              ? (lang === "en" ? "Couldn't load — retrying…" : "โหลดข้อมูลไม่สำเร็จ กำลังลองใหม่…")
+              : rangeLabel}
+          </span>
         </div>
+
+        {loadFailed && (
+          <div className="flex items-center justify-between gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5 mb-4">
+            <span className="text-destructive text-xs">
+              {lang === "en" ? "Couldn't load data. Check your connection." : "โหลดข้อมูลไม่สำเร็จ เช็คการเชื่อมต่อของคุณ"}
+            </span>
+            <button
+              onClick={resetRetry}
+              className="text-xs font-semibold text-destructive underline flex-shrink-0"
+            >
+              {lang === "en" ? "Retry" : "ลองอีกครั้ง"}
+            </button>
+          </div>
+        )}
 
         {paidOrders.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground text-sm">
-            {loading
+            {loading || retrying
               ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
-              : (lang === "en" ? "No completed orders in this range" : "ไม่มีออเดอร์ที่เสร็จสิ้นในช่วงนี้")}
+              : loadFailed
+                ? (lang === "en" ? "Couldn't load data" : "โหลดข้อมูลไม่สำเร็จ")
+                : (lang === "en" ? "No completed orders in this range" : "ไม่มีออเดอร์ที่เสร็จสิ้นในช่วงนี้")}
           </div>
         ) : (
           monthGroups.map(([monthKey, monthData]) => {
@@ -3693,11 +3744,11 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
         {/* rolling mode: โหลดข้อมูลเก่าลงไปอีก 30 วัน */}
         {mode === "rolling" && paidOrders.length > 0 && (
           <button
-            onClick={() => setDaysBack((d) => d + HISTORY_ROLLING_STEP)}
-            disabled={loading}
+            onClick={() => { setDaysBack((d) => d + HISTORY_ROLLING_STEP); resetRetry(); }}
+            disabled={loading || retrying}
             className="w-full mt-2 py-3 rounded-xl text-sm font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all disabled:opacity-40"
           >
-            {loading
+            {loading || retrying
               ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
               : (lang === "en" ? `Load older (+${HISTORY_ROLLING_STEP} days)` : `โหลดเก่ากว่านี้ (+${HISTORY_ROLLING_STEP} วัน)`)}
           </button>
@@ -4532,15 +4583,41 @@ function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffSt
   // ดึงออเดอร์ที่ชำระแล้วเฉพาะช่วงวันที่ที่เลือก (ไม่ใช่ listener ถาวร) — bin ตาม createdAt เหมือนเดิม
   const [paidOrders, setPaidOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
+  const [retrying, setRetrying] = useState(false); // true = พึ่ง fail อยู่ระหว่างรอ auto-retry รอบถัดไป
+  const [loadFailed, setLoadFailed] = useState(false); // true = auto-retry ครบแล้วยังไม่สำเร็จ รอกดเอง
+  const resetRetry = () => { setRetryCount(0); setRetrying(false); setLoadFailed(false); };
+
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: number | undefined;
     setLoading(true);
     fetchPaidOrders(new Date(`${startDate}T00:00:00`), dayAfter(endDate))
-      .then((rows) => { if (!cancelled) setPaidOrders(rows); })
-      .catch((err) => { console.error("fetchPaidOrders (stats) failed", err); })
+      .then((rows) => {
+        if (cancelled) return;
+        setPaidOrders(rows);
+        setLoadFailed(false);
+      })
+      .catch((err) => {
+        console.error("fetchPaidOrders (stats) failed", err);
+        if (cancelled) return;
+        if (retryCount < FETCH_MAX_AUTO_RETRIES) {
+          setRetrying(true);
+          retryTimer = window.setTimeout(() => {
+            setRetrying(false);
+            setRetryCount((n) => n + 1);
+          }, FETCH_RETRY_DELAY_MS);
+        } else {
+          setLoadFailed(true);
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [startDate, endDate]);
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate, retryCount]);
 
   const rangeStart = new Date(`${startDate}T00:00:00`);
   const rangeEnd = new Date(`${endDate}T23:59:59`);
@@ -4662,7 +4739,7 @@ function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffSt
             type="date"
             value={startDate}
             max={endDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => { setStartDate(e.target.value); resetRetry(); }}
             className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
           <span className="text-muted-foreground text-sm self-center">–</span>
@@ -4671,21 +4748,37 @@ function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffSt
             value={endDate}
             min={startDate}
             max={today}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => { setEndDate(e.target.value); resetRetry(); }}
             className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
           <button
-            onClick={() => { setStartDate(today); setEndDate(today); }}
+            onClick={() => { setStartDate(today); setEndDate(today); resetRetry(); }}
             className="h-11 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap flex items-center justify-center flex-shrink-0"
           >
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
         </div>
 
-        {loading && (
+        {loadFailed && (
+          <div className="flex items-center justify-between gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5 mb-4">
+            <span className="text-destructive text-xs">
+              {lang === "en" ? "Couldn't load data. Check your connection." : "โหลดข้อมูลไม่สำเร็จ เช็คการเชื่อมต่อของคุณ"}
+            </span>
+            <button
+              onClick={resetRetry}
+              className="text-xs font-semibold text-destructive underline flex-shrink-0"
+            >
+              {lang === "en" ? "Retry" : "ลองอีกครั้ง"}
+            </button>
+          </div>
+        )}
+
+        {(loading || retrying) && (
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-4">
             <Loader2 size={14} className="animate-spin" />
-            {lang === "en" ? "Loading…" : "กำลังโหลด…"}
+            {retrying || retryCount > 0
+              ? (lang === "en" ? "Couldn't load — retrying…" : "โหลดข้อมูลไม่สำเร็จ กำลังลองใหม่…")
+              : (lang === "en" ? "Loading…" : "กำลังโหลด…")}
           </div>
         )}
 
