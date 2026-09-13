@@ -5118,6 +5118,9 @@ function writeSession(key: string, value: unknown) {
 // เฉพาะวิวเหล่านี้ที่ฝั่งลูกค้าจะถูกจำไว้ตอนรีเฟรช (ตัดพวกที่ sub-state เสี่ยงเกินไปออก)
 const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-sent"];
 
+// อายุ cache เมนู (categories+menuItems) ฝั่งลูกค้าใน sessionStorage — ดู effect ที่ใช้ค่านี้
+const MENU_CACHE_TTL_MS = 3 * 60 * 1000;
+
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
   payment: "staff-payment",
@@ -5181,7 +5184,9 @@ export default function App() {
     allMenuItemsRef.current = allMenuItems;
   }, [allMenuItems]);
 
+  // ฝั่งพนักงาน (ไม่มี ?table=): realtime listener เดิม — เห็นการแก้ไขเมนูทันทีเสมอ
   useEffect(() => {
+    if (getTableFromUrl() !== null) return; // ลูกค้า: ใช้ effect แยกด้านล่างที่มี cache แทน
     const unsubscribe = onSnapshot(query(collection(db, "categories"), orderBy("order", "asc")), (snapshot) => {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
       setAllCategories(data);
@@ -5191,12 +5196,54 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (getTableFromUrl() !== null) return;
     const unsubscribe = onSnapshot(collection(db, "menuItems"), (snapshot) => {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem & { active?: boolean }));
       setAllMenuItems(data);
       setMenuItems(data.filter((m) => m.active !== false));
     });
     return () => unsubscribe();
+  }, []);
+
+  // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน sessionStorage แทน realtime listener
+  // ลด Firestore reads ต่อการเปิด/รีเฟรชหน้าเมนู 1 ครั้ง (ก่อนหน้านี้ทุกครั้งที่เปิดหน้า = subscribe
+  // ใหม่ = อ่านทุก document ใหม่หมด) — cache หมดอายุใน 3 นาที ถึงจะยิง Firestore ใหม่ 1 ครั้ง (ไม่ realtime)
+  // แล้วอัปเดต cache ใหม่ ลูกค้าจึงเห็นการแก้ไขเมนูของ staff ช้าสุด 3 นาที ไม่ใช่ค้างตลอดไป
+  useEffect(() => {
+    if (getTableFromUrl() === null) return; // ฝั่งพนักงานไม่เกี่ยว ใช้ realtime listener ข้างบนแทน
+    let cancelled = false;
+
+    const cached = readSession<{
+      categories: Category[];
+      menuItems: (MenuItem & { active?: boolean })[];
+      timestamp: number;
+    }>("customerMenuCache");
+    if (cached && Date.now() - cached.timestamp < MENU_CACHE_TTL_MS) {
+      setAllCategories(cached.categories);
+      setCategories(cached.categories.filter((c) => c.active !== false));
+      setAllMenuItems(cached.menuItems);
+      setMenuItems(cached.menuItems.filter((m) => m.active !== false));
+      return;
+    }
+
+    (async () => {
+      const [categorySnap, menuSnap] = await Promise.all([
+        getDocs(query(collection(db, "categories"), orderBy("order", "asc"))),
+        getDocs(collection(db, "menuItems")),
+      ]);
+      if (cancelled) return;
+      const categoryData = categorySnap.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
+      const menuData = menuSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem & { active?: boolean }));
+      setAllCategories(categoryData);
+      setCategories(categoryData.filter((c) => c.active !== false));
+      setAllMenuItems(menuData);
+      setMenuItems(menuData.filter((m) => m.active !== false));
+      writeSession("customerMenuCache", { categories: categoryData, menuItems: menuData, timestamp: Date.now() });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // รีเฟรชตอนอยู่หน้ารายละเอียดเมนู: menuItems ยังโหลดไม่มา ต้องรอแล้วค่อยหา item ที่จำไว้กลับมาใส่
