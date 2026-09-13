@@ -3718,9 +3718,38 @@ function buildThaiTestPayload(): Uint8Array {
   return out;
 }
 
+// [DEBUG/ชั่วคราว] ลำดับค่า codepage ที่จะลองส่ง ESC t n (0x1B 0x74 n) ก่อนพิมพ์ข้อความไทยทดสอบ
+// เพื่อดูว่าเฟิร์มแวร์เครื่องพิมพ์มี Thai character table ฝังมาให้ใช้ตรง ๆ ไหม (ไม่ต้อง fallback ไป bitmap)
+// เรียงลำดับเผื่อเจอไวสุด: 30-36 (ชุด Epson-like ที่มักครอบ Thai) ก่อน แล้วค่อยลอง 21, 16
+const THAI_CODEPAGE_SWEEP_VALUES = [30, 31, 32, 33, 34, 35, 36, 21, 16];
+
+// สร้างใบทดสอบเดียวที่ไล่ลอง codepage ทั้ง 9 ค่าเรียงกัน แต่ละช่วงมีป้าย "[CP n]" (ASCII ล้วน อ่านออก
+// เสมอไม่ว่า codepage จะทำให้ข้อความไทยเพี้ยนหรือไม่) ตามด้วยข้อความไทยทดสอบชุดเดียวกันทุกครั้งเพื่อเทียบง่าย
+function buildThaiCodepageSweepPayload(): Uint8Array {
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [new Uint8Array([0x1b, 0x40])]; // ESC @ = initialize printer (ครั้งเดียวตอนเริ่ม)
+  for (const n of THAI_CODEPAGE_SWEEP_VALUES) {
+    parts.push(new Uint8Array([0x1b, 0x74, n])); // ESC t n = select character code table
+    parts.push(enc.encode(`[CP ${n}]\n`)); // ป้ายกำกับ ASCII ล้วน ไว้รู้ว่าบรรทัดไหนคือ codepage อะไรแน่ ๆ
+    parts.push(enc.encode("ทดสอบ ก-ฮ 1234\n"));
+  }
+  parts.push(new Uint8Array([0x0a, 0x0a, 0x0a])); // feed ปิดท้าย 3 บรรทัด
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
 // requestDevice + connect + getPrimaryService + getCharacteristic + write ในตัวเดียว — ใช้ร่วมกันทั้ง
-// ปุ่มทดสอบ ESC/POS ทั่วไปและปุ่มทดสอบภาษาไทย ทำ requestDevice ใหม่ทุกครั้งตามที่ BLE session หลุดง่าย
-// ไม่ cache device/server ข้ามการกดปุ่ม
+// ปุ่มทดสอบ ESC/POS ทั่วไป, ปุ่มทดสอบภาษาไทย, และปุ่มไล่ลอง codepage ทำ requestDevice ใหม่ทุกครั้งตามที่
+// BLE session หลุดง่าย ไม่ cache device/server ข้ามการกดปุ่ม
+// เขียนข้อมูลแบบแบ่ง chunk เล็ก ๆ (ไม่ใช่ยิงก้อนเดียว) เพราะ BLE write ต่อครั้งมักจำกัดตาม ATT MTU ที่
+// เจรจากันได้ (ค่า default ทั่วไปคือ 20 ไบต์ต่อครั้งถ้ายังไม่ negotiate MTU ที่ใหญ่กว่า) หน่วงเวลาสั้น ๆ
+// ระหว่าง chunk กัน buffer ฝั่งเครื่องพิมพ์ล้น
 async function connectAndWriteToCandidate(
   candidate: BlePrinterCandidate,
   payload: Uint8Array,
@@ -3780,15 +3809,27 @@ async function connectAndWriteToCandidate(
     }
 
     const props = characteristic.properties || {};
+    const useWithoutResponse = !!props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function";
+    const useWithResponse = typeof characteristic.writeValue === "function";
+    if (!useWithoutResponse && !useWithResponse) {
+      alert(`❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก`);
+      try { server.disconnect(); } catch { /* noop */ }
+      return;
+    }
+
+    const CHUNK_SIZE = 20; // ปลอดภัยสำหรับ ATT MTU เริ่มต้น (23 ไบต์ - 3 ไบต์ header = 20 ไบต์ข้อมูล)
+    const CHUNK_DELAY_MS = 20;
     try {
-      if (props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function") {
-        await characteristic.writeValueWithoutResponse(payload);
-      } else if (typeof characteristic.writeValue === "function") {
-        await characteristic.writeValue(payload);
-      } else {
-        alert(`❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก`);
-        try { server.disconnect(); } catch { /* noop */ }
-        return;
+      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+        const chunk = payload.slice(i, i + CHUNK_SIZE);
+        if (useWithoutResponse) {
+          await characteristic.writeValueWithoutResponse(chunk);
+        } else {
+          await characteristic.writeValue(chunk);
+        }
+        if (i + CHUNK_SIZE < payload.length) {
+          await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
+        }
       }
       alert(
         `✅ [${candidate.label}] ส่งข้อมูลสำเร็จ!\n\n` +
@@ -3828,6 +3869,19 @@ async function sendThaiTestToCandidate(candidate: BlePrinterCandidate): Promise<
     "2) \"ทดสอบภาษาไทย 2\" — สั่ง ESC t 0x15 ก่อนพิมพ์\n" +
     "3) \"Test ไทย 123 ทดสอบ\" — ผสมไทย/อังกฤษ/เลข\n\n" +
     "ดูว่าบรรทัดไหนอ่านออกเป็นไทยจริง บรรทัดไหนเพี้ยนเป็นกล่อง/อักขระแปลก ๆ"
+  );
+}
+
+// [DEBUG/ชั่วคราว] ปุ่ม "ไล่ลอง Thai codepage" — ยิงใบทดสอบเดียวไล่ครบ 9 ค่า (30-36, 21, 16)
+// เพื่อหาว่าเฟิร์มแวร์เครื่องพิมพ์มี Thai character table ฝังอยู่ไหม ใช้ candidate ตัวที่ 4 เหมือนเดิม
+async function sendThaiCodepageSweepToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  const payload = buildThaiCodepageSweepPayload();
+  await connectAndWriteToCandidate(
+    candidate,
+    payload,
+    `ไล่ลอง ${THAI_CODEPAGE_SWEEP_VALUES.length} codepage: ${THAI_CODEPAGE_SWEEP_VALUES.join(", ")}\n\n` +
+    "แต่ละช่วงขึ้นต้นด้วยป้าย \"[CP n]\" (ตัวเลข/อังกฤษล้วน อ่านออกเสมอ) ตามด้วย \"ทดสอบ ก-ฮ 1234\"\n\n" +
+    "ดูว่า [CP n] ตัวไหนที่บรรทัดข้อความไทยด้านล่างอ่านออกเป็นภาษาไทยจริง (ถ้ามี)"
   );
 }
 
@@ -4208,6 +4262,14 @@ function StaffExpensesScreen({
             title={`service ${BLE_PRINTER_WRITE_CANDIDATES[3].serviceUuid}\ncharacteristic ${BLE_PRINTER_WRITE_CANDIDATES[3].charUuid}`}
           >
             🇹🇭 ทดสอบพิมพ์ภาษาไทย (ใช้ตัวที่ 4)
+          </button>
+          {/* [DEBUG/ชั่วคราว] ไล่ลอง Thai codepage 9 ค่า — หา Thai character table ที่ฝังในเฟิร์มแวร์ */}
+          <button
+            onClick={() => sendThaiCodepageSweepToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title={`ไล่ลอง codepage: ${THAI_CODEPAGE_SWEEP_VALUES.join(", ")}`}
+          >
+            🔤 ไล่ลอง Thai codepage (ใช้ตัวที่ 4)
           </button>
         </div>
 
