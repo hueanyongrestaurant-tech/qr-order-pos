@@ -3424,27 +3424,14 @@ interface HistoryEntry {
   itemCount: number;
 }
 
-const HISTORY_ROLLING_STEP = 30; // จำนวนวันที่ default และที่เพิ่มต่อการกด "โหลดเก่ากว่านี้"
-
 function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffHistoryProps) {
   const t = T[lang];
-  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
-  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  const today = formatDateInput(new Date());
+  const [date, setDate] = useState(today);
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
 
-  // โหมดดูข้อมูล: "rolling" = N วันล่าสุดนับถอยหลังจากวันนี้ (default 30, กดโหลดเพิ่มทีละ 30)
-  //              "month"   = เลือกเดือนเจาะจงจาก month picker
-  const [mode, setMode] = useState<"rolling" | "month">("rolling");
-  const [daysBack, setDaysBack] = useState(HISTORY_ROLLING_STEP);
-  const [pickedMonth, setPickedMonth] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const currentMonthKey = (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  })();
-
+  // ดึงออเดอร์ที่ชำระแล้วเฉพาะวันที่เลือกไว้ (default วันนี้) — one-time fetch ต่อวันเดียว
+  // (ไม่ใช่ rolling window หลายวันเหมือนเดิม) เร็วขึ้นเพราะ query แคบลงมาก
   const [fetchedOrders, setFetchedOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
@@ -3457,24 +3444,7 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
     let retryTimer: number | undefined;
     setLoading(true);
 
-    let startInclusive: Date;
-    let endExclusive: Date;
-    if (mode === "month") {
-      const [y, m] = pickedMonth.split("-").map(Number);
-      startInclusive = new Date(y, m - 1, 1, 0, 0, 0, 0);
-      endExclusive = new Date(y, m, 1, 0, 0, 0, 0);
-    } else {
-      const start = new Date();
-      start.setDate(start.getDate() - (daysBack - 1));
-      start.setHours(0, 0, 0, 0);
-      startInclusive = start;
-      const end = new Date();
-      end.setDate(end.getDate() + 1);
-      end.setHours(0, 0, 0, 0);
-      endExclusive = end;
-    }
-
-    fetchPaidOrders(startInclusive, endExclusive)
+    fetchPaidOrders(new Date(`${date}T00:00:00`), dayAfter(date))
       .then((rows) => {
         if (cancelled) return;
         setFetchedOrders(rows);
@@ -3499,42 +3469,15 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, daysBack, pickedMonth, retryCount]);
+  }, [date, retryCount]);
 
-  const rangeLabel = mode === "month"
-    ? new Date(`${pickedMonth}-01T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { month: "long", year: "numeric" })
-    : (lang === "en" ? `Last ${daysBack} days` : `${daysBack} วันล่าสุด`);
-  const toggleMonth = (key: string) => {
-    setExpandedMonths((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  };
-  const toggleDay = (key: string) => {
-    setExpandedDays((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  };
   const paidOrders = fetchedOrders
     .filter((o) => o.status === "paid")
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
-  function dateLabel(date: Date): string {
-    return date.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
+  function dateLabel(d: Date): string {
+    return d.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
       day: "numeric", month: "short", year: "numeric",
-    });
-  }
-
-  function monthKeyOf(date: Date): string {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  }
-
-  function monthLabel(date: Date): string {
-    return date.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
-      month: "long", year: "numeric",
     });
   }
 
@@ -3562,47 +3505,41 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
     }
   });
   const entries = Array.from(entryMap.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-  // จัดกลุ่มตามเดือน+ปีก่อน (entries ถูก sort จากล่าสุดมาแล้ว ลำดับเดือนจึงเรียงล่าสุดก่อนโดยอัตโนมัติ)
-  const monthMap = new Map<string, { label: string; entries: HistoryEntry[] }>();
-  entries.forEach((e) => {
-    const key = monthKeyOf(e.timestamp);
-    if (!monthMap.has(key)) monthMap.set(key, { label: monthLabel(e.timestamp), entries: [] });
-    monthMap.get(key)!.entries.push(e);
-  });
-  const monthGroups = Array.from(monthMap.entries());
+  const dayTotal = entries.reduce((s, e) => s + e.total, 0);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <StaffHeader lang={lang} activeTab="history" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-        {/* ตัวเลือกช่วงเวลา: N วันล่าสุด (rolling) หรือเลือกเดือนเจาะจง */}
         <div className="flex items-stretch gap-2 mb-4">
           <input
-            type="month"
-            value={pickedMonth}
-            max={currentMonthKey}
-            onChange={(e) => { if (e.target.value) { setPickedMonth(e.target.value); setMode("month"); resetRetry(); } }}
+            type="date"
+            value={date}
+            max={today}
+            onChange={(e) => { if (e.target.value) { setDate(e.target.value); resetRetry(); } }}
             className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
           />
           <button
-            onClick={() => { setMode("rolling"); setDaysBack(HISTORY_ROLLING_STEP); resetRetry(); }}
-            className={`h-11 px-3 rounded-xl text-xs font-medium border-2 transition-all whitespace-nowrap flex-shrink-0 ${
-              mode === "rolling" ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"
-            }`}
+            onClick={() => { setDate(today); resetRetry(); }}
+            className="h-11 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap flex-shrink-0"
           >
-            {lang === "en" ? "Recent" : "ล่าสุด"}
+            {lang === "en" ? "Today" : "วันนี้"}
           </button>
         </div>
 
-        <div className="flex items-center gap-2 text-muted-foreground text-xs mb-4">
-          {(loading || retrying) && <Loader2 size={14} className="animate-spin" />}
-          <span>
-            {retrying || (loading && retryCount > 0)
-              ? (lang === "en" ? "Couldn't load — retrying…" : "โหลดข้อมูลไม่สำเร็จ กำลังลองใหม่…")
-              : rangeLabel}
-          </span>
+        <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs mb-4">
+          <div className="flex items-center gap-2 min-w-0">
+            {(loading || retrying) && <Loader2 size={14} className="animate-spin" />}
+            <span className="truncate">
+              {retrying || (loading && retryCount > 0)
+                ? (lang === "en" ? "Couldn't load — retrying…" : "โหลดข้อมูลไม่สำเร็จ กำลังลองใหม่…")
+                : dateLabel(new Date(`${date}T00:00:00`))}
+            </span>
+          </div>
+          {!loading && !retrying && entries.length > 0 && (
+            <span className="flex-shrink-0">{entries.length} {entries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{dayTotal}</span>
+          )}
         </div>
 
         {loadFailed && (
@@ -3619,139 +3556,70 @@ function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: Staff
           </div>
         )}
 
-        {paidOrders.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground text-sm">
             {loading || retrying
               ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
               : loadFailed
                 ? (lang === "en" ? "Couldn't load data" : "โหลดข้อมูลไม่สำเร็จ")
-                : (lang === "en" ? "No completed orders in this range" : "ไม่มีออเดอร์ที่เสร็จสิ้นในช่วงนี้")}
+                : (lang === "en" ? "No completed orders on this day" : "ไม่มีออเดอร์ที่เสร็จสิ้นในวันนี้")}
           </div>
         ) : (
-          monthGroups.map(([monthKey, monthData]) => {
-            const monthTotal = monthData.entries.reduce((s, e) => s + e.total, 0);
-            const isMonthCollapsed = !expandedMonths.has(monthKey);
-
-            const dayGrouped: Record<string, HistoryEntry[]> = {};
-            monthData.entries.forEach((e) => {
-              const key = dateLabel(e.timestamp);
-              if (!dayGrouped[key]) dayGrouped[key] = [];
-              dayGrouped[key].push(e);
-            });
-
-            return (
-              <div key={monthKey} className="mb-6">
-                <button
-                  onClick={() => toggleMonth(monthKey)}
-                  className="w-full flex items-center justify-between mb-3 pb-2 border-b-2 border-border"
-                >
-                  <div className="flex items-center gap-1.5">
-                    {isMonthCollapsed ? <ChevronRight size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
-                    <h2 className="font-display font-bold text-foreground text-base">{monthData.label}</h2>
-                  </div>
-                  <span className="text-muted-foreground text-xs font-medium">
-                    {monthData.entries.length} {monthData.entries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{monthTotal}
-                  </span>
-                </button>
-
-                {!isMonthCollapsed && (
-                  <div className="pl-1">
-                    {Object.entries(dayGrouped).map(([dateStr, dayEntries]) => {
-                      const dayTotal = dayEntries.reduce((s, e) => s + e.total, 0);
-                      const dayKey = `${monthKey}-${dateStr}`;
-                      const isDayCollapsed = !expandedDays.has(dayKey);
-                      return (
-                        <div key={dayKey} className="mb-5">
-                          <button
-                            onClick={() => toggleDay(dayKey)}
-                            className="w-full flex items-center justify-between mb-2.5"
-                          >
-                            <div className="flex items-center gap-1.5">
-                              {isDayCollapsed ? <ChevronRight size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
-                              <h3 className="font-semibold text-foreground text-sm">{dateStr}</h3>
+          <div className="space-y-2">
+            {entries.map((e, idx) => {
+              const entryKey = `${date}-${idx}`;
+              const isExpanded = expandedEntry === entryKey;
+              return (
+                <div key={idx} className="bg-card rounded-xl border border-border overflow-hidden">
+                  <button
+                    onClick={() => setExpandedEntry(isExpanded ? null : entryKey)}
+                    className="w-full p-3 flex items-center justify-between"
+                  >
+                    <div className="text-left">
+                      <div className="text-sm font-medium text-foreground">
+                        {e.isTakeaway ? e.takeawayLabel : `${t.tableLabel} ${e.tableNumber}`}
+                      </div>
+                      <div className="text-muted-foreground text-xs">
+                        {formatClock(e.timestamp)} · {e.itemCount} {t.items}
+                        {e.orders.length > 1 ? ` · ${e.orders.length} ${e.orders.length === 1 ? t.rounds : t.roundsPlural}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-semibold text-primary text-sm">{t.thb}{e.total}</div>
+                      {isExpanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+                    </div>
+                  </button>
+                  {isExpanded && (
+                    <div className="px-3 pb-3 pt-1 border-t border-border space-y-1.5">
+                      {e.orders.flatMap((o) => o.items).map((ci, ciIdx) => (
+                        <div key={ciIdx} className={`flex items-start justify-between text-sm ${ci.voided ? "opacity-50" : ""}`}>
+                          <div>
+                            <div className={ci.voided ? "line-through text-muted-foreground" : "text-foreground"}>
+                              {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
                             </div>
-                            <span className="text-muted-foreground text-xs">
-                              {dayEntries.length} {dayEntries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{dayTotal}
-                            </span>
-                          </button>
-                          {!isDayCollapsed && (
-                            <div className="space-y-2">
-                              {dayEntries.map((e, idx) => {
-                                const entryKey = `${dayKey}-${idx}`;
-                                const isExpanded = expandedEntry === entryKey;
-                                return (
-                                  <div key={idx} className="bg-card rounded-xl border border-border overflow-hidden">
-                                    <button
-                                      onClick={() => setExpandedEntry(isExpanded ? null : entryKey)}
-                                      className="w-full p-3 flex items-center justify-between"
-                                    >
-                                      <div className="text-left">
-                                        <div className="text-sm font-medium text-foreground">
-                                          {e.isTakeaway ? e.takeawayLabel : `${t.tableLabel} ${e.tableNumber}`}
-                                        </div>
-                                        <div className="text-muted-foreground text-xs">
-                                          {formatClock(e.timestamp)} · {e.itemCount} {t.items}
-                                          {e.orders.length > 1 ? ` · ${e.orders.length} ${e.orders.length === 1 ? t.rounds : t.roundsPlural}` : ""}
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <div className="font-semibold text-primary text-sm">{t.thb}{e.total}</div>
-                                        {isExpanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
-                                      </div>
-                                    </button>
-                                    {isExpanded && (
-                                      <div className="px-3 pb-3 pt-1 border-t border-border space-y-1.5">
-                                        {e.orders.flatMap((o) => o.items).map((ci, ciIdx) => (
-                                          <div key={ciIdx} className={`flex items-start justify-between text-sm ${ci.voided ? "opacity-50" : ""}`}>
-                                            <div>
-                                              <div className={ci.voided ? "line-through text-muted-foreground" : "text-foreground"}>
-                                                {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
-                                              </div>
-                                              {formatOptionDetails(ci, lang) && (
-                                                <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
-                                              )}
-                                              {ci.voided && (
-                                                <div className="text-destructive text-xs">
-                                                  {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
-                                                </div>
-                                              )}
-                                            </div>
-                                            <span className="text-muted-foreground flex-shrink-0">{t.thb}{cartItemTotal(ci)}</span>
-                                          </div>
-                                        ))}
-                                        {e.orders[0]?.paymentMethod && (
-                                          <div className="text-muted-foreground text-xs pt-1">
-                                            {e.orders[0].paymentMethod === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                            {formatOptionDetails(ci, lang) && (
+                              <div className="text-muted-foreground text-xs">{formatOptionDetails(ci, lang)}</div>
+                            )}
+                            {ci.voided && (
+                              <div className="text-destructive text-xs">
+                                {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-muted-foreground flex-shrink-0">{t.thb}{cartItemTotal(ci)}</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-
-        {/* rolling mode: โหลดข้อมูลเก่าลงไปอีก 30 วัน */}
-        {mode === "rolling" && paidOrders.length > 0 && (
-          <button
-            onClick={() => { setDaysBack((d) => d + HISTORY_ROLLING_STEP); resetRetry(); }}
-            disabled={loading || retrying}
-            className="w-full mt-2 py-3 rounded-xl text-sm font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all disabled:opacity-40"
-          >
-            {loading || retrying
-              ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
-              : (lang === "en" ? `Load older (+${HISTORY_ROLLING_STEP} days)` : `โหลดเก่ากว่านี้ (+${HISTORY_ROLLING_STEP} วัน)`)}
-          </button>
+                      ))}
+                      {e.orders[0]?.paymentMethod && (
+                        <div className="text-muted-foreground text-xs pt-1">
+                          {e.orders[0].paymentMethod === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
