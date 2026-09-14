@@ -44,500 +44,52 @@ import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-type Language = "en" | "th";
-type View =
-  | "menu"
-  | "link-expired"
-  | "item-detail"
-  | "cart"
-  | "order-sent"
-  | "staff-login"
-  | "staff-orders"
-  | "staff-payment"
-  | "staff-menu"
-  | "staff-menu-edit"
-  | "staff-history"
-  | "staff-stats"
-  | "staff-expenses"
-  | "staff-activity"
-  | "staff-manual-table"
-  | "staff-manual-menu"
-  | "staff-manual-cart";;
-
-type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses" | "activity";
-type MeatChoice = "pork" | "chicken" | "beef";
-type SpiceLevel = 0 | 1 | 2 | 3;
-type Portion = "regular" | "special";
-interface CustomChoice {
-  id: string;
-  labelTh: string;
-  labelEn: string;
-  priceDelta: number;
-  active?: boolean;
-}
-interface CustomGroup {
-  id: string;
-  nameTh: string;
-  nameEn: string;
-  type: "single" | "multi"; // single = เลือกได้ 1, multi = เลือกได้หลายอย่าง
-  choices: CustomChoice[];
-  required?: boolean;
-}
-type OrderStatus = "in-progress" | "awaiting-payment" | "paid" | "cancelled";
-type PaymentMethod = "cash" | "transfer";
-
-// ─── Activity Log (บันทึกกิจกรรมที่มีความเสี่ยงด้านการเงิน/ข้อมูล) ─────────────
-type ActivityAction =
-  | "void_item"
-  | "cancel_order"
-  | "menu_item_added"
-  | "menu_item_edited"
-  | "menu_item_deleted"
-  | "category_deleted"
-  | "expense_edited"
-  | "expense_deleted";
-
-interface ActivityLog {
-  id: string;
-  action: ActivityAction;
-  createdAt: Date;
-  orderId?: string;
-  tableNumber?: string;
-  itemName?: string;
-  amount?: number;
-  reason?: string;
-  details?: Record<string, any>;
-}
-
-interface MenuItem {
-  id: string;
-  categoryId: string;
-  name: { en: string; th: string };
-  description: { en: string; th: string };
-  price: number;
-  photo: string;
-  hasMeatChoice?: boolean;
-  meatPriceDeltas?: Partial<Record<MeatChoice, number>>;
-  hasSpice?: boolean;
-  hasPortion?: boolean;
-  portionPriceDelta?: number;
-  hasEggAddon?: boolean;   // ปิดตัวเลือกไข่ดาวสำหรับเมนูนี้ได้
-  hasPlainAddOns?: boolean; // ปิดตัวเลือกจาน/ช้อนส้อม/แก้วน้ำสำหรับเมนูนี้ได้
-  customGroups?: CustomGroup[];
-  popular?: boolean;
-  disabledMeats?: MeatChoice[];
-  order?: number;
-}
-
-interface CartItem {
-  cartId: string;
-  item: MenuItem;
-  meat?: MeatChoice;
-  portion?: Portion;
-  customSelections?: Record<string, string[]>;
-  note?: string;
-  spiceLevel: SpiceLevel;
-  addEgg: boolean;
-  addOns: string[];
-  quantity: number;
-  voided?: boolean;       // true = ถูกยกเลิก แต่ยังคงอยู่ใน items[] เสมอ ห้ามลบออกจาก array เด็ดขาด
-  voidReason?: string;
-  voidedAt?: Date;
-}
-
-interface Order {
-  id: string;
-  tableNumber: string;
-  timestamp: Date;
-  items: CartItem[];
-  status: OrderStatus;
-  paymentMethod?: PaymentMethod;
-  cashReceived?: number;
-  isTakeaway?: boolean;
-  takeawayLabel?: string;
-  paymentBatchId?: string;
-  cancelReason?: string;
-  cancelledAt?: Date;
-}
-
-// ─── บัญชีรายจ่าย (Expenses) ───────────────────────────────────────────────────
-// 1 document ต่อ 1 วัน (doc id = "YYYY-MM-DD") เก็บรายการของที่ซื้อไว้เป็น array
-// ข้างใน แทนที่จะแยก 1 document ต่อ 1 รายการ เพื่อไม่ให้จำนวน document บวมเร็วเกินไป
-
-interface ExpenseLineItem {
-  name: string;
-  quantity: number;
-  unit?: string;
-  amount: number; // ราคารวมของรายการนี้ (บาท)
-}
-
-interface ExpenseDay {
-  id: string; // = date ("YYYY-MM-DD")
-  date: string;
-  items: ExpenseLineItem[];
-  totalAmount: number;
-  updatedAt: Date;
-}
-
-// รายชื่อของที่เคยกรอกไว้ ใช้เพื่อ autocomplete ตอนพิมพ์ชื่อของ (เหมือน Excel)
-interface ExpenseCatalogEntry {
-  id: string; // sanitized name ใช้เป็น doc id
-  name: string;
-  unit?: string;
-  lastQuantity?: number;
-  lastAmount?: number;
-  usageCount: number;
-}
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-const ADD_ONS = [
-  { id: "extra-plate", label: { en: "Extra Plate", th: "จานเปล่าเพิ่ม" }, price: 10 },
-  { id: "cutlery", label: { en: "Cutlery Set", th: "ช้อนส้อมชุด" }, price: 0 },
-  { id: "water-glass", label: { en: "Water Glass", th: "แก้วน้ำ" }, price: 0 },
-];
-
-interface Category {
-  id: string;
-  nameEn: string;
-  nameTh: string;
-  order: number;
-  active?: boolean;
-  signature?: boolean;
-}
-
-// ─── Translations ─────────────────────────────────────────────────────────────
-
-const T = {
-  en: {
-    appName: "Hueanyong Kitchen",
-    tagline: "Northern Thai Kitchen",
-    tableLabel: "Table",
-    selectTable: "Select Your Table",
-    selectTableSub: "Scan a QR code or choose your table number below",
-    startOrder: "Start Ordering",
-    langSwitch: "ภาษาไทย",
-    viewCart: "View Order",
-    addToCart: "Add to Order",
-    cart: "Your Order",
-    emptyCart: "Your cart is empty",
-    emptyCartSub: "Browse our menu and add something delicious",
-    goToMenu: "Browse Menu",
-    total: "Total",
-    confirmOrder: "Confirm Order",
-    meatChoice: "Choose Protein",
-    pork: "Pork",
-    chicken: "Chicken",
-    beef: "Beef",
-    spiceLevel: "Spice Level",
-    addEgg: "Add Fried Egg",
-    eggPrice: "+฿15",
-    addOns: "Add-ons",
-    quantity: "Quantity",
-    orderSent: "Order Sent!",
-    orderSentMsg: "Your order is on its way to the kitchen. Sit back, relax, and enjoy the atmosphere.",
-    orderMore: "Order More",
-    staffLogin: "Staff Login",
-    password: "Password",
-    loginBtn: "Log In",
-    wrongPass: "Incorrect password. Please try again.",
-    staffOrders: "Orders",
-    staffPayment: "Payment",
-    logout: "Log Out",
-    inProgress: "In Progress",
-    awaitingPayment: "Awaiting Payment",
-    markServed: "Mark as Served",
-    noActiveOrders: "No active orders right now",
-    noTablesWaiting: "No tables awaiting payment",
-    paymentTitle: "Payment",
-    selectTablePay: "Select a table to process payment",
-    tableTotal: "Table Total",
-    closeTable: "Close Table — Payment Received",
-    cancelOrder: "Cancel Order",
-    confirmCancelOrder: "Cancel this whole order?",
-    confirmRemoveItem: "Remove this item?",
-    portion: "Portion Size",
-    regular: "Regular",
-    special: "Special",
-    busyBanner: "We're currently busy — your order may take a little longer than usual.",
-    linkExpired: "This link has expired",
-    linkExpiredMsg: "Please scan the QR code at your table again to continue ordering.",
-    staffAccess: "Staff Login",
-    thb: "฿",
-    popular: "Signature",
-    back: "Back",
-    activityTab: "Activity",
-    activityTitle: "Activity Log",
-    voidItemReasonTitle: "Reason for removing this item",
-    cancelOrderReasonTitle: "Reason for cancelling this order",
-    voidedLabel: "Cancelled",
-    voidCancelSummary: "Voided / cancelled today",
-    filterAllActions: "All actions",
-    noActivity: "No activity for this day",
-    actionLabels: {
-      void_item: "Item removed",
-      cancel_order: "Order cancelled",
-      menu_item_added: "Menu item added",
-      menu_item_edited: "Menu item edited",
-      menu_item_deleted: "Menu item deleted",
-      category_deleted: "Category deleted",
-      expense_edited: "Expense edited",
-      expense_deleted: "Expense deleted",
-    },
-    eggAdded: "+ Fried Egg",
-    freeLabel: "Free",
-    rounds: "round",
-    roundsPlural: "rounds",
-    bills: "bill",
-    billsPlural: "bills",
-    items: "items",
-    spiceLevels: ["No Spice", "Mild", "Medium", "Very Spicy"],
-    meats: { pork: "Pork", chicken: "Chicken", beef: "Beef" },
-    meatEmoji: { pork: "🐷", chicken: "🐓", beef: "🥩" },
-  },
-  th: {
-    appName: "ครัวเฮือนยอง",
-    tagline: "อาหารเหนือ",
-    tableLabel: "โต๊ะ",
-    selectTable: "เลือกโต๊ะของท่าน",
-    selectTableSub: "สแกน QR หรือเลือกหมายเลขโต๊ะด้านล่าง",
-    startOrder: "เริ่มสั่งอาหาร",
-    langSwitch: "English",
-    viewCart: "ดูรายการ",
-    addToCart: "เพิ่มในรายการ",
-    cart: "รายการสั่งอาหาร",
-    emptyCart: "ตะกร้าว่างเปล่า",
-    emptyCartSub: "เลือกอาหารจากเมนูได้เลย",
-    goToMenu: "ดูเมนู",
-    total: "ยอดรวม",
-    confirmOrder: "ยืนยันการสั่งอาหาร",
-    meatChoice: "เลือกโปรตีน",
-    pork: "หมู",
-    chicken: "ไก่",
-    beef: "เนื้อ",
-    spiceLevel: "ระดับความเผ็ด",
-    addEgg: "เพิ่มไข่ดาว",
-    eggPrice: "+฿15",
-    addOns: "เพิ่มเติม",
-    quantity: "จำนวน",
-    orderSent: "ส่งออเดอร์แล้ว!",
-    orderSentMsg: "ครัวได้รับออเดอร์ของท่านแล้ว โปรดนั่งรอสักครู่ เพลิดเพลินกับบรรยากาศ",
-    orderMore: "สั่งเพิ่ม",
-    staffLogin: "เข้าสู่ระบบพนักงาน",
-    password: "รหัสผ่าน",
-    loginBtn: "เข้าสู่ระบบ",
-    wrongPass: "รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่",
-    staffOrders: "ออเดอร์",
-    staffPayment: "ชำระเงิน",
-    logout: "ออกจากระบบ",
-    inProgress: "กำลังเตรียม",
-    awaitingPayment: "รอชำระเงิน",
-    markServed: "เสิร์ฟแล้ว",
-    noActiveOrders: "ไม่มีออเดอร์ที่กำลังดำเนินการ",
-    noTablesWaiting: "ไม่มีโต๊ะที่รอชำระเงิน",
-    paymentTitle: "ชำระเงิน",
-    selectTablePay: "เลือกโต๊ะเพื่อดำเนินการชำระเงิน",
-    tableTotal: "ยอดรวมโต๊ะ",
-    closeTable: "ปิดโต๊ะ — รับเงินแล้ว",
-    cancelOrder: "ยกเลิกออเดอร์",
-    confirmCancelOrder: "ยกเลิกออเดอร์นี้ทั้งหมด?",
-    confirmRemoveItem: "ลบรายการนี้?",
-    portion: "ขนาด",
-    regular: "ธรรมดา",
-    special: "พิเศษ",
-    busyBanner: "ขณะนี้ร้านมีออเดอร์เยอะ อาหารอาจใช้เวลานานกว่าปกตินิดหน่อย",
-    linkExpired: "ลิงก์หมดอายุแล้ว",
-    linkExpiredMsg: "กรุณาสแกน QR code ที่โต๊ะของท่านอีกครั้งเพื่อสั่งอาหารต่อ",
-    staffAccess: "พนักงาน",
-    thb: "฿",
-    popular: "เมนูเด่น",
-    back: "ย้อนกลับ",
-    activityTab: "กิจกรรม",
-    activityTitle: "ประวัติกิจกรรม",
-    voidItemReasonTitle: "เหตุผลที่ลบรายการนี้",
-    cancelOrderReasonTitle: "เหตุผลที่ยกเลิกออเดอร์นี้",
-    voidedLabel: "ยกเลิกแล้ว",
-    voidCancelSummary: "ยอดที่ถูกยกเลิก/void วันนี้",
-    filterAllActions: "ทุกประเภท",
-    noActivity: "ไม่มีกิจกรรมในวันนี้",
-    actionLabels: {
-      void_item: "ลบรายการ",
-      cancel_order: "ยกเลิกออเดอร์",
-      menu_item_added: "เพิ่มเมนู",
-      menu_item_edited: "แก้ไขเมนู",
-      menu_item_deleted: "ลบเมนู",
-      category_deleted: "ลบหมวดหมู่",
-      expense_edited: "แก้ไขรายจ่าย",
-      expense_deleted: "ลบรายจ่าย",
-    },
-    eggAdded: "+ ไข่ดาว",
-    freeLabel: "ฟรี",
-    rounds: "รอบ",
-    roundsPlural: "รอบ",
-    bills: "บิล",
-    billsPlural: "บิล",
-    items: "รายการ",
-    spiceLevels: ["ไม่เผ็ด", "เผ็ดน้อย", "เผ็ดกลาง", "เผ็ดมาก"],
-    meats: { pork: "หมู", chicken: "ไก่", beef: "เนื้อ" },
-    meatEmoji: { pork: "🐷", chicken: "🐓", beef: "🥩" },
-  },
-};
-
-// ─── Utility functions ────────────────────────────────────────────────────────
-
-function resolvePhoto(photo: string, w = 400, h = 300): string {
-  if (!photo) return "";
-  // data: = base64 เก่า (ก่อน migrate ไป Storage), http = URL เต็มจาก Storage (Supabase) — คืนค่าตรงๆ ทั้งคู่
-  if (photo.startsWith("data:") || photo.startsWith("http")) return photo;
-  return `https://images.unsplash.com/photo-${photo}?w=${w}&h=${h}&fit=crop&auto=format`; // Unsplash photo ID (เมนูตัวอย่างเดิม)
-}
-
-function itemPrice(
-  item: MenuItem,
-  meat: MeatChoice | undefined,
-  portion: Portion | undefined,
-  addEgg: boolean,
-  addOns: string[],
-  customSelections: Record<string, string[]> = {}
-): number {
-  let price = item.price;
-  if (meat && item.meatPriceDeltas?.[meat]) price += item.meatPriceDeltas[meat]!;
-  if (portion === "special" && item.portionPriceDelta) price += item.portionPriceDelta;
-  if (addEgg) price += 15;
-  (addOns || []).forEach((id) => {
-    const found = ADD_ONS.find((a) => a.id === id);
-    if (found) price += found.price;
-  });
-  item.customGroups?.forEach((group) => {
-    const selected = customSelections[group.id] || [];
-    group.choices.forEach((choice) => {
-      if (selected.includes(choice.id)) price += choice.priceDelta;
-    });
-  });
-  return price;
-}
-
-// ราคาต่อหน่วยของรายการ (ยังไม่คูณจำนวน) — ใช้ตอนต้องบันทึกมูลค่าที่ถูก void ลง log
-function cartItemUnitPrice(ci: CartItem): number {
-  return itemPrice(ci.item, ci.meat, ci.portion, ci.addEgg, ci.addOns, ci.customSelections);
-}
-
-function cartItemTotal(ci: CartItem): number {
-  if (ci.voided) return 0; // รายการที่ถูกยกเลิก ไม่นับรวมยอดเงินในบิล
-  return cartItemUnitPrice(ci) * ci.quantity;
-}
-
-// ตัดรูป base64 ของรายการทิ้ง (แตะเฉพาะ item.photo — field อื่นอยู่ครบเป๊ะ)
-// ใช้ตอนบันทึกออเดอร์ใหม่ และตอน void/cancel — ไม่มีหน้าไหนโชว์รูปจากออเดอร์ที่ persist แล้ว
-// แต่รูป base64 ทำให้ doc บวมหนัก (~163 KB/ใบ)
-function stripItemPhoto(ci: CartItem): CartItem {
-  return { ...ci, item: { ...ci.item, photo: "" } };
-}
-
-// รายการที่ยังมีผล (ตัดรายการที่ถูก void ออก) — ใช้ตอนคิดยอด/นับจำนวน ไม่ใช่ตอนแสดงผล
-function liveItems(items: CartItem[]): CartItem[] {
-  return items.filter((ci) => !ci.voided);
-}
-
-function liveItemCount(items: CartItem[]): number {
-  return liveItems(items).reduce((s, ci) => s + ci.quantity, 0);
-}
-
-function cartTotal(cart: CartItem[]): number {
-  return cart.reduce((sum, ci) => sum + cartItemTotal(ci), 0);
-}
-
-function orderTotal(order: Order): number {
-  return order.items.reduce((sum, ci) => sum + cartItemTotal(ci), 0);
-}
-
-function cartItemKey(ci: CartItem): string {
-  return JSON.stringify({
-    id: ci.item.id,
-    meat: ci.meat,
-    portion: ci.portion,
-    spiceLevel: ci.spiceLevel,
-    addEgg: ci.addEgg,
-    addOns: [...(ci.addOns || [])].sort(),
-    customSelections: ci.customSelections,
-    note: ci.note || "",
-  });
-}
-
-function mergeIntoCart(cart: CartItem[], newItem: CartItem): CartItem[] {
-  const key = cartItemKey(newItem);
-  const idx = cart.findIndex((ci) => cartItemKey(ci) === key);
-  if (idx === -1) return [...cart, newItem];
-  const updated = [...cart];
-  updated[idx] = { ...updated[idx], quantity: updated[idx].quantity + newItem.quantity };
-  return updated;
-}
-
-function formatOptionDetails(ci: CartItem, lang: Language): string {
-  const t = T[lang];
-  const parts: string[] = [];
-  if (ci.meat) parts.push(t.meats[ci.meat]);
-  if (ci.portion === "special") parts.push(t.special);
-  if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(t.spiceLevels[ci.spiceLevel]);
-  if (ci.addEgg) parts.push(t.eggAdded);
-  (ci.addOns || []).forEach((id) => {
-    const addon = ADD_ONS.find((a) => a.id === id);
-    if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
-  });
-  ci.item.customGroups?.forEach((group) => {
-    const selected = ci.customSelections?.[group.id] || [];
-    group.choices.forEach((choice) => {
-      if (selected.includes(choice.id)) parts.push(lang === "en" ? choice.labelEn : choice.labelTh);
-    });
-  });
-  return parts.join(", ");
-}
-
-function parseTableKey(tn: string): [number, number] {
-  const [floor, table] = tn.split("-").map(Number);
-  return [floor || 0, table || 0];
-}
-
-function compareTables(a: string, b: string): number {
-  const [af, at] = parseTableKey(a);
-  const [bf, bt] = parseTableKey(b);
-  return af !== bf ? af - bf : at - bt;
-}
-
-function timeAgo(date: Date): string {
-  const mins = Math.floor((Date.now() - date.getTime()) / 60000);
-  if (mins < 1) return "just now";
-  return `${mins} min ago`;
-}
-
-function formatClock(date: Date): string {
-  return date.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-// แปลง 1 document ของ collection "orders" เป็น Order — ใช้ร่วมกันทั้ง realtime listener
-// (ออเดอร์ที่ active) และ query แบบครั้งเดียวของหน้า History/Stats เพื่อให้ mapping ตรงกันเป๊ะ
-function mapOrderDoc(id: string, raw: any): Order {
-  return {
-    id,
-    tableNumber: raw.tableNumber,
-    timestamp: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
-    items: raw.items,
-    status: raw.status,
-    paymentMethod: raw.paymentMethod,
-    cashReceived: raw.cashReceived,
-    isTakeaway: raw.isTakeaway,
-    takeawayLabel: raw.takeawayLabel,
-    paymentBatchId: raw.paymentBatchId,
-    cancelReason: raw.cancelReason,
-    cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
-  } as Order;
-}
+import type {
+  Language,
+  View,
+  StaffTab,
+  MeatChoice,
+  SpiceLevel,
+  Portion,
+  CustomChoice,
+  CustomGroup,
+  OrderStatus,
+  PaymentMethod,
+  ActivityAction,
+  ActivityLog,
+  MenuItem,
+  CartItem,
+  Order,
+  ExpenseLineItem,
+  ExpenseDay,
+  ExpenseCatalogEntry,
+  Category,
+} from "./types";
+import { ADD_ONS } from "./constants";
+import { T } from "./translations";
+import {
+  resolvePhoto,
+  itemPrice,
+  cartItemUnitPrice,
+  cartItemTotal,
+  stripItemPhoto,
+  liveItems,
+  liveItemCount,
+  cartTotal,
+  orderTotal,
+  cartItemKey,
+  mergeIntoCart,
+  formatOptionDetails,
+  parseTableKey,
+  compareTables,
+  timeAgo,
+  formatClock,
+  mapOrderDoc,
+  expenseCatalogId,
+  uid,
+  getTodayKey,
+  compressImage,
+} from "./utils";
 
 // query ออเดอร์ที่ชำระเงินแล้วตามช่วงเวลา (bin ตาม createdAt เหมือน logic เดิมของ History/Stats)
 // ไม่ใช่ realtime — เรียกตอนเข้าหน้า/เปลี่ยนช่วงวันที่ เพราะเป็นข้อมูลที่ปิดรอบแล้ว
@@ -566,48 +118,6 @@ async function fetchPaidOrders(startInclusive: Date, endExclusive: Date): Promis
 // แทนที่จะ catch เงียบๆ แล้วปล่อยให้หน้าโล่งไม่มีข้อความอะไรเลย
 const FETCH_RETRY_DELAY_MS = 1500;
 const FETCH_MAX_AUTO_RETRIES = 3;
-
-// แปลงชื่อของเป็น id ที่ใช้เป็น Firestore doc id ได้ (ตัดอักขระที่ Firestore ไม่รับ)
-// รายชื่อของที่ซื้อเข้าร้านมีจำกัด (ไม่กี่สิบ-ร้อยรายการ) จึงใช้ชื่อเป็น id ตรงๆ
-// เพื่อกันไม่ให้มี doc ซ้ำสำหรับของชิ้นเดียวกัน
-function expenseCatalogId(name: string): string {
-  const cleaned = name.trim().replace(/[\/\\.#$\[\]\s]+/g, "-").slice(0, 120);
-  return cleaned || uid();
-}
-
-function uid(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function getTodayKey(): string {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function compressImage(file: File, maxWidth = 600, quality = 0.7): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext("2d");
-        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.onerror = reject;
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
