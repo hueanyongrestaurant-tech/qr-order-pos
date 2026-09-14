@@ -1,6 +1,8 @@
 import type { CartItem, Language, MeatChoice, MenuItem, Order, Portion } from "./types";
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
+import { db } from "../lib/firebase";
+import { collection, getDocs, orderBy, query, where, limit } from "firebase/firestore";
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
@@ -196,4 +198,46 @@ export function compressImage(file: File, maxWidth = 600, quality = 0.7): Promis
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// query ออเดอร์ที่ชำระเงินแล้วตามช่วงเวลา (bin ตาม createdAt เหมือน logic เดิมของ History/Stats)
+// ไม่ใช่ realtime — เรียกตอนเข้าหน้า/เปลี่ยนช่วงวันที่ เพราะเป็นข้อมูลที่ปิดรอบแล้ว
+// ตั้งใจ filter createdAt อย่างเดียว (single-field index อัตโนมัติ) แล้วกรอง status === "paid"
+// ฝั่ง client — จะได้ไม่ต้องสร้าง/รอ composite index และไม่มีอะไรพังตอน deploy
+// (ออเดอร์ in-progress/cancelled ในช่วงย้อนหลัง 30+ วัน แทบไม่มี จึงแทบไม่มี overhead)
+// limit เป็นแค่กันหลุด (safety cap) ไม่ใช่ pagination จริง
+export const PAID_ORDERS_QUERY_CAP = 8000;
+export async function fetchPaidOrders(startInclusive: Date, endExclusive: Date): Promise<Order[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "orders"),
+      where("createdAt", ">=", startInclusive),
+      where("createdAt", "<", endExclusive),
+      orderBy("createdAt", "asc"),
+      limit(PAID_ORDERS_QUERY_CAP),
+    ),
+  );
+  return snap.docs
+    .map((d) => mapOrderDoc(d.id, d.data()))
+    .filter((o) => o.status === "paid");
+}
+
+// ตั้งค่า retry ร่วมกันของ History/Stats — ถ้า fetchPaidOrders fail (เช่น เครือข่ายสะดุดตอนแท็บ
+// กลับมาจาก background นานๆ) ลอง auto-retry สักพักก่อน ถ้ายัง fail ต่อเนื่องค่อยหยุดแล้วรอผู้ใช้กดเอง
+// แทนที่จะ catch เงียบๆ แล้วปล่อยให้หน้าโล่งไม่มีข้อความอะไรเลย
+export const FETCH_RETRY_DELAY_MS = 1500;
+export const FETCH_MAX_AUTO_RETRIES = 3;
+
+export function formatDateInput(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// ต้นวันถัดจาก dateStr ("YYYY-MM-DD") — ใช้เป็นขอบบนแบบ exclusive ของ query ช่วงวันที่
+export function dayAfter(dateStr: string): Date {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d;
 }
