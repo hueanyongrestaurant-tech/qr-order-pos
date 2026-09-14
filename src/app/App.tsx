@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import logo from "../assets/logo.png";
 import logoImg from "../assets/logo-black.png";
 import {
@@ -91,16 +91,28 @@ import {
   compressImage,
 } from "./utils";
 import { LannaBorder, RestaurantLogo } from "./shared";
-import { StaffLoginScreen } from "./staff/StaffLoginScreen";
-import { StaffOrdersScreen } from "./staff/StaffOrdersScreen";
-import { StaffPaymentScreen } from "./staff/StaffPaymentScreen";
-import { StaffMenuScreen } from "./staff/StaffMenuScreen";
-import { StaffManualTableScreen } from "./staff/StaffManualTableScreen";
-import { StaffMenuEditScreen } from "./staff/StaffMenuEditScreen";
-import { StaffHistoryScreen } from "./staff/StaffHistoryScreen";
-import { StaffExpensesScreen } from "./staff/StaffExpensesScreen";
-import { StaffStatsScreen } from "./staff/StaffStatsScreen";
-import { StaffActivityScreen } from "./staff/StaffActivityScreen";
+
+// ─── Staff bundle (lazy) ───────────────────────────────────────────────────────
+// import() เดียวเท่านั้นในทั้งไฟล์ — โหลด staff/index.ts (รวมทุก component ฝั่ง
+// พนักงานไว้ในที่เดียว) เป็น JS chunk แยกต่างหาก ลูกค้าที่สแกน QR (ไม่เคย render
+// component ฝั่งพนักงานเลย) จะไม่โหลด chunk นี้เลย ส่วนฝั่งพนักงานโหลดครั้งแรกตอน
+// เข้าหน้าไหนก็ได้ที่เป็น staff- แล้ว cache ไว้ (promise เดียวกัน) ไม่โหลดซ้ำตอนสลับแท็บ
+let staffModulePromise: Promise<typeof import("./staff/index")> | null = null;
+function loadStaffModule() {
+  if (!staffModulePromise) staffModulePromise = import("./staff/index");
+  return staffModulePromise;
+}
+
+const StaffLoginScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffLoginScreen })));
+const StaffOrdersScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffOrdersScreen })));
+const StaffPaymentScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffPaymentScreen })));
+const StaffMenuScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffMenuScreen })));
+const StaffManualTableScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffManualTableScreen })));
+const StaffMenuEditScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffMenuEditScreen })));
+const StaffHistoryScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffHistoryScreen })));
+const StaffExpensesScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffExpensesScreen })));
+const StaffStatsScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffStatsScreen })));
+const StaffActivityScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffActivityScreen })));
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
@@ -2060,6 +2072,15 @@ export default function App() {
     }
   };
 
+  const staffLoadingFallback = (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex items-center gap-2 text-muted-foreground text-sm">
+        <Loader2 size={18} className="animate-spin" />
+        {lang === "en" ? "Loading..." : "กำลังโหลด..."}
+      </div>
+    </div>
+  );
+
   switch (view) {
     case "menu":
       content = (
@@ -2136,197 +2157,221 @@ export default function App() {
 
     case "staff-login":
       content = (
-        <StaffLoginScreen
-          lang={lang}
-          onLogin={handleStaffLogin}
-          onBack={() => setView("staff-login")}
-          error={loginError}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffLoginScreen
+            lang={lang}
+            onLogin={handleStaffLogin}
+            onBack={() => setView("staff-login")}
+            error={loginError}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-orders":
       content = (
-        <StaffOrdersScreen
-          lang={lang}
-          orders={orders}
-          onMarkServed={handleMarkServed}
-          onRemoveItem={(orderId, cartId) =>
-            askReason(T[lang].voidItemReasonTitle, (reason) => handleRemoveOrderItem(orderId, cartId, reason))
-          }
-          onCancelOrder={(orderId) =>
-            askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
-          }
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-          onAskConfirm={askConfirm}
-          onStartManualOrder={handleStartManualOrder}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffOrdersScreen
+            lang={lang}
+            orders={orders}
+            onMarkServed={handleMarkServed}
+            onRemoveItem={(orderId, cartId) =>
+              askReason(T[lang].voidItemReasonTitle, (reason) => handleRemoveOrderItem(orderId, cartId, reason))
+            }
+            onCancelOrder={(orderId) =>
+              askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
+            }
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+            onAskConfirm={askConfirm}
+            onStartManualOrder={handleStartManualOrder}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-payment":
       content = (
-        <StaffPaymentScreen
-          lang={lang}
-          orders={orders}
-          onCloseTable={handleCloseTable}
-          onCloseTakeaway={handleCloseTakeawayOrder}
-          onAdjustItem={handleAdjustPaymentItem}
-          onAdjustTakeawayItem={handleAdjustTakeawayItem}
-          onCancelOrder={(orderId) =>
-            askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
-          }
-          onCancelOrders={(orderIds) =>
-            askReason(T[lang].cancelOrderReasonTitle, (reason) =>
-              orderIds.forEach((id) => handleCancelOrder(id, reason))
-            )
-          }
-          onAskConfirm={askConfirm}
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffPaymentScreen
+            lang={lang}
+            orders={orders}
+            onCloseTable={handleCloseTable}
+            onCloseTakeaway={handleCloseTakeawayOrder}
+            onAdjustItem={handleAdjustPaymentItem}
+            onAdjustTakeawayItem={handleAdjustTakeawayItem}
+            onCancelOrder={(orderId) =>
+              askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
+            }
+            onCancelOrders={(orderIds) =>
+              askReason(T[lang].cancelOrderReasonTitle, (reason) =>
+                orderIds.forEach((id) => handleCancelOrder(id, reason))
+              )
+            }
+            onAskConfirm={askConfirm}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-menu":
       content = (
-        <StaffMenuScreen
-          lang={lang}
-          items={allMenuItems}
-          categories={allCategories}
-          onAdd={handleAddNewItem}
-          onEdit={handleEditItem}
-          onToggleActive={handleToggleActive}
-          onDelete={handleDeleteItem}
-          onAddCategory={handleAddCategory}
-          onDeleteCategory={handleDeleteCategory}
-          onToggleCategorySignature={handleToggleCategorySignature}
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-          onAskConfirm={askConfirm}
-          onReorderCategories={handleReorderCategories}
-          onReorderMenuItems={handleReorderMenuItems}
-          scrollTopRef={menuScrollTopRef}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffMenuScreen
+            lang={lang}
+            items={allMenuItems}
+            categories={allCategories}
+            onAdd={handleAddNewItem}
+            onEdit={handleEditItem}
+            onToggleActive={handleToggleActive}
+            onDelete={handleDeleteItem}
+            onAddCategory={handleAddCategory}
+            onDeleteCategory={handleDeleteCategory}
+            onToggleCategorySignature={handleToggleCategorySignature}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+            onAskConfirm={askConfirm}
+            onReorderCategories={handleReorderCategories}
+            onReorderMenuItems={handleReorderMenuItems}
+            scrollTopRef={menuScrollTopRef}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-menu-edit":
       content = editingItem ? (
-        <StaffMenuEditScreen
-          lang={lang}
-          item={editingItem}
-          onSave={handleSaveItem}
-          onCancel={() => setView("staff-menu")}
-          onLangToggle={toggleLang}
-          categories={categories}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffMenuEditScreen
+            lang={lang}
+            item={editingItem}
+            onSave={handleSaveItem}
+            onCancel={() => setView("staff-menu")}
+            onLangToggle={toggleLang}
+            categories={categories}
+          />
+        </Suspense>
       ) : null;
       break;
 
     case "staff-history":
       content = (
-        <StaffHistoryScreen
-          lang={lang}
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffHistoryScreen
+            lang={lang}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-stats":
       content = (
-        <StaffStatsScreen
-          lang={lang}
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffStatsScreen
+            lang={lang}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-expenses":
       content = (
-        <StaffExpensesScreen
-          lang={lang}
-          expenseDays={expenseDays}
-          catalog={expenseCatalog}
-          rangeStart={expenseRangeStart}
-          rangeEnd={expenseRangeEnd}
-          onRangeChange={(start, end) => { setExpenseRangeStart(start); setExpenseRangeEnd(end); }}
-          onAddItem={handleAddExpenseItem}
-          onEditItem={handleEditExpenseItem}
-          onDeleteItem={handleDeleteExpenseItem}
-          onAskConfirm={askConfirm}
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffExpensesScreen
+            lang={lang}
+            expenseDays={expenseDays}
+            catalog={expenseCatalog}
+            rangeStart={expenseRangeStart}
+            rangeEnd={expenseRangeEnd}
+            onRangeChange={(start, end) => { setExpenseRangeStart(start); setExpenseRangeEnd(end); }}
+            onAddItem={handleAddExpenseItem}
+            onEditItem={handleEditExpenseItem}
+            onDeleteItem={handleDeleteExpenseItem}
+            onAskConfirm={askConfirm}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-activity":
       content = (
-        <StaffActivityScreen
-          lang={lang}
-          onTabChange={handleStaffTabChange}
-          onLogout={handleLogout}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffActivityScreen
+            lang={lang}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-manual-table":
       content = (
-        <StaffManualTableScreen
-          lang={lang}
-          onSelect={handlePickManualTable}
-          onSelectTakeaway={handlePickManualTakeaway}
-          onCancel={() => setView("staff-orders")}
-          onLangToggle={toggleLang}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffManualTableScreen
+            lang={lang}
+            onSelect={handlePickManualTable}
+            onSelectTakeaway={handlePickManualTakeaway}
+            onCancel={() => setView("staff-orders")}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-manual-menu":
       content = (
-        <MenuScreen
-          lang={lang}
-          tableNumber={manualIsTakeaway ? "0" : (manualTable || "")}
-          cart={manualCart}
-          menuItems={menuItems}
-          categories={categories}
-          activeCategory={manualCategory}
-          onCategoryChange={setManualCategory}
-          onItemClick={(item) => { setManualSelectedItem(item); setView("item-detail"); }}
-          onViewCart={() => setView("staff-manual-cart")}
-          onLangToggle={toggleLang}
-          isTakeaway={manualIsTakeaway}
-          onExit={handleExitManualOrder}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <MenuScreen
+            lang={lang}
+            tableNumber={manualIsTakeaway ? "0" : (manualTable || "")}
+            cart={manualCart}
+            menuItems={menuItems}
+            categories={categories}
+            activeCategory={manualCategory}
+            onCategoryChange={setManualCategory}
+            onItemClick={(item) => { setManualSelectedItem(item); setView("item-detail"); }}
+            onViewCart={() => setView("staff-manual-cart")}
+            onLangToggle={toggleLang}
+            isTakeaway={manualIsTakeaway}
+            onExit={handleExitManualOrder}
+          />
+        </Suspense>
       );
       break;
 
     case "staff-manual-cart":
       content = (
-        <CartScreen
-          lang={lang}
-          tableNumber={manualTable || ""}
-          cart={manualCart}
-          onBack={() => setView("staff-manual-menu")}
-          onUpdateQty={handleManualUpdateQty}
-          onRemove={handleManualRemove}
-          onConfirm={handleConfirmManualOrder}
-          onLangToggle={toggleLang}
-          isTakeaway={manualIsTakeaway}
-          submitting={isSubmittingManualOrder}
-        />
+        <Suspense fallback={staffLoadingFallback}>
+          <CartScreen
+            lang={lang}
+            tableNumber={manualTable || ""}
+            cart={manualCart}
+            onBack={() => setView("staff-manual-menu")}
+            onUpdateQty={handleManualUpdateQty}
+            onRemove={handleManualRemove}
+            onConfirm={handleConfirmManualOrder}
+            onLangToggle={toggleLang}
+            isTakeaway={manualIsTakeaway}
+            submitting={isSubmittingManualOrder}
+          />
+        </Suspense>
       );
       break;
 
