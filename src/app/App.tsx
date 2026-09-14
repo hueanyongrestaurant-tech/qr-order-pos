@@ -3744,22 +3744,23 @@ function buildThaiCodepageSweepPayload(): Uint8Array {
   return out;
 }
 
-// requestDevice + connect + getPrimaryService + getCharacteristic + write ในตัวเดียว — ใช้ร่วมกันทั้ง
-// ปุ่มทดสอบ ESC/POS ทั่วไป, ปุ่มทดสอบภาษาไทย, และปุ่มไล่ลอง codepage ทำ requestDevice ใหม่ทุกครั้งตามที่
-// BLE session หลุดง่าย ไม่ cache device/server ข้ามการกดปุ่ม
-// เขียนข้อมูลแบบแบ่ง chunk เล็ก ๆ (ไม่ใช่ยิงก้อนเดียว) เพราะ BLE write ต่อครั้งมักจำกัดตาม ATT MTU ที่
-// เจรจากันได้ (ค่า default ทั่วไปคือ 20 ไบต์ต่อครั้งถ้ายังไม่ negotiate MTU ที่ใหญ่กว่า) หน่วงเวลาสั้น ๆ
+// ค่า chunk เดียวกันที่ใช้ทุกปุ่มทดสอบ BLE ในไฟล์นี้ (ESC/POS test, ภาษาไทย, ไล่ codepage, bitmap POC)
+// ปลอดภัยสำหรับ ATT MTU เริ่มต้น (23 ไบต์ - 3 ไบต์ header = 20 ไบต์ข้อมูลต่อครั้ง) หน่วงเวลาสั้น ๆ
 // ระหว่าง chunk กัน buffer ฝั่งเครื่องพิมพ์ล้น
-async function connectAndWriteToCandidate(
+const BLE_WRITE_CHUNK_SIZE = 20;
+const BLE_WRITE_CHUNK_DELAY_MS = 20;
+
+// ผลลัพธ์กลางของ requestDevice + connect + getPrimaryService + getCharacteristic + เขียนข้อมูลแบบ chunk
+// ไม่ alert เอง แค่คืนผลลัพธ์ ให้ผู้เรียกตัดสินใจว่าจะแสดงผลยังไง (ปุ่มทั่วไป vs. ปุ่มที่ต้องรายงาน
+// timing/ขนาดข้อมูลเพิ่มเติมแบบปุ่ม bitmap POC)
+async function bleConnectAndWrite(
   candidate: BlePrinterCandidate,
-  payload: Uint8Array,
-  successHint: string
-): Promise<void> {
+  payload: Uint8Array
+): Promise<{ ok: true } | { ok: false; alertMessage: string }> {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const bt = (navigator as any).bluetooth;
   if (!bt || typeof bt.requestDevice !== "function") {
-    alert("❌ เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (navigator.bluetooth ไม่มี)");
-    return;
+    return { ok: false, alertMessage: "❌ เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (navigator.bluetooth ไม่มี)" };
   }
 
   let device: any;
@@ -3771,17 +3772,14 @@ async function connectAndWriteToCandidate(
   } catch (err) {
     const e = err as { name?: string; message?: string };
     if (e.name === "NotFoundError") {
-      alert(`⚠️ [${candidate.label}] ไม่พบอุปกรณ์ หรือผู้ใช้กดยกเลิก dialog`);
-    } else {
-      alert(`❌ [${candidate.label}] requestDevice ผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}`);
+      return { ok: false, alertMessage: `⚠️ [${candidate.label}] ไม่พบอุปกรณ์ หรือผู้ใช้กดยกเลิก dialog` };
     }
-    return;
+    return { ok: false, alertMessage: `❌ [${candidate.label}] requestDevice ผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}` };
   }
 
   try {
     if (!device.gatt) {
-      alert(`❌ [${candidate.label}] device.gatt ไม่มี — อุปกรณ์นี้อาจไม่รองรับ GATT`);
-      return;
+      return { ok: false, alertMessage: `❌ [${candidate.label}] device.gatt ไม่มี — อุปกรณ์นี้อาจไม่รองรับ GATT` };
     }
     const server = await device.gatt.connect();
 
@@ -3790,12 +3788,13 @@ async function connectAndWriteToCandidate(
       service = await server.getPrimaryService(candidate.serviceUuid);
     } catch (svcErr) {
       const e = svcErr as { message?: string };
-      alert(
-        `⚠️ [${candidate.label}] ไม่พบ service ${candidate.serviceUuid}\n\n${e.message || svcErr}\n\n` +
-        "ลอง requestDevice ใหม่ หรือเช็คว่า optionalServices ครอบคลุม UUID นี้"
-      );
       try { server.disconnect(); } catch { /* noop */ }
-      return;
+      return {
+        ok: false,
+        alertMessage:
+          `⚠️ [${candidate.label}] ไม่พบ service ${candidate.serviceUuid}\n\n${e.message || svcErr}\n\n` +
+          "ลอง requestDevice ใหม่ หรือเช็คว่า optionalServices ครอบคลุม UUID นี้",
+      };
     }
 
     let characteristic: any;
@@ -3803,50 +3802,60 @@ async function connectAndWriteToCandidate(
       characteristic = await service.getCharacteristic(candidate.charUuid);
     } catch (charErr) {
       const e = charErr as { message?: string };
-      alert(`⚠️ [${candidate.label}] ไม่พบ characteristic ${candidate.charUuid}\n\n${e.message || charErr}`);
       try { server.disconnect(); } catch { /* noop */ }
-      return;
+      return { ok: false, alertMessage: `⚠️ [${candidate.label}] ไม่พบ characteristic ${candidate.charUuid}\n\n${e.message || charErr}` };
     }
 
     const props = characteristic.properties || {};
     const useWithoutResponse = !!props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function";
     const useWithResponse = typeof characteristic.writeValue === "function";
     if (!useWithoutResponse && !useWithResponse) {
-      alert(`❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก`);
       try { server.disconnect(); } catch { /* noop */ }
-      return;
+      return { ok: false, alertMessage: `❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก` };
     }
 
-    const CHUNK_SIZE = 20; // ปลอดภัยสำหรับ ATT MTU เริ่มต้น (23 ไบต์ - 3 ไบต์ header = 20 ไบต์ข้อมูล)
-    const CHUNK_DELAY_MS = 20;
     try {
-      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
-        const chunk = payload.slice(i, i + CHUNK_SIZE);
+      for (let i = 0; i < payload.length; i += BLE_WRITE_CHUNK_SIZE) {
+        const chunk = payload.slice(i, i + BLE_WRITE_CHUNK_SIZE);
         if (useWithoutResponse) {
           await characteristic.writeValueWithoutResponse(chunk);
         } else {
           await characteristic.writeValue(chunk);
         }
-        if (i + CHUNK_SIZE < payload.length) {
-          await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
+        if (i + BLE_WRITE_CHUNK_SIZE < payload.length) {
+          await new Promise((resolve) => setTimeout(resolve, BLE_WRITE_CHUNK_DELAY_MS));
         }
       }
-      alert(
-        `✅ [${candidate.label}] ส่งข้อมูลสำเร็จ!\n\n` +
-        `service: ${candidate.serviceUuid}\ncharacteristic: ${candidate.charUuid}\n\n` +
-        successHint
-      );
+      return { ok: true };
     } catch (writeErr) {
       const e = writeErr as { name?: string; message?: string };
-      alert(`❌ [${candidate.label}] เขียนข้อมูลไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(writeErr)}`);
+      return { ok: false, alertMessage: `❌ [${candidate.label}] เขียนข้อมูลไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(writeErr)}` };
     } finally {
       try { server.disconnect(); } catch { /* noop */ }
     }
   } catch (err) {
     const e = err as { name?: string; message?: string };
-    alert(`❌ [${candidate.label}] เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}`);
+    return { ok: false, alertMessage: `❌ [${candidate.label}] เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}` };
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+// wrapper เดิมที่ปุ่มทดสอบ ESC/POS ทั่วไป/ภาษาไทย/ไล่ codepage ใช้อยู่ — alert ผลลัพธ์แบบมาตรฐาน
+async function connectAndWriteToCandidate(
+  candidate: BlePrinterCandidate,
+  payload: Uint8Array,
+  successHint: string
+): Promise<void> {
+  const result = await bleConnectAndWrite(candidate, payload);
+  if (!result.ok) {
+    alert(result.alertMessage);
+    return;
+  }
+  alert(
+    `✅ [${candidate.label}] ส่งข้อมูลสำเร็จ!\n\n` +
+    `service: ${candidate.serviceUuid}\ncharacteristic: ${candidate.charUuid}\n\n` +
+    successHint
+  );
 }
 
 async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNumber: number): Promise<void> {
@@ -3882,6 +3891,99 @@ async function sendThaiCodepageSweepToCandidate(candidate: BlePrinterCandidate):
     `ไล่ลอง ${THAI_CODEPAGE_SWEEP_VALUES.length} codepage: ${THAI_CODEPAGE_SWEEP_VALUES.join(", ")}\n\n` +
     "แต่ละช่วงขึ้นต้นด้วยป้าย \"[CP n]\" (ตัวเลข/อังกฤษล้วน อ่านออกเสมอ) ตามด้วย \"ทดสอบ ก-ฮ 1234\"\n\n" +
     "ดูว่า [CP n] ตัวไหนที่บรรทัดข้อความไทยด้านล่างอ่านออกเป็นภาษาไทยจริง (ถ้ามี)"
+  );
+}
+
+// [DEBUG/ชั่วคราว] bitmap Thai printing POC — เครื่องพิมพ์นี้ไม่มี Thai codepage ในเฟิร์มแวร์เลย
+// (ไล่ลองไป 9 ค่าแล้วไม่เจอ) จึงต้องพิมพ์ภาษาไทยด้วยการวาดเป็นรูปแล้วส่งเป็น ESC/POS raster image แทน
+// วาดข้อความบน <canvas> ที่ไม่แสดงผล กว้าง 384px = มาตรฐานกระดาษ 58mm ที่ 203dpi (384/203*25.4 ≈ 58mm)
+// ใช้ font Tahoma ตัวเดียวกับที่ตั้งไว้ใน @media print ของ index.css สำหรับ #receipt-print
+function renderThaiTextTo1BitRaster(text: string): { raster: Uint8Array; widthPx: number; heightPx: number; bytesPerRow: number } {
+  const widthPx = 384; // 58mm @ 203dpi
+  const heightPx = 40; // พอสำหรับ 1 บรรทัดข้อความ
+  const canvas = document.createElement("canvas");
+  canvas.width = widthPx;
+  canvas.height = heightPx;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("สร้าง canvas 2d context ไม่สำเร็จ");
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, widthPx, heightPx);
+  ctx.fillStyle = "#000000";
+  ctx.font = "28px Tahoma, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 4, heightPx / 2);
+
+  const imgData = ctx.getImageData(0, 0, widthPx, heightPx).data;
+  const bytesPerRow = widthPx / 8; // 384 / 8 = 48 byte ต่อแถว
+  const raster = new Uint8Array(bytesPerRow * heightPx);
+  for (let y = 0; y < heightPx; y++) {
+    for (let x = 0; x < widthPx; x++) {
+      const i = (y * widthPx + x) * 4;
+      // luminance มาตรฐาน — ต่ำกว่า 128 ถือว่าเป็นจุดดำ (threshold ตามโจทย์)
+      const lum = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+      if (lum < 128) {
+        const byteIndex = y * bytesPerRow + (x >> 3);
+        const bit = 7 - (x % 8); // แพ็คจาก MSB
+        raster[byteIndex] |= 1 << bit;
+      }
+    }
+  }
+  return { raster, widthPx, heightPx, bytesPerRow };
+}
+
+// ประกอบ ESC @ (init) + GS v 0 (raster image command) + ข้อมูลภาพ + feed 2 บรรทัดปิดท้าย
+function buildThaiBitmapEscPosPayload(text: string): { payload: Uint8Array; widthPx: number; heightPx: number } {
+  const { raster, widthPx, heightPx, bytesPerRow } = renderThaiTextTo1BitRaster(text);
+  const xL = bytesPerRow & 0xff;
+  const xH = (bytesPerRow >> 8) & 0xff;
+  const yL = heightPx & 0xff;
+  const yH = (heightPx >> 8) & 0xff;
+  // GS v 0 m xL xH yL yH d1...dk  (m=0x00 = normal density)
+  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]);
+  const init = new Uint8Array([0x1b, 0x40]); // ESC @
+  const feed = new Uint8Array([0x0a, 0x0a]); // feed ปิดท้าย 2 บรรทัด
+
+  const payload = new Uint8Array(init.length + rasterHeader.length + raster.length + feed.length);
+  let offset = 0;
+  payload.set(init, offset); offset += init.length;
+  payload.set(rasterHeader, offset); offset += rasterHeader.length;
+  payload.set(raster, offset); offset += raster.length;
+  payload.set(feed, offset);
+  return { payload, widthPx, heightPx };
+}
+
+// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ไทยแบบ bitmap + วัดเวลา" — proof-of-concept วัดทั้งความถูกต้องและความเร็ว
+// ของแนวทาง bitmap ก่อนตัดสินใจใช้จริงในระบบพิมพ์ตรงผ่านเว็บ (ไม่พึ่ง RawBT)
+async function sendThaiBitmapPocToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  const t0 = performance.now();
+
+  // ข้อความตัวอย่างแบบที่ปรากฏจริงในใบเสร็จ (ดู ReceiptTicket: แถวยอดรวมของบิล)
+  const sampleText = "รวมทั้งหมด ยอดรวมทั้งสิ้น 1,234 บาท";
+
+  let payload: Uint8Array;
+  try {
+    const built = buildThaiBitmapEscPosPayload(sampleText);
+    payload = built.payload;
+  } catch (err) {
+    alert(`❌ [${candidate.label}] สร้าง bitmap ไม่สำเร็จ: ${(err as { message?: string }).message || err}`);
+    return;
+  }
+
+  const result = await bleConnectAndWrite(candidate, payload);
+  const elapsedMs = Math.round(performance.now() - t0);
+
+  if (!result.ok) {
+    alert(`${result.alertMessage}\n\n(ใช้เวลาไปแล้ว ${elapsedMs} ms ก่อนพัง)`);
+    return;
+  }
+
+  alert(
+    `✅ [${candidate.label}] พิมพ์ bitmap ภาษาไทยสำเร็จ!\n\n` +
+    `เวลาที่ใช้ทั้งหมด: ${elapsedMs} ms (นับตั้งแต่กดปุ่ม รวมตอนเลือกอุปกรณ์ + connect + ส่งข้อมูล)\n` +
+    `ขนาดข้อมูลที่ส่ง: ${payload.length} byte (แบ่งเป็น ${Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE)} chunk ๆ ละ ${BLE_WRITE_CHUNK_SIZE} byte)\n\n` +
+    "เช็คกระดาษว่าข้อความ \"รวมทั้งหมด ยอดรวมทั้งสิ้น 1,234 บาท\" อ่านออกชัดเจนไหม"
   );
 }
 
@@ -4270,6 +4372,14 @@ function StaffExpensesScreen({
             title={`ไล่ลอง codepage: ${THAI_CODEPAGE_SWEEP_VALUES.join(", ")}`}
           >
             🔤 ไล่ลอง Thai codepage (ใช้ตัวที่ 4)
+          </button>
+          {/* [DEBUG/ชั่วคราว] bitmap Thai printing POC — วัดความถูกต้อง + เวลาที่ใช้ */}
+          <button
+            onClick={() => sendThaiBitmapPocToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title="วาดข้อความไทยเป็น canvas 384px แปลงเป็น 1-bit raster แล้วส่งด้วย ESC/POS GS v 0"
+          >
+            🖼️ ทดสอบพิมพ์ไทยแบบ bitmap + วัดเวลา
           </button>
         </div>
 
