@@ -5,7 +5,6 @@ import type { ExpenseCatalogEntry, ExpenseDay, ExpenseLineItem, Language, StaffT
 import { T } from "../translations";
 import { formatDateInput } from "../utils";
 import { StaffHeader } from "./StaffHeader";
-import { buildEscPosTestPayload, buildThaiTestPayload } from "./ticket";
 
 // ─── [DEBUG/ชั่วคราว] BLE printer test — Web Bluetooth feasibility research ────
 // UUID ที่พบบ่อยในเครื่องพิมพ์ ESC/POS แบบ BLE + service มาตรฐานบางตัว
@@ -59,33 +58,7 @@ const BLE_PRINTER_WRITE_CANDIDATES: BlePrinterCandidate[] = [
   },
 ];
 
-// [DEBUG/ชั่วคราว] ลำดับค่า codepage ที่จะลองส่ง ESC t n (0x1B 0x74 n) ก่อนพิมพ์ข้อความไทยทดสอบ
-// เพื่อดูว่าเฟิร์มแวร์เครื่องพิมพ์มี Thai character table ฝังมาให้ใช้ตรง ๆ ไหม (ไม่ต้อง fallback ไป bitmap)
-// เรียงลำดับเผื่อเจอไวสุด: 30-36 (ชุด Epson-like ที่มักครอบ Thai) ก่อน แล้วค่อยลอง 21, 16
-const THAI_CODEPAGE_SWEEP_VALUES = [30, 31, 32, 33, 34, 35, 36, 21, 16];
-
-// สร้างใบทดสอบเดียวที่ไล่ลอง codepage ทั้ง 9 ค่าเรียงกัน แต่ละช่วงมีป้าย "[CP n]" (ASCII ล้วน อ่านออก
-// เสมอไม่ว่า codepage จะทำให้ข้อความไทยเพี้ยนหรือไม่) ตามด้วยข้อความไทยทดสอบชุดเดียวกันทุกครั้งเพื่อเทียบง่าย
-function buildThaiCodepageSweepPayload(): Uint8Array {
-  const enc = new TextEncoder();
-  const parts: Uint8Array[] = [new Uint8Array([0x1b, 0x40])]; // ESC @ = initialize printer (ครั้งเดียวตอนเริ่ม)
-  for (const n of THAI_CODEPAGE_SWEEP_VALUES) {
-    parts.push(new Uint8Array([0x1b, 0x74, n])); // ESC t n = select character code table
-    parts.push(enc.encode(`[CP ${n}]\n`)); // ป้ายกำกับ ASCII ล้วน ไว้รู้ว่าบรรทัดไหนคือ codepage อะไรแน่ ๆ
-    parts.push(enc.encode("ทดสอบ ก-ฮ 1234\n"));
-  }
-  parts.push(new Uint8Array([0x0a, 0x0a, 0x0a])); // feed ปิดท้าย 3 บรรทัด
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
-}
-
-// ค่า chunk เดียวกันที่ใช้ทุกปุ่มทดสอบ BLE ในไฟล์นี้ (ESC/POS test, ภาษาไทย, ไล่ codepage, bitmap POC)
+// ค่า chunk เดียวกันที่ใช้ทุกปุ่มทดสอบ BLE ในไฟล์นี้
 // ปลอดภัยสำหรับ ATT MTU เริ่มต้น (23 ไบต์ - 3 ไบต์ header = 20 ไบต์ข้อมูลต่อครั้ง) หน่วงเวลาสั้น ๆ
 // ระหว่าง chunk กัน buffer ฝั่งเครื่องพิมพ์ล้น
 const BLE_WRITE_CHUNK_SIZE = 20;
@@ -99,18 +72,15 @@ const BLE_CHUNK_RETRY_DELAY_MS = 100;
 
 const bleDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ผลลัพธ์กลางของ requestDevice + connect + getPrimaryService + getCharacteristic + เขียนข้อมูลแบบ chunk
-// ไม่ alert เอง แค่คืนผลลัพธ์ ให้ผู้เรียกตัดสินใจว่าจะแสดงผลยังไง (ปุ่มทั่วไป vs. ปุ่มที่ต้องรายงาน
-// timing/ขนาดข้อมูลเพิ่มเติมแบบปุ่ม bitmap POC)
-//
-// [แก้ความไม่เสถียร] เดิมใช้ writeValueWithoutResponse ล้วน ซึ่งไม่รอ ack จากเครื่องพิมพ์จริง ทำให้
-// บาง chunk หายเงียบ ๆ แบบสุ่มโดยโค้ดไม่รู้ตัว (resolve ทันทีที่ browser ส่งออกไป ไม่ได้รอเครื่องพิมพ์
-// ยืนยันรับ) ตอนนี้เปลี่ยนมาใช้ writeValue (มี response/ack) เป็นค่าเริ่มต้นถ้า characteristic รองรับ
-// (เช็คจาก properties.write) — ช้ากว่าเดิมเพราะต้อง await ack ทีละ chunk แต่เชื่อถือได้กว่ามาก ถ้า
-// characteristic มีแค่ writeWithoutResponse จริง ๆ (ไม่รองรับ write) ก็ fallback กลับไปแบบเดิม
-async function bleConnectAndWrite(
+// เชื่อมต่อ requestDevice + connect + getPrimaryService + getCharacteristic ให้ครั้งเดียว แล้วส่งต่อ
+// characteristic ที่เขียนได้ให้ `fn` ทำงานต่อ (เขียนข้อมูล 1 ก้อน หรือหลายก้อนติดกันในการเชื่อมต่อเดียว
+// ก็ได้) — ปิด GATT connection ด้วย device.gatt.disconnect() ใน finally เสมอไม่ว่า fn จะสำเร็จหรือ error
+// (กัน connection state ค้างสะสมจนต้องปิดเปิดเครื่องพิมพ์เอง) ให้ความสำคัญกับ writeValue (มี response/
+// ack) ก่อนเสมอถ้า characteristic รองรับจริง (เช็คจาก properties.write) เพราะ writeValueWithoutResponse
+// ล้วนไม่รอ ack จากเครื่องพิมพ์จริง เคยทำให้บาง chunk หายเงียบ ๆ แบบสุ่มมาแล้ว
+async function withBleCharacteristic(
   candidate: BlePrinterCandidate,
-  payload: Uint8Array
+  fn: (characteristic: any, useWithResponse: boolean) => Promise<void>
 ): Promise<{ ok: true } | { ok: false; alertMessage: string }> {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const bt = (navigator as any).bluetooth;
@@ -139,9 +109,6 @@ async function bleConnectAndWrite(
     const server = await device.gatt.connect();
     console.log(`[BLE][${candidate.label}] GATT connected`);
 
-    // [แก้เครื่องพิมพ์ค้าง] ห่อ "ทุกอย่างหลัง connect() สำเร็จ" ด้วย try/finally เดียว แล้วเรียก
-    // device.gatt.disconnect() ใน finally เสมอ ไม่ว่าจะเขียนข้อมูลสำเร็จ, service/characteristic
-    // หาไม่เจอ, หรือ write พังหลัง retry — กัน connection state ค้างสะสมจนต้องปิดเปิดเครื่องพิมพ์เอง
     try {
       // ให้ connection stable ก่อนเริ่มคุยจริง (ดู BLE_CONNECTION_STABILIZE_MS ด้านบน)
       console.log(`[BLE][${candidate.label}] stabilizing ${BLE_CONNECTION_STABILIZE_MS}ms before writing...`);
@@ -169,7 +136,6 @@ async function bleConnectAndWrite(
       }
 
       const props = characteristic.properties || {};
-      // ให้ความสำคัญกับ writeValue (มี response/ack) ก่อนเสมอถ้า characteristic รองรับจริง
       const useWithResponse = !!props.write && typeof characteristic.writeValue === "function";
       const useWithoutResponse = !!props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function";
       if (!useWithResponse && !useWithoutResponse) {
@@ -179,37 +145,8 @@ async function bleConnectAndWrite(
         `[BLE][${candidate.label}] write mode: ${useWithResponse ? "writeValue (with response/ack)" : "writeValueWithoutResponse (fallback — ไม่มี property write)"}`
       );
 
-      const totalChunks = Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE);
       try {
-        for (let i = 0, chunkIndex = 1; i < payload.length; i += BLE_WRITE_CHUNK_SIZE, chunkIndex++) {
-          const chunk = payload.slice(i, i + BLE_WRITE_CHUNK_SIZE);
-
-          // ส่งแต่ละ chunk พร้อม retry อัตโนมัติ 1 ครั้งถ้าพัง (ดู BLE_CHUNK_MAX_RETRIES ด้านบน)
-          for (let attempt = 0; ; attempt++) {
-            try {
-              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} (${chunk.length} bytes)${attempt > 0 ? ` — retry #${attempt}` : ""}...`);
-              if (useWithResponse) {
-                await characteristic.writeValue(chunk);
-              } else {
-                await characteristic.writeValueWithoutResponse(chunk);
-              }
-              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} OK`);
-              break;
-            } catch (chunkErr) {
-              if (attempt >= BLE_CHUNK_MAX_RETRIES) {
-                console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} FAILED after ${attempt + 1} attempt(s):`, chunkErr);
-                throw chunkErr;
-              }
-              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} failed, retrying in ${BLE_CHUNK_RETRY_DELAY_MS}ms...`, chunkErr);
-              await bleDelay(BLE_CHUNK_RETRY_DELAY_MS);
-            }
-          }
-
-          if (i + BLE_WRITE_CHUNK_SIZE < payload.length) {
-            await bleDelay(BLE_WRITE_CHUNK_DELAY_MS);
-          }
-        }
-        console.log(`[BLE][${candidate.label}] all ${totalChunks} chunks sent successfully`);
+        await fn(characteristic, useWithResponse);
         return { ok: true };
       } catch (writeErr) {
         const e = writeErr as { name?: string; message?: string };
@@ -231,329 +168,130 @@ async function bleConnectAndWrite(
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
-// wrapper เดิมที่ปุ่มทดสอบ ESC/POS ทั่วไป/ภาษาไทย/ไล่ codepage ใช้อยู่ — alert ผลลัพธ์แบบมาตรฐาน
-async function connectAndWriteToCandidate(
+// ส่งข้อมูล 1 ก้อนแบบแบ่ง chunk เล็ก ๆ พร้อม retry อัตโนมัติ 1 ครั้งต่อ chunk ถ้าพัง (ดู
+// BLE_CHUNK_MAX_RETRIES/BLE_CHUNK_RETRY_DELAY_MS ด้านบน) ใช้ร่วมกันทั้งการเขียนก้อนเดียว
+// (bleConnectAndWrite) และการเขียนหลายก้อนในการเชื่อมต่อเดียว (bleConnectAndWriteSegments)
+async function writeChunked(candidateLabel: string, characteristic: any, useWithResponse: boolean, payload: Uint8Array): Promise<void> {
+  const totalChunks = Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE);
+  for (let i = 0, chunkIndex = 1; i < payload.length; i += BLE_WRITE_CHUNK_SIZE, chunkIndex++) {
+    const chunk = payload.slice(i, i + BLE_WRITE_CHUNK_SIZE);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        console.log(`[BLE][${candidateLabel}] chunk ${chunkIndex}/${totalChunks} (${chunk.length} bytes)${attempt > 0 ? ` — retry #${attempt}` : ""}...`);
+        if (useWithResponse) {
+          await characteristic.writeValue(chunk);
+        } else {
+          await characteristic.writeValueWithoutResponse(chunk);
+        }
+        console.log(`[BLE][${candidateLabel}] chunk ${chunkIndex}/${totalChunks} OK`);
+        break;
+      } catch (chunkErr) {
+        if (attempt >= BLE_CHUNK_MAX_RETRIES) {
+          console.log(`[BLE][${candidateLabel}] chunk ${chunkIndex}/${totalChunks} FAILED after ${attempt + 1} attempt(s):`, chunkErr);
+          throw chunkErr;
+        }
+        console.log(`[BLE][${candidateLabel}] chunk ${chunkIndex}/${totalChunks} failed, retrying in ${BLE_CHUNK_RETRY_DELAY_MS}ms...`, chunkErr);
+        await bleDelay(BLE_CHUNK_RETRY_DELAY_MS);
+      }
+    }
+    if (i + BLE_WRITE_CHUNK_SIZE < payload.length) {
+      await bleDelay(BLE_WRITE_CHUNK_DELAY_MS);
+    }
+  }
+  console.log(`[BLE][${candidateLabel}] all ${totalChunks} chunks sent successfully`);
+}
+
+// เชื่อมต่อครั้งเดียว เขียนข้อมูล 1 ก้อน แล้ว disconnect — ใช้โดยปุ่มทดสอบทั่วไปที่ส่งข้อมูลเดียวจบ
+async function bleConnectAndWrite(
   candidate: BlePrinterCandidate,
-  payload: Uint8Array,
-  successHint: string
-): Promise<void> {
-  const result = await bleConnectAndWrite(candidate, payload);
+  payload: Uint8Array
+): Promise<{ ok: true } | { ok: false; alertMessage: string }> {
+  return withBleCharacteristic(candidate, (characteristic, useWithResponse) =>
+    writeChunked(candidate.label, characteristic, useWithResponse, payload)
+  );
+}
+
+// เชื่อมต่อครั้งเดียว เขียนหลายก้อนเรียงกัน คั่นด้วย delay ระหว่างก้อน (ยาวกว่า delay ระดับ chunk ปกติ)
+// แล้ว disconnect ครั้งเดียวตอนจบ — ใช้กับปุ่มที่ต้องพิมพ์หลายรอบในใบเดียว (เช่น ไล่ขนาดภาพ) โดยไม่ต้อง
+// requestDevice ใหม่ทุกรอบ (requestDevice เรียกซ้ำในลูปเดียวจะพังด้วย SecurityError เพราะไม่ใช่ user
+// gesture ใหม่ — ดูปุ่ม "ทดสอบพิมพ์ซ้ำ" เดิมที่เจอปัญหานี้มาก่อน)
+async function bleConnectAndWriteSegments(
+  candidate: BlePrinterCandidate,
+  segments: Uint8Array[],
+  interSegmentDelayMs: number
+): Promise<{ ok: true } | { ok: false; alertMessage: string }> {
+  return withBleCharacteristic(candidate, async (characteristic, useWithResponse) => {
+    for (let i = 0; i < segments.length; i++) {
+      console.log(`[BLE][${candidate.label}] segment ${i + 1}/${segments.length} (${segments[i].length} bytes)`);
+      await writeChunked(candidate.label, characteristic, useWithResponse, segments[i]);
+      if (i < segments.length - 1) {
+        await bleDelay(interSegmentDelayMs);
+      }
+    }
+  });
+}
+
+// [DEBUG/ชั่วคราว] ปุ่ม "ไล่หาขนาดภาพสูงสุดที่พิมพ์ได้" — ไล่ทดสอบภาพขนาดต่าง ๆ เรียงจากเล็กไปใหญ่ในใบ
+// เดียว (384x40, 1932 byte เคยพังไม่พิมพ์อะไรออกมาเลย) ภาพทุกขนาดกว้างคงที่ 8 พิกเซล (1 byte/แถว) ปรับ
+// แค่ความสูง (แถว) ให้ได้ขนาดข้อมูลภาพ (ไม่รวม header/label) ตามเป้าหมายแต่ละขั้น เป็นลาย checkerboard
+// สลับดำขาว (ไม่ใช่ทึบดำล้วนแบบปุ่ม "bitmap เล็กมาก" เดิม) เพื่อดูว่าขนาดไหนคือจุดที่เริ่มพังจริง ๆ
+const IMAGE_SIZE_SWEEP_TARGETS_BYTES = [32, 100, 250, 500, 800, 1200, 1920];
+const IMAGE_SIZE_SWEEP_INTER_DELAY_MS = 400; // อยู่ในช่วง 300-500ms ตามโจทย์
+
+// ลาย checkerboard: แถวคู่ = 0xAA (10101010), แถวคี่ = 0x55 (01010101) สลับกันทุกแถว + สลับกันในแถวเดียว
+// ด้วย ผลคือตาราง 8 พิกเซลกว้าง สลับดำ-ขาวเป็นตารางหมากรุกจริง ไม่ใช่แค่ทึบดำ
+function buildCheckerboardRaster(heightPx: number): Uint8Array {
+  const raster = new Uint8Array(heightPx);
+  for (let y = 0; y < heightPx; y++) {
+    raster[y] = y % 2 === 0 ? 0xaa : 0x55;
+  }
+  return raster;
+}
+
+// ประกอบ 1 segment ต่อขนาดภาพ 1 ขั้น: label ข้อความปกติ ("SIZE: N byte\n") + GS v 0 (header
+// little-endian ปกติ) + ข้อมูลภาพ checkerboard + feed 1 บรรทัดปิดท้ายขั้นนี้
+function buildImageSizeSweepSegment(targetBytes: number): Uint8Array {
+  const enc = new TextEncoder();
+  const label = enc.encode(`SIZE: ${targetBytes} byte\n`);
+  const bytesPerRow = 1; // ภาพกว้างคงที่ 8 พิกเซล = 1 byte ต่อแถว
+  const heightPx = targetBytes; // ปรับความสูง (จำนวนแถว) ให้ตรงกับขนาดข้อมูลภาพเป้าหมายพอดี
+  const raster = buildCheckerboardRaster(heightPx);
+  const xL = bytesPerRow & 0xff;
+  const xH = (bytesPerRow >> 8) & 0xff;
+  const yL = heightPx & 0xff;
+  const yH = (heightPx >> 8) & 0xff;
+  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]); // GS v 0, little-endian
+  const feed = new Uint8Array([0x0a]); // feed 1 บรรทัดปิดท้ายขั้นนี้
+
+  const segment = new Uint8Array(label.length + rasterHeader.length + raster.length + feed.length);
+  let offset = 0;
+  segment.set(label, offset); offset += label.length;
+  segment.set(rasterHeader, offset); offset += rasterHeader.length;
+  segment.set(raster, offset); offset += raster.length;
+  segment.set(feed, offset);
+  return segment;
+}
+
+async function sendImageSizeThresholdSweepToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  const segments = IMAGE_SIZE_SWEEP_TARGETS_BYTES.map((bytes) => buildImageSizeSweepSegment(bytes));
+  // ESC @ ส่งครั้งเดียวตอนเริ่ม — รวมไว้กับ segment แรกเลย (ไม่แยกเป็น segment ต่างหาก)
+  const initByte = new Uint8Array([0x1b, 0x40]);
+  segments[0] = new Uint8Array([...initByte, ...segments[0]]);
+  // feed ปิดท้ายรวม 3 บรรทัด (segment สุดท้ายมี feed 1 บรรทัดอยู่แล้ว เติมอีก 2 ให้ครบ)
+  const lastIdx = segments.length - 1;
+  segments[lastIdx] = new Uint8Array([...segments[lastIdx], 0x0a, 0x0a]);
+
+  const result = await bleConnectAndWriteSegments(candidate, segments, IMAGE_SIZE_SWEEP_INTER_DELAY_MS);
   if (!result.ok) {
     alert(result.alertMessage);
     return;
   }
-  alert(
-    `✅ [${candidate.label}] ส่งข้อมูลสำเร็จ!\n\n` +
-    `service: ${candidate.serviceUuid}\ncharacteristic: ${candidate.charUuid}\n\n` +
-    successHint
-  );
-}
-
-async function sendEscPosTestToCandidate(candidate: BlePrinterCandidate, testNumber: number): Promise<void> {
-  const payload = buildEscPosTestPayload(testNumber);
-  await connectAndWriteToCandidate(
-    candidate,
-    payload,
-    `เช็คกระดาษที่ออกมาว่ามีข้อความ "TEST ${testNumber}/4" หรือไม่`
-  );
-}
-
-// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ภาษาไทย" — ใช้ candidate ตัวที่ 4 ที่ยืนยันแล้วว่าพิมพ์ได้จริง
-async function sendThaiTestToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  const payload = buildThaiTestPayload();
-  await connectAndWriteToCandidate(
-    candidate,
-    payload,
-    "เช็คกระดาษ 3 ช่วง (คั่นด้วย --------):\n" +
-    "1) \"ทดสอบภาษาไทย 1\" — พิมพ์ตรง ๆ ไม่สั่ง codepage\n" +
-    "2) \"ทดสอบภาษาไทย 2\" — สั่ง ESC t 0x15 ก่อนพิมพ์\n" +
-    "3) \"Test ไทย 123 ทดสอบ\" — ผสมไทย/อังกฤษ/เลข\n\n" +
-    "ดูว่าบรรทัดไหนอ่านออกเป็นไทยจริง บรรทัดไหนเพี้ยนเป็นกล่อง/อักขระแปลก ๆ"
-  );
-}
-
-// [DEBUG/ชั่วคราว] ปุ่ม "ไล่ลอง Thai codepage" — ยิงใบทดสอบเดียวไล่ครบ 9 ค่า (30-36, 21, 16)
-// เพื่อหาว่าเฟิร์มแวร์เครื่องพิมพ์มี Thai character table ฝังอยู่ไหม ใช้ candidate ตัวที่ 4 เหมือนเดิม
-async function sendThaiCodepageSweepToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  const payload = buildThaiCodepageSweepPayload();
-  await connectAndWriteToCandidate(
-    candidate,
-    payload,
-    `ไล่ลอง ${THAI_CODEPAGE_SWEEP_VALUES.length} codepage: ${THAI_CODEPAGE_SWEEP_VALUES.join(", ")}\n\n` +
-    "แต่ละช่วงขึ้นต้นด้วยป้าย \"[CP n]\" (ตัวเลข/อังกฤษล้วน อ่านออกเสมอ) ตามด้วย \"ทดสอบ ก-ฮ 1234\"\n\n" +
-    "ดูว่า [CP n] ตัวไหนที่บรรทัดข้อความไทยด้านล่างอ่านออกเป็นภาษาไทยจริง (ถ้ามี)"
-  );
-}
-
-// [DEBUG/ชั่วคราว] bitmap Thai printing POC — เครื่องพิมพ์นี้ไม่มี Thai codepage ในเฟิร์มแวร์เลย
-// (ไล่ลองไป 9 ค่าแล้วไม่เจอ) จึงต้องพิมพ์ภาษาไทยด้วยการวาดเป็นรูปแล้วส่งเป็น ESC/POS raster image แทน
-// วาดข้อความบน <canvas> ที่ไม่แสดงผล กว้าง 384px = มาตรฐานกระดาษ 58mm ที่ 203dpi (384/203*25.4 ≈ 58mm)
-// ใช้ font Tahoma ตัวเดียวกับที่ตั้งไว้ใน @media print ของ index.css สำหรับ #receipt-print
-function renderThaiTextTo1BitRaster(text: string): { raster: Uint8Array; widthPx: number; heightPx: number; bytesPerRow: number } {
-  const widthPx = 384; // 58mm @ 203dpi
-  const heightPx = 40; // พอสำหรับ 1 บรรทัดข้อความ
-  const canvas = document.createElement("canvas");
-  canvas.width = widthPx;
-  canvas.height = heightPx;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("สร้าง canvas 2d context ไม่สำเร็จ");
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, widthPx, heightPx);
-  ctx.fillStyle = "#000000";
-  ctx.font = "28px Tahoma, sans-serif";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 4, heightPx / 2);
-
-  const imgData = ctx.getImageData(0, 0, widthPx, heightPx).data;
-  const bytesPerRow = widthPx / 8; // 384 / 8 = 48 byte ต่อแถว
-  const raster = new Uint8Array(bytesPerRow * heightPx);
-  for (let y = 0; y < heightPx; y++) {
-    for (let x = 0; x < widthPx; x++) {
-      const i = (y * widthPx + x) * 4;
-      // luminance มาตรฐาน — ต่ำกว่า 128 ถือว่าเป็นจุดดำ (threshold ตามโจทย์)
-      const lum = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
-      if (lum < 128) {
-        const byteIndex = y * bytesPerRow + (x >> 3);
-        const bit = 7 - (x % 8); // แพ็คจาก MSB
-        raster[byteIndex] |= 1 << bit;
-      }
-    }
-  }
-  return { raster, widthPx, heightPx, bytesPerRow };
-}
-
-// ประกอบ ESC @ (init) + GS v 0 (raster image command) + ข้อมูลภาพ + feed 2 บรรทัดปิดท้าย
-function buildThaiBitmapEscPosPayload(text: string): { payload: Uint8Array; widthPx: number; heightPx: number } {
-  const { raster, widthPx, heightPx, bytesPerRow } = renderThaiTextTo1BitRaster(text);
-  const xL = bytesPerRow & 0xff;
-  const xH = (bytesPerRow >> 8) & 0xff;
-  const yL = heightPx & 0xff;
-  const yH = (heightPx >> 8) & 0xff;
-  // GS v 0 m xL xH yL yH d1...dk  (m=0x00 = normal density)
-  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]);
-  const init = new Uint8Array([0x1b, 0x40]); // ESC @
-  const feed = new Uint8Array([0x0a, 0x0a]); // feed ปิดท้าย 2 บรรทัด
-
-  const payload = new Uint8Array(init.length + rasterHeader.length + raster.length + feed.length);
-  let offset = 0;
-  payload.set(init, offset); offset += init.length;
-  payload.set(rasterHeader, offset); offset += rasterHeader.length;
-  payload.set(raster, offset); offset += raster.length;
-  payload.set(feed, offset);
-  return { payload, widthPx, heightPx };
-}
-
-// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ไทยแบบ bitmap + วัดเวลา" — proof-of-concept วัดทั้งความถูกต้องและความเร็ว
-// ของแนวทาง bitmap ก่อนตัดสินใจใช้จริงในระบบพิมพ์ตรงผ่านเว็บ (ไม่พึ่ง RawBT)
-async function sendThaiBitmapPocToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  const t0 = performance.now();
-
-  // ข้อความตัวอย่างแบบที่ปรากฏจริงในใบเสร็จ (ดู ReceiptTicket: แถวยอดรวมของบิล)
-  const sampleText = "รวมทั้งหมด ยอดรวมทั้งสิ้น 1,234 บาท";
-
-  let payload: Uint8Array;
-  try {
-    const built = buildThaiBitmapEscPosPayload(sampleText);
-    payload = built.payload;
-  } catch (err) {
-    alert(`❌ [${candidate.label}] สร้าง bitmap ไม่สำเร็จ: ${(err as { message?: string }).message || err}`);
-    return;
-  }
-
-  const result = await bleConnectAndWrite(candidate, payload);
-  const elapsedMs = Math.round(performance.now() - t0);
-
-  if (!result.ok) {
-    alert(`${result.alertMessage}\n\n(ใช้เวลาไปแล้ว ${elapsedMs} ms ก่อนพัง)`);
-    return;
-  }
 
   alert(
-    `✅ [${candidate.label}] พิมพ์ bitmap ภาษาไทยสำเร็จ!\n\n` +
-    `เวลาที่ใช้ทั้งหมด: ${elapsedMs} ms (นับตั้งแต่กดปุ่ม รวมตอนเลือกอุปกรณ์ + connect + ส่งข้อมูล)\n` +
-    `ขนาดข้อมูลที่ส่ง: ${payload.length} byte (แบ่งเป็น ${Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE)} chunk ๆ ละ ${BLE_WRITE_CHUNK_SIZE} byte)\n\n` +
-    "เช็คกระดาษว่าข้อความ \"รวมทั้งหมด ยอดรวมทั้งสิ้น 1,234 บาท\" อ่านออกชัดเจนไหม"
+    `✅ [${candidate.label}] ส่งครบทุกขนาดแล้ว (${IMAGE_SIZE_SWEEP_TARGETS_BYTES.join(", ")} byte)\n\n` +
+    "ไปดูกระดาษว่า label \"SIZE: N byte\" ตัวไหนคือตัวสุดท้ายที่มีภาพ checkerboard ตามมาจริง " +
+    "(ตัวที่ไม่มีภาพตามมา = ขนาดนั้นเริ่มพังแล้ว ให้ดูตัวก่อนหน้าเป็นขนาดสูงสุดที่ยังพิมพ์ได้)"
   );
-}
-
-// ข้อความตัวอย่างเดียวกันที่ใช้ทดสอบ bitmap ทุกปุ่ม (เดิม + วินิจฉัยใหม่) เพื่อเทียบผลกันตรง ๆ
-const BITMAP_TEST_SAMPLE_TEXT = "รวมทั้งหมด ยอดรวมทั้งสิ้น 1,234 บาท";
-
-// [DEBUG/ชั่วคราว] ปุ่มวินิจฉัย #1 "ทดสอบ bitmap เล็กมาก" — ผลทดสอบ bitmap ภาษาไทย (384x40, 1932 byte)
-// ส่งสำเร็จไม่มี error แต่เครื่องไม่พิมพ์อะไรออกมาเลย เลยสงสัยว่า (ก) byte order ของ header ผิด หรือ
-// (ข) เฟิร์มแวร์ไม่รองรับคำสั่ง GS v 0 เลย — ปุ่มนี้ตัดตัวแปรเรื่องขนาด/การคำนวณออกให้เหลือน้อยที่สุด:
-// ภาพ 8x8 พิกเซลทึบดำล้วน (1 byte/แถว x 8 แถว = header 8 byte + data 8 byte) ถ้าตัวเล็กขนาดนี้ยังไม่ออก
-// แปลว่าปัญหาไม่ใช่ byte order/ขนาด แต่เครื่องไม่รองรับคำสั่งนี้เลย
-async function sendTinyDebugBitmapToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  const bytesPerRow = 1; // 8px กว้าง / 8 = 1 byte ต่อแถว
-  const heightPx = 8;
-  const raster = new Uint8Array(bytesPerRow * heightPx).fill(0xff); // ทึบดำล้วนทั้งภาพ
-  const xL = bytesPerRow & 0xff;
-  const xH = (bytesPerRow >> 8) & 0xff;
-  const yL = heightPx & 0xff;
-  const yH = (heightPx >> 8) & 0xff;
-  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]); // GS v 0 เดิมทุกอย่าง
-  const init = new Uint8Array([0x1b, 0x40]);
-  const feed = new Uint8Array([0x0a, 0x0a]);
-
-  const payload = new Uint8Array(init.length + rasterHeader.length + raster.length + feed.length);
-  let offset = 0;
-  payload.set(init, offset); offset += init.length;
-  payload.set(rasterHeader, offset); offset += rasterHeader.length;
-  payload.set(raster, offset); offset += raster.length;
-  payload.set(feed, offset);
-
-  await connectAndWriteToCandidate(
-    candidate,
-    payload,
-    "ภาพทดสอบ: สี่เหลี่ยมทึบดำ 8x8 พิกเซล (header 8 byte + data 8 byte ผ่านคำสั่ง GS v 0 เดิมทุกอย่าง)\n\n" +
-    "• เห็นจุด/แถบดำเล็ก ๆ ออกมา → เครื่องรองรับ GS v 0 จริง ปัญหาของภาพใหญ่ก่อนหน้าอยู่ที่การคำนวณขนาด/byte order\n" +
-    "• ไม่มีอะไรออกมาเลยเหมือนเดิม → เฟิร์มแวร์นี้ไม่รองรับคำสั่ง GS v 0 เลย ต้องลองปุ่ม \"ESC *\" แทน"
-  );
-}
-
-// [DEBUG/ชั่วคราว] ปุ่มวินิจฉัย #2 "ทดสอบ bitmap สลับ byte order" — ภาพเดียวกับปุ่ม bitmap ภาษาไทยเดิม
-// (384x40) แต่สลับ header ของ GS v 0 จาก little-endian (xL,xH,yL,yH ตามสเปกมาตรฐาน) เป็น big-endian
-// (xH ก่อน xL, yH ก่อน yL) เผื่อเฟิร์มแวร์รุ่นนี้ตีความ byte order กลับด้าน
-async function sendBitmapByteOrderSwapToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  const { raster, heightPx, bytesPerRow } = renderThaiTextTo1BitRaster(BITMAP_TEST_SAMPLE_TEXT);
-  const xL = bytesPerRow & 0xff;
-  const xH = (bytesPerRow >> 8) & 0xff;
-  const yL = heightPx & 0xff;
-  const yH = (heightPx >> 8) & 0xff;
-  // สลับเป็น big-endian ตามโจทย์ (ปุ่ม bitmap เดิมใช้ xL,xH,yL,yH ปกติ)
-  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xH, xL, yH, yL]);
-  const init = new Uint8Array([0x1b, 0x40]);
-  const feed = new Uint8Array([0x0a, 0x0a]);
-
-  const payload = new Uint8Array(init.length + rasterHeader.length + raster.length + feed.length);
-  let offset = 0;
-  payload.set(init, offset); offset += init.length;
-  payload.set(rasterHeader, offset); offset += rasterHeader.length;
-  payload.set(raster, offset); offset += raster.length;
-  payload.set(feed, offset);
-
-  await connectAndWriteToCandidate(
-    candidate,
-    payload,
-    `ภาพเดียวกับปุ่ม bitmap เดิม (384x40 "${BITMAP_TEST_SAMPLE_TEXT}") แต่สลับ byte order ของ header เป็น big-endian\n\n` +
-    "• ออกมาถูกต้อง → เฟิร์มแวร์นี้อ่าน xL/xH, yL/yH สลับด้าน แก้โค้ดจริงให้ใช้ big-endian แทน\n" +
-    "• ยังไม่ออกเหมือนเดิม → ปัญหาไม่ได้อยู่ที่ byte order (ลองปุ่ม ESC * ต่อ)"
-  );
-}
-
-// แปลงข้อความไทยเป็น bit matrix (แถว x คอลัมน์ แบบ boolean ยังไม่แพ็ค) ไว้ใช้ประกอบข้อมูลแบบ column-major
-// สำหรับ ESC * ซึ่งต่างจาก GS v 0 ที่เก็บแบบ row-major — วาดด้วยพารามิเตอร์เดียวกับ renderThaiTextTo1BitRaster
-function renderThaiTextBitMatrix(text: string, widthPx: number, heightPx: number): boolean[][] {
-  const canvas = document.createElement("canvas");
-  canvas.width = widthPx;
-  canvas.height = heightPx;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("สร้าง canvas 2d context ไม่สำเร็จ");
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, widthPx, heightPx);
-  ctx.fillStyle = "#000000";
-  ctx.font = "28px Tahoma, sans-serif";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 4, heightPx / 2);
-
-  const imgData = ctx.getImageData(0, 0, widthPx, heightPx).data;
-  const matrix: boolean[][] = [];
-  for (let y = 0; y < heightPx; y++) {
-    const row: boolean[] = [];
-    for (let x = 0; x < widthPx; x++) {
-      const i = (y * widthPx + x) * 4;
-      const lum = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
-      row.push(lum < 128);
-    }
-    matrix.push(row);
-  }
-  return matrix;
-}
-
-// ประกอบคำสั่ง ESC * (bit image mode, m=0 = 8-dot single density) แทน GS v 0 — ข้อมูลเก็บแบบ column-major
-// (1 byte = 8 พิกเซลแนวตั้ง 1 คอลัมน์ ไม่ใช่ row-major แบบ raster) ภาพสูง 40px ต้องแบ่งเป็น 5 แถบ ๆ ละ
-// 8 แถว ส่ง ESC * ซ้ำทุกแถบ คั่นด้วย "ESC J 8" (print + feed กระดาษ 8 dot พอดี) กันแถบเหลื่อมกัน/มีช่องว่าง
-function buildEscStarBitImagePayload(text: string): { payload: Uint8Array; widthPx: number; heightPx: number } {
-  const widthPx = 384;
-  const heightPx = 40;
-  const BAND_HEIGHT = 8; // ESC * m=0 พิมพ์ทีละ 8 พิกเซลแนวตั้งต่อ 1 คำสั่ง
-  if (heightPx % BAND_HEIGHT !== 0) {
-    throw new Error(`heightPx (${heightPx}) ต้องหารด้วย ${BAND_HEIGHT} ลงตัว`);
-  }
-  const matrix = renderThaiTextBitMatrix(text, widthPx, heightPx);
-
-  const nL = widthPx & 0xff;
-  const nH = (widthPx >> 8) & 0xff;
-  const parts: Uint8Array[] = [new Uint8Array([0x1b, 0x40])]; // ESC @ = initialize printer ครั้งเดียวตอนเริ่ม
-
-  for (let band = 0; band < heightPx / BAND_HEIGHT; band++) {
-    const bandStart = band * BAND_HEIGHT;
-    const colData = new Uint8Array(widthPx);
-    for (let x = 0; x < widthPx; x++) {
-      let byte = 0;
-      for (let r = 0; r < BAND_HEIGHT; r++) {
-        if (matrix[bandStart + r][x]) byte |= 1 << (7 - r); // MSB = แถวบนสุดของแถบ
-      }
-      colData[x] = byte;
-    }
-    parts.push(new Uint8Array([0x1b, 0x2a, 0x00, nL, nH])); // ESC * m nL nH
-    parts.push(colData);
-    parts.push(new Uint8Array([0x1b, 0x4a, BAND_HEIGHT])); // ESC J 8 = print และ feed กระดาษ 8 dot พอดีกับความสูงแถบ
-  }
-  parts.push(new Uint8Array([0x0a, 0x0a])); // feed ปิดท้ายเพิ่มให้อ่านง่าย
-
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return { payload: out, widthPx, heightPx };
-}
-
-// [DEBUG/ชั่วคราว] ปุ่มวินิจฉัย #3 "ทดสอบพิมพ์ภาพด้วย ESC *" — ใช้คำสั่งเก่ากว่า GS v 0 กับภาพเดียวกัน
-// เผื่อเฟิร์มแวร์รองรับ bit image mode แบบเก่าแต่ไม่รองรับ raster image command แบบใหม่
-async function sendEscStarBitImageToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  let built: { payload: Uint8Array; widthPx: number; heightPx: number };
-  try {
-    built = buildEscStarBitImagePayload(BITMAP_TEST_SAMPLE_TEXT);
-  } catch (err) {
-    alert(`❌ [${candidate.label}] สร้างข้อมูล ESC * ไม่สำเร็จ: ${(err as { message?: string }).message || err}`);
-    return;
-  }
-
-  await connectAndWriteToCandidate(
-    candidate,
-    built.payload,
-    `ใช้คำสั่ง ESC * (bit image mode) แทน GS v 0 กับภาพเดียวกัน (${built.widthPx}x${built.heightPx}) แบ่งเป็น ${built.heightPx / 8} แถบ ๆ ละ 8 พิกเซล\n\n` +
-    "• ออกมา → เฟิร์มแวร์รองรับ ESC * (แต่ไม่รองรับ/ตีความ GS v 0 ต่าง) ควรใช้ ESC * แทนในระบบจริง\n" +
-    "• ยังไม่ออก → เครื่องพิมพ์นี้อาจไม่รองรับการพิมพ์ bitmap ทั้งสองคำสั่งเลย"
-  );
-}
-
-// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ซ้ำ (กดเอง)" — เดิมเคยลองวนลูป requestDevice() 5 ครั้งในโค้ดเดียวกัน
-// (คั่นด้วย delay) แต่พังตั้งแต่รอบ 2 ด้วย SecurityError "Must be handling a user gesture" เพราะ
-// requestDevice() ต้องถูกเรียกจาก user gesture โดยตรงเท่านั้น — แม้ลูปจะเริ่มจากปุ่มที่กดจริง แต่
-// user activation หมดอายุไปแล้วหลัง await delay ทำให้ browser บล็อกการเรียกครั้งถัดไปในลูปเดียวกัน
-// วิธีที่ถูกต้อง: ให้ผู้ใช้กดปุ่มเองจริงแยกทีละครั้ง (แต่ละคลิกคือ user gesture ใหม่ที่ browser ยอมรับ)
-// ฟังก์ชันนี้จึงทำแค่ 1 รอบต่อการเรียก 1 ครั้ง ส่วน state นับจำนวนครั้ง/สำเร็จอยู่ในตัว component ด้านล่าง
-function buildManualStabilityTestPayload(testNumber: number): Uint8Array {
-  const enc = new TextEncoder();
-  const init = new Uint8Array([0x1b, 0x40]); // ESC @
-  const text = enc.encode(`MANUAL TEST #${testNumber}\n\n`);
-  const feed = new Uint8Array([0x0a, 0x0a]);
-  const out = new Uint8Array(init.length + text.length + feed.length);
-  let offset = 0;
-  out.set(init, offset); offset += init.length;
-  out.set(text, offset); offset += text.length;
-  out.set(feed, offset);
-  return out;
 }
 
 // ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
@@ -597,31 +335,6 @@ export function StaffExpensesScreen({
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   // เก็บรูปที่ capture ล่าสุดไว้ ให้ผู้ใช้กดปุ่ม "ดาวน์โหลด" ซ้ำได้เองทุกเมื่อ
   const [lastImage, setLastImage] = useState<{ dataUrl: string; fileName: string } | null>(null);
-
-  // [DEBUG/ชั่วคราว] ตัวนับปุ่ม "ทดสอบพิมพ์ซ้ำ (กดเอง)" — นับสะสมไปเรื่อย ๆ ไม่รีเซ็ตเองระหว่างทาง
-  const [manualStabilityAttempts, setManualStabilityAttempts] = useState(0);
-  const [manualStabilitySuccesses, setManualStabilitySuccesses] = useState(0);
-
-  // ทุกคลิกคือ user gesture ใหม่ที่ browser ยอมรับให้เรียก requestDevice() ได้ — ทำแค่ 1 รอบต่อคลิก
-  // (ดูเหตุผลเต็ม ๆ ที่คอมเมนต์เหนือ buildManualStabilityTestPayload ด้านบนไฟล์)
-  const handleManualStabilityTestClick = async () => {
-    const testNumber = manualStabilityAttempts + 1;
-    setManualStabilityAttempts(testNumber);
-    const candidate = BLE_PRINTER_WRITE_CANDIDATES[3];
-    const payload = buildManualStabilityTestPayload(testNumber);
-    const result = await bleConnectAndWrite(candidate, payload);
-    if (result.ok) {
-      setManualStabilitySuccesses((prev) => prev + 1);
-      alert(`✅ [${candidate.label}] MANUAL TEST #${testNumber} สำเร็จ`);
-    } else {
-      alert(`❌ [${candidate.label}] MANUAL TEST #${testNumber} ล้มเหลว\n\n${result.alertMessage}`);
-    }
-  };
-
-  const handleResetManualStabilityCounter = () => {
-    setManualStabilityAttempts(0);
-    setManualStabilitySuccesses(0);
-  };
 
   const isSingleDay = startDate === endDate;
   // ของที่เพิ่มใหม่ จะถูกบันทึกลงวันที่ล่าสุดของช่วงที่เลือก (ปกติคือวันเดียวกับ endDate ที่กำลังดูอยู่)
@@ -761,139 +474,10 @@ export function StaffExpensesScreen({
     onRangeChange(today, today);
   };
 
-  // [DEBUG/ชั่วคราว] สำรวจ Web Bluetooth API กับเครื่องพิมพ์ thermal ที่มีอยู่
-  // ขั้นตอน: requestDevice -> gatt.connect() -> enumerate service + characteristic ทั้งหมด
-  // ไม่ส่งคำสั่งพิมพ์ใด ๆ แค่ดูว่า characteristic ตัวไหนรองรับ write / writeWithoutResponse
-  const handleTestBluetoothPrinter = async () => {
-    /* eslint-disable @typescript-eslint/no-explicit-any */
-    const bt = (navigator as any).bluetooth;
-    if (!bt || typeof bt.requestDevice !== "function") {
-      alert(
-        "❌ เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth (navigator.bluetooth ไม่มี)\n\n" +
-        "ลองใช้ Chrome บน Android และเปิดผ่าน HTTPS\n" +
-        "(iOS Safari / Chrome บน iOS ไม่รองรับ)"
-      );
-      return;
-    }
-
-    let device: any;
-    try {
-      device = await bt.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: BLE_PRINTER_OPTIONAL_SERVICES,
-      });
-    } catch (err) {
-      const e = err as { name?: string; message?: string };
-      if (e.name === "NotFoundError") {
-        alert("⚠️ ไม่พบอุปกรณ์ หรือผู้ใช้กดยกเลิก dialog\n\n(ถ้า dialog เปิดได้แต่ไม่เห็นเครื่องพิมพ์ = เครื่องพิมพ์อาจเป็น Bluetooth Classic ไม่ใช่ BLE)");
-      } else if (e.name === "SecurityError" || e.name === "NotAllowedError") {
-        alert("❌ ถูกบล็อก (SecurityError/NotAllowedError)\n\nต้องเปิดผ่าน HTTPS และกดปุ่มจาก user gesture\n" + (e.message || ""));
-      } else {
-        alert(`❌ requestDevice ผิดพลาด: ${e.name || "Error"}\n\n${e.message || String(err)}`);
-      }
-      return;
-    }
-
-    const propList = (c: any): string => {
-      const p = c.properties || {};
-      return (
-        [
-          p.read && "read",
-          p.write && "write",
-          p.writeWithoutResponse && "writeWithoutResponse",
-          p.notify && "notify",
-          p.indicate && "indicate",
-          p.broadcast && "broadcast",
-          p.authenticatedSignedWrites && "authenticatedSignedWrites",
-          p.reliableWrite && "reliableWrite",
-        ].filter(Boolean).join(", ") || "(ไม่มี property)"
-      );
-    };
-
-    try {
-      if (!device.gatt) {
-        alert("❌ device.gatt ไม่มี — อุปกรณ์นี้อาจไม่รองรับ GATT");
-        return;
-      }
-      const server = await device.gatt.connect();
-
-      let services: any[] = [];
-      try {
-        services = await server.getPrimaryServices();
-      } catch (svcErr) {
-        const e = svcErr as { message?: string };
-        alert(
-          "⚠️ connect() สำเร็จ แต่ getPrimaryServices() ไม่คืน service เลย\n\n" +
-          `(${e.message || svcErr})\n\n` +
-          "เครื่องพิมพ์อาจใช้ service UUID ที่ไม่ได้อยู่ใน optionalServices\n" +
-          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร BLE_PRINTER_OPTIONAL_SERVICES"
-        );
-        try { server.disconnect(); } catch { /* noop */ }
-        return;
-      }
-
-      if (!services.length) {
-        alert(
-          "⚠️ ไม่พบ service ใด ๆ ที่ตรงกับ optionalServices ที่ระบุไว้\n\n" +
-          "ลองเพิ่ม UUID อื่นเข้าไปในตัวแปร BLE_PRINTER_OPTIONAL_SERVICES ในโค้ด\n" +
-          "(อาจต้องหา UUID จาก spec ของเครื่องพิมพ์รุ่นนั้น หรือใช้แอป nRF Connect สแกนดู)"
-        );
-        try { server.disconnect(); } catch { /* noop */ }
-        return;
-      }
-
-      const lines: string[] = [];
-      lines.push(`อุปกรณ์: ${device.name || "(ไม่มีชื่อ)"}  [${device.id || "?"}]`);
-      lines.push(`พบ ${services.length} service`);
-      lines.push("");
-
-      const writable: string[] = [];
-
-      for (const svc of services) {
-        lines.push(`▸ SERVICE ${svc.uuid}${svc.isPrimary ? " (primary)" : ""}`);
-        let chars: any[] = [];
-        try {
-          chars = await svc.getCharacteristics();
-        } catch (cErr) {
-          lines.push(`    (อ่าน characteristics ไม่ได้: ${(cErr as { message?: string }).message || cErr})`);
-          continue;
-        }
-        if (!chars.length) {
-          lines.push("    (ไม่มี characteristic)");
-          continue;
-        }
-        for (const c of chars) {
-          const props = propList(c);
-          lines.push(`    • ${c.uuid}`);
-          lines.push(`        [${props}]`);
-          if (c.properties && (c.properties.write || c.properties.writeWithoutResponse)) {
-            writable.push(`service ${svc.uuid}\n  characteristic ${c.uuid}\n  (${props})`);
-          }
-        }
-      }
-
-      lines.push("");
-      if (writable.length) {
-        lines.push("✅ characteristic ที่เขียนได้ (ใช้ส่งข้อมูลพิมพ์):");
-        lines.push(...writable);
-      } else {
-        lines.push("⚠️ ไม่พบ characteristic ที่รองรับ write/writeWithoutResponse");
-      }
-
-      try { server.disconnect(); } catch { /* noop */ }
-
-      const report = lines.join("\n");
-      console.log("[BLE printer enumeration]\n" + report);
-      alert(report);
-    } catch (err) {
-      const e = err as { name?: string; message?: string };
-      alert(
-        `❌ เชื่อมต่อ GATT ไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(err)}\n\n` +
-        "ลอง: เปิดเครื่องพิมพ์ค้างไว้ / ปิด-เปิด Bluetooth มือถือ / ลองกดปุ่มใหม่อีกครั้ง\n" +
-        "ถ้ายังไม่ได้ อาจต้องเพิ่ม service UUID อื่นใน BLE_PRINTER_OPTIONAL_SERVICES"
-      );
-    }
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+  // [DEBUG/ชั่วคราว] ปุ่ม "ไล่หาขนาดภาพสูงสุดที่พิมพ์ได้" ใช้ candidate ตัวที่ 4 ถาวร (สรุปแล้วจากการ
+  // ทดสอบก่อนหน้าทั้งหมด) — ดูฟังก์ชัน sendImageSizeThresholdSweepToCandidate ด้านบนไฟล์
+  const handleImageSizeSweep = () => {
+    sendImageSizeThresholdSweepToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3]);
   };
 
   return (
@@ -926,99 +510,16 @@ export function StaffExpensesScreen({
           </button>
         </div>
 
-        {/* [DEBUG/ชั่วคราว] ทดสอบว่าเครื่องพิมพ์ Bluetooth รองรับ Web Bluetooth (BLE) หรือไม่ — ลบทิ้งได้เมื่อประเมินเสร็จ */}
+        {/* [DEBUG/ชั่วคราว] BLE printer — ทดสอบสรุปคำถามก่อนหน้าจบหมดแล้ว (characteristic ตัวที่ 4 คือช่อง
+            พิมพ์จริง, ack-write + disconnect ชัดเจนช่วยความเสถียรได้) เหลือคำถามเดียว: ขนาดภาพสูงสุดที่
+            พิมพ์ได้จริงคือเท่าไหร่ — ก่อนไปต่อเรื่อง integrate ภาพ bitmap เข้า flow ปริ้นจริง */}
         <button
-          onClick={handleTestBluetoothPrinter}
-          className="w-full mb-2 h-10 rounded-xl text-xs font-medium bg-muted border border-dashed border-border text-muted-foreground hover:border-primary/40 transition-all"
+          onClick={handleImageSizeSweep}
+          className="w-full mb-5 h-10 rounded-xl text-xs font-medium bg-muted border border-dashed border-border text-muted-foreground hover:border-primary/40 transition-all"
+          title={`ไล่ทดสอบภาพ checkerboard 8px กว้าง ขนาด ${IMAGE_SIZE_SWEEP_TARGETS_BYTES.join(", ")} byte ในใบเดียว`}
         >
-          🔧 ทดสอบ Bluetooth เครื่องพิมพ์ (สำรวจ service/characteristic)
+          📏 ไล่หาขนาดภาพสูงสุดที่พิมพ์ได้
         </button>
-
-        {/* [DEBUG/ชั่วคราว] ยิง ESC/POS test payload ไปทีละ characteristic เพื่อหาว่าตัวไหนคือช่องพิมพ์จริง */}
-        <div className="mb-5 p-2 rounded-xl border border-dashed border-border bg-muted/50">
-          <p className="text-[11px] text-muted-foreground mb-1.5 px-0.5">
-            ทดสอบยิงพิมพ์ทีละ characteristic (ต้องเลือกอุปกรณ์ใหม่ทุกครั้ง):
-          </p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {BLE_PRINTER_WRITE_CANDIDATES.map((candidate, idx) => (
-              <button
-                key={candidate.charUuid}
-                onClick={() => sendEscPosTestToCandidate(candidate, idx + 1)}
-                className="h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all px-1 truncate"
-                title={`service ${candidate.serviceUuid}\ncharacteristic ${candidate.charUuid}\n(${candidate.properties})`}
-              >
-                🖨️ {candidate.label} ({candidate.charUuid.slice(0, 8)}…)
-              </button>
-            ))}
-          </div>
-          {/* [DEBUG/ชั่วคราว] ทดสอบพิมพ์ภาษาไทย — ใช้ตัวที่ 4 ที่ยืนยันแล้วว่าพิมพ์ได้จริง */}
-          <button
-            onClick={() => sendThaiTestToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title={`service ${BLE_PRINTER_WRITE_CANDIDATES[3].serviceUuid}\ncharacteristic ${BLE_PRINTER_WRITE_CANDIDATES[3].charUuid}`}
-          >
-            🇹🇭 ทดสอบพิมพ์ภาษาไทย (ใช้ตัวที่ 4)
-          </button>
-          {/* [DEBUG/ชั่วคราว] ไล่ลอง Thai codepage 9 ค่า — หา Thai character table ที่ฝังในเฟิร์มแวร์ */}
-          <button
-            onClick={() => sendThaiCodepageSweepToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title={`ไล่ลอง codepage: ${THAI_CODEPAGE_SWEEP_VALUES.join(", ")}`}
-          >
-            🔤 ไล่ลอง Thai codepage (ใช้ตัวที่ 4)
-          </button>
-          {/* [DEBUG/ชั่วคราว] bitmap Thai printing POC — วัดความถูกต้อง + เวลาที่ใช้ */}
-          <button
-            onClick={() => sendThaiBitmapPocToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title="วาดข้อความไทยเป็น canvas 384px แปลงเป็น 1-bit raster แล้วส่งด้วย ESC/POS GS v 0"
-          >
-            🖼️ ทดสอบพิมพ์ไทยแบบ bitmap + วัดเวลา
-          </button>
-          {/* [DEBUG/ชั่วคราว] วินิจฉัย #1 — ภาพ 8x8 ทึบดำ ตัดตัวแปรเรื่องขนาด/การคำนวณออก */}
-          <button
-            onClick={() => sendTinyDebugBitmapToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title="ภาพ 8x8 พิกเซลทึบดำล้วน ผ่าน GS v 0 (header 8 byte + data 8 byte)"
-          >
-            🔲 ทดสอบ bitmap เล็กมาก (debug)
-          </button>
-          {/* [DEBUG/ชั่วคราว] วินิจฉัย #2 — ภาพเดิมแต่สลับ byte order ของ header เป็น big-endian */}
-          <button
-            onClick={() => sendBitmapByteOrderSwapToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title="ภาพเดียวกับปุ่ม bitmap เดิม แต่ header GS v 0 สลับเป็น xH,xL,yH,yL (big-endian)"
-          >
-            🔁 ทดสอบ bitmap สลับ byte order
-          </button>
-          {/* [DEBUG/ชั่วคราว] วินิจฉัย #3 — ใช้ ESC * (bit image mode) แทน GS v 0 */}
-          <button
-            onClick={() => sendEscStarBitImageToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title="ภาพเดียวกัน ส่งด้วยคำสั่งเก่ากว่า ESC * (column-major) แบ่ง 5 แถบ ๆ ละ 8 พิกเซล"
-          >
-            🧾 ทดสอบพิมพ์ภาพด้วย ESC *
-          </button>
-          {/* [DEBUG/ชั่วคราว] เช็คความเสถียร — ต้องกดเองทีละครั้ง (user gesture ใหม่ทุกคลิก) ห้ามวนลูป
-              อัตโนมัติ เพราะ requestDevice() ต้องมาจาก user gesture โดยตรงเท่านั้น (ดูคอมเมนต์ที่
-              buildManualStabilityTestPayload ด้านบนไฟล์ — เคยลองวนลูปแล้วพังด้วย SecurityError) */}
-          <div className="mt-1.5 flex items-stretch gap-1.5">
-            <button
-              onClick={handleManualStabilityTestClick}
-              className="flex-1 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all px-2"
-              title="กดเองทีละครั้ง (user gesture ใหม่ทุกคลิก) — requestDevice+connect+write+disconnect ต่อครั้ง"
-            >
-              🔁 ทดสอบพิมพ์ซ้ำ (กดเอง) — กดไปแล้ว {manualStabilityAttempts} ครั้ง สำเร็จ {manualStabilitySuccesses} ครั้ง
-            </button>
-            <button
-              onClick={handleResetManualStabilityCounter}
-              className="h-9 px-2 rounded-lg text-[11px] font-medium bg-muted border border-border text-muted-foreground hover:border-primary/40 transition-all whitespace-nowrap flex-shrink-0"
-              title="รีเซ็ตตัวนับกลับเป็น 0"
-            >
-              รีเซ็ตตัวนับ
-            </button>
-          </div>
-        </div>
 
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
         <div className="bg-card border border-border rounded-xl p-3 mb-6">
