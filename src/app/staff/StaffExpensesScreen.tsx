@@ -90,10 +90,24 @@ function buildThaiCodepageSweepPayload(): Uint8Array {
 // ระหว่าง chunk กัน buffer ฝั่งเครื่องพิมพ์ล้น
 const BLE_WRITE_CHUNK_SIZE = 20;
 const BLE_WRITE_CHUNK_DELAY_MS = 20;
+// หน่วงเวลาให้ GATT connection stable ก่อนเริ่มเขียนข้อมูลจริง — เผื่อเป็นสาเหตุที่ connect() คืนสำเร็จ
+// แล้วแต่เครื่องพิมพ์ยังไม่พร้อมรับข้อมูลจริง ๆ (ทำให้ chunk แรก ๆ หายเงียบ ๆ แบบสุ่ม)
+const BLE_CONNECTION_STABILIZE_MS = 250;
+// จำนวนครั้งที่ retry ต่อ chunk ถ้าเขียนไม่สำเร็จ (ลอง 1 ครั้งซ้ำก่อนค่อยยอมแพ้จริง) + delay ก่อน retry
+const BLE_CHUNK_MAX_RETRIES = 1;
+const BLE_CHUNK_RETRY_DELAY_MS = 100;
+
+const bleDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ผลลัพธ์กลางของ requestDevice + connect + getPrimaryService + getCharacteristic + เขียนข้อมูลแบบ chunk
 // ไม่ alert เอง แค่คืนผลลัพธ์ ให้ผู้เรียกตัดสินใจว่าจะแสดงผลยังไง (ปุ่มทั่วไป vs. ปุ่มที่ต้องรายงาน
 // timing/ขนาดข้อมูลเพิ่มเติมแบบปุ่ม bitmap POC)
+//
+// [แก้ความไม่เสถียร] เดิมใช้ writeValueWithoutResponse ล้วน ซึ่งไม่รอ ack จากเครื่องพิมพ์จริง ทำให้
+// บาง chunk หายเงียบ ๆ แบบสุ่มโดยโค้ดไม่รู้ตัว (resolve ทันทีที่ browser ส่งออกไป ไม่ได้รอเครื่องพิมพ์
+// ยืนยันรับ) ตอนนี้เปลี่ยนมาใช้ writeValue (มี response/ack) เป็นค่าเริ่มต้นถ้า characteristic รองรับ
+// (เช็คจาก properties.write) — ช้ากว่าเดิมเพราะต้อง await ack ทีละ chunk แต่เชื่อถือได้กว่ามาก ถ้า
+// characteristic มีแค่ writeWithoutResponse จริง ๆ (ไม่รองรับ write) ก็ fallback กลับไปแบบเดิม
 async function bleConnectAndWrite(
   candidate: BlePrinterCandidate,
   payload: Uint8Array
@@ -124,6 +138,10 @@ async function bleConnectAndWrite(
     }
     const server = await device.gatt.connect();
 
+    // ให้ connection stable ก่อนเริ่มคุยจริง (ดู BLE_CONNECTION_STABILIZE_MS ด้านบน)
+    console.log(`[BLE][${candidate.label}] connected, stabilizing ${BLE_CONNECTION_STABILIZE_MS}ms before writing...`);
+    await bleDelay(BLE_CONNECTION_STABILIZE_MS);
+
     let service: any;
     try {
       service = await server.getPrimaryService(candidate.serviceUuid);
@@ -148,25 +166,48 @@ async function bleConnectAndWrite(
     }
 
     const props = characteristic.properties || {};
+    // ให้ความสำคัญกับ writeValue (มี response/ack) ก่อนเสมอถ้า characteristic รองรับจริง
+    const useWithResponse = !!props.write && typeof characteristic.writeValue === "function";
     const useWithoutResponse = !!props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function";
-    const useWithResponse = typeof characteristic.writeValue === "function";
-    if (!useWithoutResponse && !useWithResponse) {
+    if (!useWithResponse && !useWithoutResponse) {
       try { server.disconnect(); } catch { /* noop */ }
       return { ok: false, alertMessage: `❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก` };
     }
+    console.log(
+      `[BLE][${candidate.label}] write mode: ${useWithResponse ? "writeValue (with response/ack)" : "writeValueWithoutResponse (fallback — ไม่มี property write)"}`
+    );
 
+    const totalChunks = Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE);
     try {
-      for (let i = 0; i < payload.length; i += BLE_WRITE_CHUNK_SIZE) {
+      for (let i = 0, chunkIndex = 1; i < payload.length; i += BLE_WRITE_CHUNK_SIZE, chunkIndex++) {
         const chunk = payload.slice(i, i + BLE_WRITE_CHUNK_SIZE);
-        if (useWithoutResponse) {
-          await characteristic.writeValueWithoutResponse(chunk);
-        } else {
-          await characteristic.writeValue(chunk);
+
+        // ส่งแต่ละ chunk พร้อม retry อัตโนมัติ 1 ครั้งถ้าพัง (ดู BLE_CHUNK_MAX_RETRIES ด้านบน)
+        for (let attempt = 0; ; attempt++) {
+          try {
+            console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} (${chunk.length} bytes)${attempt > 0 ? ` — retry #${attempt}` : ""}...`);
+            if (useWithResponse) {
+              await characteristic.writeValue(chunk);
+            } else {
+              await characteristic.writeValueWithoutResponse(chunk);
+            }
+            console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} OK`);
+            break;
+          } catch (chunkErr) {
+            if (attempt >= BLE_CHUNK_MAX_RETRIES) {
+              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} FAILED after ${attempt + 1} attempt(s):`, chunkErr);
+              throw chunkErr;
+            }
+            console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} failed, retrying in ${BLE_CHUNK_RETRY_DELAY_MS}ms...`, chunkErr);
+            await bleDelay(BLE_CHUNK_RETRY_DELAY_MS);
+          }
         }
+
         if (i + BLE_WRITE_CHUNK_SIZE < payload.length) {
-          await new Promise((resolve) => setTimeout(resolve, BLE_WRITE_CHUNK_DELAY_MS));
+          await bleDelay(BLE_WRITE_CHUNK_DELAY_MS);
         }
       }
+      console.log(`[BLE][${candidate.label}] all ${totalChunks} chunks sent successfully`);
       return { ok: true };
     } catch (writeErr) {
       const e = writeErr as { name?: string; message?: string };
