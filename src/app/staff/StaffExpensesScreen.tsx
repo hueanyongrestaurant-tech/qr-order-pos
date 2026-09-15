@@ -328,6 +328,165 @@ async function sendThaiBitmapPocToCandidate(candidate: BlePrinterCandidate): Pro
   );
 }
 
+// ข้อความตัวอย่างเดียวกันที่ใช้ทดสอบ bitmap ทุกปุ่ม (เดิม + วินิจฉัยใหม่) เพื่อเทียบผลกันตรง ๆ
+const BITMAP_TEST_SAMPLE_TEXT = "รวมทั้งหมด ยอดรวมทั้งสิ้น 1,234 บาท";
+
+// [DEBUG/ชั่วคราว] ปุ่มวินิจฉัย #1 "ทดสอบ bitmap เล็กมาก" — ผลทดสอบ bitmap ภาษาไทย (384x40, 1932 byte)
+// ส่งสำเร็จไม่มี error แต่เครื่องไม่พิมพ์อะไรออกมาเลย เลยสงสัยว่า (ก) byte order ของ header ผิด หรือ
+// (ข) เฟิร์มแวร์ไม่รองรับคำสั่ง GS v 0 เลย — ปุ่มนี้ตัดตัวแปรเรื่องขนาด/การคำนวณออกให้เหลือน้อยที่สุด:
+// ภาพ 8x8 พิกเซลทึบดำล้วน (1 byte/แถว x 8 แถว = header 8 byte + data 8 byte) ถ้าตัวเล็กขนาดนี้ยังไม่ออก
+// แปลว่าปัญหาไม่ใช่ byte order/ขนาด แต่เครื่องไม่รองรับคำสั่งนี้เลย
+async function sendTinyDebugBitmapToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  const bytesPerRow = 1; // 8px กว้าง / 8 = 1 byte ต่อแถว
+  const heightPx = 8;
+  const raster = new Uint8Array(bytesPerRow * heightPx).fill(0xff); // ทึบดำล้วนทั้งภาพ
+  const xL = bytesPerRow & 0xff;
+  const xH = (bytesPerRow >> 8) & 0xff;
+  const yL = heightPx & 0xff;
+  const yH = (heightPx >> 8) & 0xff;
+  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]); // GS v 0 เดิมทุกอย่าง
+  const init = new Uint8Array([0x1b, 0x40]);
+  const feed = new Uint8Array([0x0a, 0x0a]);
+
+  const payload = new Uint8Array(init.length + rasterHeader.length + raster.length + feed.length);
+  let offset = 0;
+  payload.set(init, offset); offset += init.length;
+  payload.set(rasterHeader, offset); offset += rasterHeader.length;
+  payload.set(raster, offset); offset += raster.length;
+  payload.set(feed, offset);
+
+  await connectAndWriteToCandidate(
+    candidate,
+    payload,
+    "ภาพทดสอบ: สี่เหลี่ยมทึบดำ 8x8 พิกเซล (header 8 byte + data 8 byte ผ่านคำสั่ง GS v 0 เดิมทุกอย่าง)\n\n" +
+    "• เห็นจุด/แถบดำเล็ก ๆ ออกมา → เครื่องรองรับ GS v 0 จริง ปัญหาของภาพใหญ่ก่อนหน้าอยู่ที่การคำนวณขนาด/byte order\n" +
+    "• ไม่มีอะไรออกมาเลยเหมือนเดิม → เฟิร์มแวร์นี้ไม่รองรับคำสั่ง GS v 0 เลย ต้องลองปุ่ม \"ESC *\" แทน"
+  );
+}
+
+// [DEBUG/ชั่วคราว] ปุ่มวินิจฉัย #2 "ทดสอบ bitmap สลับ byte order" — ภาพเดียวกับปุ่ม bitmap ภาษาไทยเดิม
+// (384x40) แต่สลับ header ของ GS v 0 จาก little-endian (xL,xH,yL,yH ตามสเปกมาตรฐาน) เป็น big-endian
+// (xH ก่อน xL, yH ก่อน yL) เผื่อเฟิร์มแวร์รุ่นนี้ตีความ byte order กลับด้าน
+async function sendBitmapByteOrderSwapToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  const { raster, heightPx, bytesPerRow } = renderThaiTextTo1BitRaster(BITMAP_TEST_SAMPLE_TEXT);
+  const xL = bytesPerRow & 0xff;
+  const xH = (bytesPerRow >> 8) & 0xff;
+  const yL = heightPx & 0xff;
+  const yH = (heightPx >> 8) & 0xff;
+  // สลับเป็น big-endian ตามโจทย์ (ปุ่ม bitmap เดิมใช้ xL,xH,yL,yH ปกติ)
+  const rasterHeader = new Uint8Array([0x1d, 0x76, 0x30, 0x00, xH, xL, yH, yL]);
+  const init = new Uint8Array([0x1b, 0x40]);
+  const feed = new Uint8Array([0x0a, 0x0a]);
+
+  const payload = new Uint8Array(init.length + rasterHeader.length + raster.length + feed.length);
+  let offset = 0;
+  payload.set(init, offset); offset += init.length;
+  payload.set(rasterHeader, offset); offset += rasterHeader.length;
+  payload.set(raster, offset); offset += raster.length;
+  payload.set(feed, offset);
+
+  await connectAndWriteToCandidate(
+    candidate,
+    payload,
+    `ภาพเดียวกับปุ่ม bitmap เดิม (384x40 "${BITMAP_TEST_SAMPLE_TEXT}") แต่สลับ byte order ของ header เป็น big-endian\n\n` +
+    "• ออกมาถูกต้อง → เฟิร์มแวร์นี้อ่าน xL/xH, yL/yH สลับด้าน แก้โค้ดจริงให้ใช้ big-endian แทน\n" +
+    "• ยังไม่ออกเหมือนเดิม → ปัญหาไม่ได้อยู่ที่ byte order (ลองปุ่ม ESC * ต่อ)"
+  );
+}
+
+// แปลงข้อความไทยเป็น bit matrix (แถว x คอลัมน์ แบบ boolean ยังไม่แพ็ค) ไว้ใช้ประกอบข้อมูลแบบ column-major
+// สำหรับ ESC * ซึ่งต่างจาก GS v 0 ที่เก็บแบบ row-major — วาดด้วยพารามิเตอร์เดียวกับ renderThaiTextTo1BitRaster
+function renderThaiTextBitMatrix(text: string, widthPx: number, heightPx: number): boolean[][] {
+  const canvas = document.createElement("canvas");
+  canvas.width = widthPx;
+  canvas.height = heightPx;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("สร้าง canvas 2d context ไม่สำเร็จ");
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, widthPx, heightPx);
+  ctx.fillStyle = "#000000";
+  ctx.font = "28px Tahoma, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 4, heightPx / 2);
+
+  const imgData = ctx.getImageData(0, 0, widthPx, heightPx).data;
+  const matrix: boolean[][] = [];
+  for (let y = 0; y < heightPx; y++) {
+    const row: boolean[] = [];
+    for (let x = 0; x < widthPx; x++) {
+      const i = (y * widthPx + x) * 4;
+      const lum = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+      row.push(lum < 128);
+    }
+    matrix.push(row);
+  }
+  return matrix;
+}
+
+// ประกอบคำสั่ง ESC * (bit image mode, m=0 = 8-dot single density) แทน GS v 0 — ข้อมูลเก็บแบบ column-major
+// (1 byte = 8 พิกเซลแนวตั้ง 1 คอลัมน์ ไม่ใช่ row-major แบบ raster) ภาพสูง 40px ต้องแบ่งเป็น 5 แถบ ๆ ละ
+// 8 แถว ส่ง ESC * ซ้ำทุกแถบ คั่นด้วย "ESC J 8" (print + feed กระดาษ 8 dot พอดี) กันแถบเหลื่อมกัน/มีช่องว่าง
+function buildEscStarBitImagePayload(text: string): { payload: Uint8Array; widthPx: number; heightPx: number } {
+  const widthPx = 384;
+  const heightPx = 40;
+  const BAND_HEIGHT = 8; // ESC * m=0 พิมพ์ทีละ 8 พิกเซลแนวตั้งต่อ 1 คำสั่ง
+  if (heightPx % BAND_HEIGHT !== 0) {
+    throw new Error(`heightPx (${heightPx}) ต้องหารด้วย ${BAND_HEIGHT} ลงตัว`);
+  }
+  const matrix = renderThaiTextBitMatrix(text, widthPx, heightPx);
+
+  const nL = widthPx & 0xff;
+  const nH = (widthPx >> 8) & 0xff;
+  const parts: Uint8Array[] = [new Uint8Array([0x1b, 0x40])]; // ESC @ = initialize printer ครั้งเดียวตอนเริ่ม
+
+  for (let band = 0; band < heightPx / BAND_HEIGHT; band++) {
+    const bandStart = band * BAND_HEIGHT;
+    const colData = new Uint8Array(widthPx);
+    for (let x = 0; x < widthPx; x++) {
+      let byte = 0;
+      for (let r = 0; r < BAND_HEIGHT; r++) {
+        if (matrix[bandStart + r][x]) byte |= 1 << (7 - r); // MSB = แถวบนสุดของแถบ
+      }
+      colData[x] = byte;
+    }
+    parts.push(new Uint8Array([0x1b, 0x2a, 0x00, nL, nH])); // ESC * m nL nH
+    parts.push(colData);
+    parts.push(new Uint8Array([0x1b, 0x4a, BAND_HEIGHT])); // ESC J 8 = print และ feed กระดาษ 8 dot พอดีกับความสูงแถบ
+  }
+  parts.push(new Uint8Array([0x0a, 0x0a])); // feed ปิดท้ายเพิ่มให้อ่านง่าย
+
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return { payload: out, widthPx, heightPx };
+}
+
+// [DEBUG/ชั่วคราว] ปุ่มวินิจฉัย #3 "ทดสอบพิมพ์ภาพด้วย ESC *" — ใช้คำสั่งเก่ากว่า GS v 0 กับภาพเดียวกัน
+// เผื่อเฟิร์มแวร์รองรับ bit image mode แบบเก่าแต่ไม่รองรับ raster image command แบบใหม่
+async function sendEscStarBitImageToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  let built: { payload: Uint8Array; widthPx: number; heightPx: number };
+  try {
+    built = buildEscStarBitImagePayload(BITMAP_TEST_SAMPLE_TEXT);
+  } catch (err) {
+    alert(`❌ [${candidate.label}] สร้างข้อมูล ESC * ไม่สำเร็จ: ${(err as { message?: string }).message || err}`);
+    return;
+  }
+
+  await connectAndWriteToCandidate(
+    candidate,
+    built.payload,
+    `ใช้คำสั่ง ESC * (bit image mode) แทน GS v 0 กับภาพเดียวกัน (${built.widthPx}x${built.heightPx}) แบ่งเป็น ${built.heightPx / 8} แถบ ๆ ละ 8 พิกเซล\n\n` +
+    "• ออกมา → เฟิร์มแวร์รองรับ ESC * (แต่ไม่รองรับ/ตีความ GS v 0 ต่าง) ควรใช้ ESC * แทนในระบบจริง\n" +
+    "• ยังไม่ออก → เครื่องพิมพ์นี้อาจไม่รองรับการพิมพ์ bitmap ทั้งสองคำสั่งเลย"
+  );
+}
+
 // ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
 
 interface StaffExpensesProps {
@@ -721,6 +880,30 @@ export function StaffExpensesScreen({
             title="วาดข้อความไทยเป็น canvas 384px แปลงเป็น 1-bit raster แล้วส่งด้วย ESC/POS GS v 0"
           >
             🖼️ ทดสอบพิมพ์ไทยแบบ bitmap + วัดเวลา
+          </button>
+          {/* [DEBUG/ชั่วคราว] วินิจฉัย #1 — ภาพ 8x8 ทึบดำ ตัดตัวแปรเรื่องขนาด/การคำนวณออก */}
+          <button
+            onClick={() => sendTinyDebugBitmapToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title="ภาพ 8x8 พิกเซลทึบดำล้วน ผ่าน GS v 0 (header 8 byte + data 8 byte)"
+          >
+            🔲 ทดสอบ bitmap เล็กมาก (debug)
+          </button>
+          {/* [DEBUG/ชั่วคราว] วินิจฉัย #2 — ภาพเดิมแต่สลับ byte order ของ header เป็น big-endian */}
+          <button
+            onClick={() => sendBitmapByteOrderSwapToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title="ภาพเดียวกับปุ่ม bitmap เดิม แต่ header GS v 0 สลับเป็น xH,xL,yH,yL (big-endian)"
+          >
+            🔁 ทดสอบ bitmap สลับ byte order
+          </button>
+          {/* [DEBUG/ชั่วคราว] วินิจฉัย #3 — ใช้ ESC * (bit image mode) แทน GS v 0 */}
+          <button
+            onClick={() => sendEscStarBitImageToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title="ภาพเดียวกัน ส่งด้วยคำสั่งเก่ากว่า ESC * (column-major) แบ่ง 5 แถบ ๆ ละ 8 พิกเซล"
+          >
+            🧾 ทดสอบพิมพ์ภาพด้วย ESC *
           </button>
         </div>
 
