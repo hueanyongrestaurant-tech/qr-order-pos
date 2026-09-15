@@ -137,83 +137,92 @@ async function bleConnectAndWrite(
       return { ok: false, alertMessage: `❌ [${candidate.label}] device.gatt ไม่มี — อุปกรณ์นี้อาจไม่รองรับ GATT` };
     }
     const server = await device.gatt.connect();
+    console.log(`[BLE][${candidate.label}] GATT connected`);
 
-    // ให้ connection stable ก่อนเริ่มคุยจริง (ดู BLE_CONNECTION_STABILIZE_MS ด้านบน)
-    console.log(`[BLE][${candidate.label}] connected, stabilizing ${BLE_CONNECTION_STABILIZE_MS}ms before writing...`);
-    await bleDelay(BLE_CONNECTION_STABILIZE_MS);
-
-    let service: any;
+    // [แก้เครื่องพิมพ์ค้าง] ห่อ "ทุกอย่างหลัง connect() สำเร็จ" ด้วย try/finally เดียว แล้วเรียก
+    // device.gatt.disconnect() ใน finally เสมอ ไม่ว่าจะเขียนข้อมูลสำเร็จ, service/characteristic
+    // หาไม่เจอ, หรือ write พังหลัง retry — กัน connection state ค้างสะสมจนต้องปิดเปิดเครื่องพิมพ์เอง
     try {
-      service = await server.getPrimaryService(candidate.serviceUuid);
-    } catch (svcErr) {
-      const e = svcErr as { message?: string };
-      try { server.disconnect(); } catch { /* noop */ }
-      return {
-        ok: false,
-        alertMessage:
-          `⚠️ [${candidate.label}] ไม่พบ service ${candidate.serviceUuid}\n\n${e.message || svcErr}\n\n` +
-          "ลอง requestDevice ใหม่ หรือเช็คว่า optionalServices ครอบคลุม UUID นี้",
-      };
-    }
+      // ให้ connection stable ก่อนเริ่มคุยจริง (ดู BLE_CONNECTION_STABILIZE_MS ด้านบน)
+      console.log(`[BLE][${candidate.label}] stabilizing ${BLE_CONNECTION_STABILIZE_MS}ms before writing...`);
+      await bleDelay(BLE_CONNECTION_STABILIZE_MS);
 
-    let characteristic: any;
-    try {
-      characteristic = await service.getCharacteristic(candidate.charUuid);
-    } catch (charErr) {
-      const e = charErr as { message?: string };
-      try { server.disconnect(); } catch { /* noop */ }
-      return { ok: false, alertMessage: `⚠️ [${candidate.label}] ไม่พบ characteristic ${candidate.charUuid}\n\n${e.message || charErr}` };
-    }
+      let service: any;
+      try {
+        service = await server.getPrimaryService(candidate.serviceUuid);
+      } catch (svcErr) {
+        const e = svcErr as { message?: string };
+        return {
+          ok: false,
+          alertMessage:
+            `⚠️ [${candidate.label}] ไม่พบ service ${candidate.serviceUuid}\n\n${e.message || svcErr}\n\n` +
+            "ลอง requestDevice ใหม่ หรือเช็คว่า optionalServices ครอบคลุม UUID นี้",
+        };
+      }
 
-    const props = characteristic.properties || {};
-    // ให้ความสำคัญกับ writeValue (มี response/ack) ก่อนเสมอถ้า characteristic รองรับจริง
-    const useWithResponse = !!props.write && typeof characteristic.writeValue === "function";
-    const useWithoutResponse = !!props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function";
-    if (!useWithResponse && !useWithoutResponse) {
-      try { server.disconnect(); } catch { /* noop */ }
-      return { ok: false, alertMessage: `❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก` };
-    }
-    console.log(
-      `[BLE][${candidate.label}] write mode: ${useWithResponse ? "writeValue (with response/ack)" : "writeValueWithoutResponse (fallback — ไม่มี property write)"}`
-    );
+      let characteristic: any;
+      try {
+        characteristic = await service.getCharacteristic(candidate.charUuid);
+      } catch (charErr) {
+        const e = charErr as { message?: string };
+        return { ok: false, alertMessage: `⚠️ [${candidate.label}] ไม่พบ characteristic ${candidate.charUuid}\n\n${e.message || charErr}` };
+      }
 
-    const totalChunks = Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE);
-    try {
-      for (let i = 0, chunkIndex = 1; i < payload.length; i += BLE_WRITE_CHUNK_SIZE, chunkIndex++) {
-        const chunk = payload.slice(i, i + BLE_WRITE_CHUNK_SIZE);
+      const props = characteristic.properties || {};
+      // ให้ความสำคัญกับ writeValue (มี response/ack) ก่อนเสมอถ้า characteristic รองรับจริง
+      const useWithResponse = !!props.write && typeof characteristic.writeValue === "function";
+      const useWithoutResponse = !!props.writeWithoutResponse && typeof characteristic.writeValueWithoutResponse === "function";
+      if (!useWithResponse && !useWithoutResponse) {
+        return { ok: false, alertMessage: `❌ [${candidate.label}] characteristic นี้ไม่มีเมธอด write ให้เรียก` };
+      }
+      console.log(
+        `[BLE][${candidate.label}] write mode: ${useWithResponse ? "writeValue (with response/ack)" : "writeValueWithoutResponse (fallback — ไม่มี property write)"}`
+      );
 
-        // ส่งแต่ละ chunk พร้อม retry อัตโนมัติ 1 ครั้งถ้าพัง (ดู BLE_CHUNK_MAX_RETRIES ด้านบน)
-        for (let attempt = 0; ; attempt++) {
-          try {
-            console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} (${chunk.length} bytes)${attempt > 0 ? ` — retry #${attempt}` : ""}...`);
-            if (useWithResponse) {
-              await characteristic.writeValue(chunk);
-            } else {
-              await characteristic.writeValueWithoutResponse(chunk);
+      const totalChunks = Math.ceil(payload.length / BLE_WRITE_CHUNK_SIZE);
+      try {
+        for (let i = 0, chunkIndex = 1; i < payload.length; i += BLE_WRITE_CHUNK_SIZE, chunkIndex++) {
+          const chunk = payload.slice(i, i + BLE_WRITE_CHUNK_SIZE);
+
+          // ส่งแต่ละ chunk พร้อม retry อัตโนมัติ 1 ครั้งถ้าพัง (ดู BLE_CHUNK_MAX_RETRIES ด้านบน)
+          for (let attempt = 0; ; attempt++) {
+            try {
+              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} (${chunk.length} bytes)${attempt > 0 ? ` — retry #${attempt}` : ""}...`);
+              if (useWithResponse) {
+                await characteristic.writeValue(chunk);
+              } else {
+                await characteristic.writeValueWithoutResponse(chunk);
+              }
+              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} OK`);
+              break;
+            } catch (chunkErr) {
+              if (attempt >= BLE_CHUNK_MAX_RETRIES) {
+                console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} FAILED after ${attempt + 1} attempt(s):`, chunkErr);
+                throw chunkErr;
+              }
+              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} failed, retrying in ${BLE_CHUNK_RETRY_DELAY_MS}ms...`, chunkErr);
+              await bleDelay(BLE_CHUNK_RETRY_DELAY_MS);
             }
-            console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} OK`);
-            break;
-          } catch (chunkErr) {
-            if (attempt >= BLE_CHUNK_MAX_RETRIES) {
-              console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} FAILED after ${attempt + 1} attempt(s):`, chunkErr);
-              throw chunkErr;
-            }
-            console.log(`[BLE][${candidate.label}] chunk ${chunkIndex}/${totalChunks} failed, retrying in ${BLE_CHUNK_RETRY_DELAY_MS}ms...`, chunkErr);
-            await bleDelay(BLE_CHUNK_RETRY_DELAY_MS);
+          }
+
+          if (i + BLE_WRITE_CHUNK_SIZE < payload.length) {
+            await bleDelay(BLE_WRITE_CHUNK_DELAY_MS);
           }
         }
-
-        if (i + BLE_WRITE_CHUNK_SIZE < payload.length) {
-          await bleDelay(BLE_WRITE_CHUNK_DELAY_MS);
-        }
+        console.log(`[BLE][${candidate.label}] all ${totalChunks} chunks sent successfully`);
+        return { ok: true };
+      } catch (writeErr) {
+        const e = writeErr as { name?: string; message?: string };
+        return { ok: false, alertMessage: `❌ [${candidate.label}] เขียนข้อมูลไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(writeErr)}` };
       }
-      console.log(`[BLE][${candidate.label}] all ${totalChunks} chunks sent successfully`);
-      return { ok: true };
-    } catch (writeErr) {
-      const e = writeErr as { name?: string; message?: string };
-      return { ok: false, alertMessage: `❌ [${candidate.label}] เขียนข้อมูลไม่สำเร็จ: ${e.name || "Error"}\n\n${e.message || String(writeErr)}` };
     } finally {
-      try { server.disconnect(); } catch { /* noop */ }
+      // ปิด GATT connection อย่างชัดเจนเสมอ — ไม่ว่า try ด้านบนจะ return สำเร็จหรือ error ระหว่างทาง
+      try {
+        device.gatt.disconnect();
+        console.log(`[BLE][${candidate.label}] device.gatt.disconnect() called — GATT disconnected`);
+      } catch (discErr) {
+        console.log(`[BLE][${candidate.label}] device.gatt.disconnect() threw (อาจหลุดการเชื่อมต่อไปแล้วก่อนหน้า):`, discErr);
+      }
     }
   } catch (err) {
     const e = err as { name?: string; message?: string };
@@ -525,6 +534,55 @@ async function sendEscStarBitImageToCandidate(candidate: BlePrinterCandidate): P
     `ใช้คำสั่ง ESC * (bit image mode) แทน GS v 0 กับภาพเดียวกัน (${built.widthPx}x${built.heightPx}) แบ่งเป็น ${built.heightPx / 8} แถบ ๆ ละ 8 พิกเซล\n\n` +
     "• ออกมา → เฟิร์มแวร์รองรับ ESC * (แต่ไม่รองรับ/ตีความ GS v 0 ต่าง) ควรใช้ ESC * แทนในระบบจริง\n" +
     "• ยังไม่ออก → เครื่องพิมพ์นี้อาจไม่รองรับการพิมพ์ bitmap ทั้งสองคำสั่งเลย"
+  );
+}
+
+// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ซ้ำ 5 ครั้งติดกัน (เช็คความเสถียร)" — จำลองพนักงานกดปุ่มพิมพ์ 5 ครั้ง
+// แยกกัน (ไม่ใช่ยิงรัว ๆ ในการเชื่อมต่อเดียว) แต่ละรอบ requestDevice + connect + write + disconnect
+// ใหม่ทั้งหมดจริง ๆ (bleConnectAndWrite ทำครบทุกขั้นตอนนี้ในตัวเองอยู่แล้วต่อการเรียก 1 ครั้ง) เพื่อดูว่า
+// การ disconnect() ชัดเจนทุกครั้ง (แก้ด้านบน) ทำให้พิมพ์ซ้ำได้เสถียรจริงไหม ไม่ค้างหลังรอบใดรอบหนึ่ง
+const REPEAT_STABILITY_TEST_ROUNDS = 5;
+const REPEAT_STABILITY_TEST_DELAY_MS = 1000; // หน่วงระหว่างรอบ ให้เครื่องพิมพ์มีเวลาตัดกระดาษ/พร้อมรอบถัดไป
+
+function buildRepeatTestPayload(round: number, total: number): Uint8Array {
+  const enc = new TextEncoder();
+  const init = new Uint8Array([0x1b, 0x40]); // ESC @
+  const text = enc.encode(`REPEAT TEST ${round}/${total}\n\n`);
+  const feed = new Uint8Array([0x0a, 0x0a]);
+  const out = new Uint8Array(init.length + text.length + feed.length);
+  let offset = 0;
+  out.set(init, offset); offset += init.length;
+  out.set(text, offset); offset += text.length;
+  out.set(feed, offset);
+  return out;
+}
+
+async function sendRepeatStabilityTestToCandidate(candidate: BlePrinterCandidate): Promise<void> {
+  let successCount = 0;
+  const failures: string[] = [];
+
+  for (let round = 1; round <= REPEAT_STABILITY_TEST_ROUNDS; round++) {
+    console.log(`[BLE][${candidate.label}] repeat stability test — round ${round}/${REPEAT_STABILITY_TEST_ROUNDS} starting (fresh requestDevice+connect+write+disconnect)...`);
+    const payload = buildRepeatTestPayload(round, REPEAT_STABILITY_TEST_ROUNDS);
+    const result = await bleConnectAndWrite(candidate, payload);
+    if (result.ok) {
+      successCount++;
+      console.log(`[BLE][${candidate.label}] round ${round}/${REPEAT_STABILITY_TEST_ROUNDS} OK`);
+    } else {
+      failures.push(`รอบ ${round}: ${result.alertMessage}`);
+      console.log(`[BLE][${candidate.label}] round ${round}/${REPEAT_STABILITY_TEST_ROUNDS} FAILED: ${result.alertMessage}`);
+    }
+    if (round < REPEAT_STABILITY_TEST_ROUNDS) {
+      await bleDelay(REPEAT_STABILITY_TEST_DELAY_MS);
+    }
+  }
+
+  alert(
+    `📋 [${candidate.label}] ทดสอบพิมพ์ซ้ำ ${REPEAT_STABILITY_TEST_ROUNDS} ครั้งติดกันเสร็จแล้ว\n\n` +
+    `สำเร็จ ${successCount}/${REPEAT_STABILITY_TEST_ROUNDS} รอบ\n\n` +
+    (failures.length
+      ? `รอบที่ล้มเหลว:\n${failures.join("\n\n")}`
+      : "ทุกรอบส่งสำเร็จไม่มี error — เช็คกระดาษว่ามีข้อความ \"REPEAT TEST 1/5\" ถึง \"5/5\" ครบทุกรอบไหม และเครื่องพิมพ์ยังใช้งานได้ปกติไม่ค้าง")
   );
 }
 
@@ -945,6 +1003,14 @@ export function StaffExpensesScreen({
             title="ภาพเดียวกัน ส่งด้วยคำสั่งเก่ากว่า ESC * (column-major) แบ่ง 5 แถบ ๆ ละ 8 พิกเซล"
           >
             🧾 ทดสอบพิมพ์ภาพด้วย ESC *
+          </button>
+          {/* [DEBUG/ชั่วคราว] เช็คความเสถียร — พิมพ์ซ้ำ 5 ครั้งติดกัน แต่ละครั้ง connect/disconnect ใหม่ */}
+          <button
+            onClick={() => sendRepeatStabilityTestToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
+            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
+            title="วนพิมพ์ข้อความสั้น ๆ 5 รอบ แต่ละรอบ requestDevice+connect+write+disconnect ใหม่ทั้งหมด หน่วง 1 วิ/รอบ"
+          >
+            🔁 ทดสอบพิมพ์ซ้ำ 5 ครั้งติดกัน (เช็คความเสถียร)
           </button>
         </div>
 
