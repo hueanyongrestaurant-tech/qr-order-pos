@@ -537,17 +537,16 @@ async function sendEscStarBitImageToCandidate(candidate: BlePrinterCandidate): P
   );
 }
 
-// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ซ้ำ 5 ครั้งติดกัน (เช็คความเสถียร)" — จำลองพนักงานกดปุ่มพิมพ์ 5 ครั้ง
-// แยกกัน (ไม่ใช่ยิงรัว ๆ ในการเชื่อมต่อเดียว) แต่ละรอบ requestDevice + connect + write + disconnect
-// ใหม่ทั้งหมดจริง ๆ (bleConnectAndWrite ทำครบทุกขั้นตอนนี้ในตัวเองอยู่แล้วต่อการเรียก 1 ครั้ง) เพื่อดูว่า
-// การ disconnect() ชัดเจนทุกครั้ง (แก้ด้านบน) ทำให้พิมพ์ซ้ำได้เสถียรจริงไหม ไม่ค้างหลังรอบใดรอบหนึ่ง
-const REPEAT_STABILITY_TEST_ROUNDS = 5;
-const REPEAT_STABILITY_TEST_DELAY_MS = 1000; // หน่วงระหว่างรอบ ให้เครื่องพิมพ์มีเวลาตัดกระดาษ/พร้อมรอบถัดไป
-
-function buildRepeatTestPayload(round: number, total: number): Uint8Array {
+// [DEBUG/ชั่วคราว] ปุ่ม "ทดสอบพิมพ์ซ้ำ (กดเอง)" — เดิมเคยลองวนลูป requestDevice() 5 ครั้งในโค้ดเดียวกัน
+// (คั่นด้วย delay) แต่พังตั้งแต่รอบ 2 ด้วย SecurityError "Must be handling a user gesture" เพราะ
+// requestDevice() ต้องถูกเรียกจาก user gesture โดยตรงเท่านั้น — แม้ลูปจะเริ่มจากปุ่มที่กดจริง แต่
+// user activation หมดอายุไปแล้วหลัง await delay ทำให้ browser บล็อกการเรียกครั้งถัดไปในลูปเดียวกัน
+// วิธีที่ถูกต้อง: ให้ผู้ใช้กดปุ่มเองจริงแยกทีละครั้ง (แต่ละคลิกคือ user gesture ใหม่ที่ browser ยอมรับ)
+// ฟังก์ชันนี้จึงทำแค่ 1 รอบต่อการเรียก 1 ครั้ง ส่วน state นับจำนวนครั้ง/สำเร็จอยู่ในตัว component ด้านล่าง
+function buildManualStabilityTestPayload(testNumber: number): Uint8Array {
   const enc = new TextEncoder();
   const init = new Uint8Array([0x1b, 0x40]); // ESC @
-  const text = enc.encode(`REPEAT TEST ${round}/${total}\n\n`);
+  const text = enc.encode(`MANUAL TEST #${testNumber}\n\n`);
   const feed = new Uint8Array([0x0a, 0x0a]);
   const out = new Uint8Array(init.length + text.length + feed.length);
   let offset = 0;
@@ -555,35 +554,6 @@ function buildRepeatTestPayload(round: number, total: number): Uint8Array {
   out.set(text, offset); offset += text.length;
   out.set(feed, offset);
   return out;
-}
-
-async function sendRepeatStabilityTestToCandidate(candidate: BlePrinterCandidate): Promise<void> {
-  let successCount = 0;
-  const failures: string[] = [];
-
-  for (let round = 1; round <= REPEAT_STABILITY_TEST_ROUNDS; round++) {
-    console.log(`[BLE][${candidate.label}] repeat stability test — round ${round}/${REPEAT_STABILITY_TEST_ROUNDS} starting (fresh requestDevice+connect+write+disconnect)...`);
-    const payload = buildRepeatTestPayload(round, REPEAT_STABILITY_TEST_ROUNDS);
-    const result = await bleConnectAndWrite(candidate, payload);
-    if (result.ok) {
-      successCount++;
-      console.log(`[BLE][${candidate.label}] round ${round}/${REPEAT_STABILITY_TEST_ROUNDS} OK`);
-    } else {
-      failures.push(`รอบ ${round}: ${result.alertMessage}`);
-      console.log(`[BLE][${candidate.label}] round ${round}/${REPEAT_STABILITY_TEST_ROUNDS} FAILED: ${result.alertMessage}`);
-    }
-    if (round < REPEAT_STABILITY_TEST_ROUNDS) {
-      await bleDelay(REPEAT_STABILITY_TEST_DELAY_MS);
-    }
-  }
-
-  alert(
-    `📋 [${candidate.label}] ทดสอบพิมพ์ซ้ำ ${REPEAT_STABILITY_TEST_ROUNDS} ครั้งติดกันเสร็จแล้ว\n\n` +
-    `สำเร็จ ${successCount}/${REPEAT_STABILITY_TEST_ROUNDS} รอบ\n\n` +
-    (failures.length
-      ? `รอบที่ล้มเหลว:\n${failures.join("\n\n")}`
-      : "ทุกรอบส่งสำเร็จไม่มี error — เช็คกระดาษว่ามีข้อความ \"REPEAT TEST 1/5\" ถึง \"5/5\" ครบทุกรอบไหม และเครื่องพิมพ์ยังใช้งานได้ปกติไม่ค้าง")
-  );
 }
 
 // ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
@@ -627,6 +597,31 @@ export function StaffExpensesScreen({
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   // เก็บรูปที่ capture ล่าสุดไว้ ให้ผู้ใช้กดปุ่ม "ดาวน์โหลด" ซ้ำได้เองทุกเมื่อ
   const [lastImage, setLastImage] = useState<{ dataUrl: string; fileName: string } | null>(null);
+
+  // [DEBUG/ชั่วคราว] ตัวนับปุ่ม "ทดสอบพิมพ์ซ้ำ (กดเอง)" — นับสะสมไปเรื่อย ๆ ไม่รีเซ็ตเองระหว่างทาง
+  const [manualStabilityAttempts, setManualStabilityAttempts] = useState(0);
+  const [manualStabilitySuccesses, setManualStabilitySuccesses] = useState(0);
+
+  // ทุกคลิกคือ user gesture ใหม่ที่ browser ยอมรับให้เรียก requestDevice() ได้ — ทำแค่ 1 รอบต่อคลิก
+  // (ดูเหตุผลเต็ม ๆ ที่คอมเมนต์เหนือ buildManualStabilityTestPayload ด้านบนไฟล์)
+  const handleManualStabilityTestClick = async () => {
+    const testNumber = manualStabilityAttempts + 1;
+    setManualStabilityAttempts(testNumber);
+    const candidate = BLE_PRINTER_WRITE_CANDIDATES[3];
+    const payload = buildManualStabilityTestPayload(testNumber);
+    const result = await bleConnectAndWrite(candidate, payload);
+    if (result.ok) {
+      setManualStabilitySuccesses((prev) => prev + 1);
+      alert(`✅ [${candidate.label}] MANUAL TEST #${testNumber} สำเร็จ`);
+    } else {
+      alert(`❌ [${candidate.label}] MANUAL TEST #${testNumber} ล้มเหลว\n\n${result.alertMessage}`);
+    }
+  };
+
+  const handleResetManualStabilityCounter = () => {
+    setManualStabilityAttempts(0);
+    setManualStabilitySuccesses(0);
+  };
 
   const isSingleDay = startDate === endDate;
   // ของที่เพิ่มใหม่ จะถูกบันทึกลงวันที่ล่าสุดของช่วงที่เลือก (ปกติคือวันเดียวกับ endDate ที่กำลังดูอยู่)
@@ -1004,14 +999,25 @@ export function StaffExpensesScreen({
           >
             🧾 ทดสอบพิมพ์ภาพด้วย ESC *
           </button>
-          {/* [DEBUG/ชั่วคราว] เช็คความเสถียร — พิมพ์ซ้ำ 5 ครั้งติดกัน แต่ละครั้ง connect/disconnect ใหม่ */}
-          <button
-            onClick={() => sendRepeatStabilityTestToCandidate(BLE_PRINTER_WRITE_CANDIDATES[3])}
-            className="w-full mt-1.5 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all"
-            title="วนพิมพ์ข้อความสั้น ๆ 5 รอบ แต่ละรอบ requestDevice+connect+write+disconnect ใหม่ทั้งหมด หน่วง 1 วิ/รอบ"
-          >
-            🔁 ทดสอบพิมพ์ซ้ำ 5 ครั้งติดกัน (เช็คความเสถียร)
-          </button>
+          {/* [DEBUG/ชั่วคราว] เช็คความเสถียร — ต้องกดเองทีละครั้ง (user gesture ใหม่ทุกคลิก) ห้ามวนลูป
+              อัตโนมัติ เพราะ requestDevice() ต้องมาจาก user gesture โดยตรงเท่านั้น (ดูคอมเมนต์ที่
+              buildManualStabilityTestPayload ด้านบนไฟล์ — เคยลองวนลูปแล้วพังด้วย SecurityError) */}
+          <div className="mt-1.5 flex items-stretch gap-1.5">
+            <button
+              onClick={handleManualStabilityTestClick}
+              className="flex-1 h-9 rounded-lg text-[11px] font-medium bg-card border border-border text-foreground hover:border-primary/40 transition-all px-2"
+              title="กดเองทีละครั้ง (user gesture ใหม่ทุกคลิก) — requestDevice+connect+write+disconnect ต่อครั้ง"
+            >
+              🔁 ทดสอบพิมพ์ซ้ำ (กดเอง) — กดไปแล้ว {manualStabilityAttempts} ครั้ง สำเร็จ {manualStabilitySuccesses} ครั้ง
+            </button>
+            <button
+              onClick={handleResetManualStabilityCounter}
+              className="h-9 px-2 rounded-lg text-[11px] font-medium bg-muted border border-border text-muted-foreground hover:border-primary/40 transition-all whitespace-nowrap flex-shrink-0"
+              title="รีเซ็ตตัวนับกลับเป็น 0"
+            >
+              รีเซ็ตตัวนับ
+            </button>
+          </div>
         </div>
 
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
