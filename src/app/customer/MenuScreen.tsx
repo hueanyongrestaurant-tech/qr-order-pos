@@ -4,6 +4,7 @@ import type { Category, CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
 import { cartTotal, resolvePhoto } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
+import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 function OnboardingModal({ lang, onClose }: { lang: Language; onClose: () => void }) {
   const steps =
@@ -192,7 +193,7 @@ export function MenuScreen({
               >
                 {item.photo && (
                   <div className="aspect-[4/3] relative bg-muted overflow-hidden">
-                    <img
+                    <ImageWithFallback
                       src={resolvePhoto(item.photo, 400, 300)}
                       alt={lang === "en" ? item.name.en : item.name.th}
                       loading="lazy"

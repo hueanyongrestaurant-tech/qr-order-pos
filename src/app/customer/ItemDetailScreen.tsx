@@ -4,6 +4,7 @@ import type { CartItem, Language, MeatChoice, MenuItem, Portion, SpiceLevel } fr
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
 import { itemPrice, resolvePhoto, uid } from "../utils";
+import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 // ─── Item Detail Screen ───────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ export function ItemDetailScreen({
       {/* Hero photo */}
       <div className="relative h-[42vh] bg-muted flex-shrink-0 overflow-hidden">
         {item.photo && (
-          <img
+          <ImageWithFallback
             src={resolvePhoto(item.photo, 400, 300)}
             alt={lang === "en" ? item.name.en : item.name.th}
             className="w-full h-full object-cover"

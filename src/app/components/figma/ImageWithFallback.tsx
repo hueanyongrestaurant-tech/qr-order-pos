@@ -5,9 +5,14 @@ const ERROR_IMG_SRC =
 
 export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   const [didError, setDidError] = useState(false)
+  const [isLoaded, setIsLoaded] = useState(false)
 
   const handleError = () => {
     setDidError(true)
+  }
+
+  const handleLoad = () => {
+    setIsLoaded(true)
   }
 
   const { src, alt, style, className, ...rest } = props
@@ -22,6 +27,20 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
       </div>
     </div>
   ) : (
-    <img src={src} alt={alt} className={className} style={style} {...rest} onError={handleError} />
+    // wrapper รับ className/style เดิมที่ผู้เรียกส่งมา (ขนาด/aspect ratio/มุมโค้งของ
+    // caller ยังคุมผ่าน className นี้เหมือนเดิมทุกประการ) ส่วน skeleton + รูปจริงข้างใน
+    // ใช้ absolute inset-0 ซ้อนเต็มพื้นที่ wrapper เพื่อโชว์ skeleton ระหว่างรอโหลด
+    // แล้ว fade รูปจริงเข้ามาทับตอนโหลดเสร็จ โดยไม่ทำให้ขนาดกล่องรูปเปลี่ยนไปจากเดิม
+    <div className={`relative ${className ?? ''}`} style={style}>
+      {!isLoaded && <div className="absolute inset-0 bg-muted animate-pulse" />}
+      <img
+        src={src}
+        alt={alt}
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+        {...rest}
+        onLoad={handleLoad}
+        onError={handleError}
+      />
+    </div>
   )
 }

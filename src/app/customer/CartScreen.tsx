@@ -4,6 +4,7 @@ import { ADD_ONS } from "../constants";
 import { T } from "../translations";
 import { cartItemTotal, cartTotal, resolvePhoto } from "../utils";
 import { LannaBorder } from "../shared";
+import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 // ─── Cart Screen ──────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
                 <div className="flex gap-3">
                   {ci.item.photo && (
                     <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted flex-shrink-0">
-                      <img
+                      <ImageWithFallback
                         src={resolvePhoto(ci.item.photo, 128, 128)}
                         alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
                         className="w-full h-full object-cover"
