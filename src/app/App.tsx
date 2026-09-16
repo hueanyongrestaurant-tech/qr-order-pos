@@ -92,27 +92,19 @@ import {
 } from "./utils";
 import { LannaBorder, RestaurantLogo } from "./shared";
 
-// ─── Staff bundle (lazy) ───────────────────────────────────────────────────────
-// import() เดียวเท่านั้นในทั้งไฟล์ — โหลด staff/index.ts (รวมทุก component ฝั่ง
-// พนักงานไว้ในที่เดียว) เป็น JS chunk แยกต่างหาก ลูกค้าที่สแกน QR (ไม่เคย render
-// component ฝั่งพนักงานเลย) จะไม่โหลด chunk นี้เลย ส่วนฝั่งพนักงานโหลดครั้งแรกตอน
-// เข้าหน้าไหนก็ได้ที่เป็น staff- แล้ว cache ไว้ (promise เดียวกัน) ไม่โหลดซ้ำตอนสลับแท็บ
-let staffModulePromise: Promise<typeof import("./staff/index")> | null = null;
-function loadStaffModule() {
-  if (!staffModulePromise) staffModulePromise = import("./staff/index");
-  return staffModulePromise;
-}
-
-const StaffLoginScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffLoginScreen })));
-const StaffOrdersScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffOrdersScreen })));
-const StaffPaymentScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffPaymentScreen })));
-const StaffMenuScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffMenuScreen })));
-const StaffManualTableScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffManualTableScreen })));
-const StaffMenuEditScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffMenuEditScreen })));
-const StaffHistoryScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffHistoryScreen })));
-const StaffExpensesScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffExpensesScreen })));
-const StaffStatsScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffStatsScreen })));
-const StaffActivityScreen = lazy(() => loadStaffModule().then((m) => ({ default: m.StaffActivityScreen })));
+// ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
+// แต่ละ Staff*Screen import ตรงจากไฟล์ตัวเอง แยกเป็นคนละ JS chunk ต่อหน้าจอ
+// ลูกค้าที่สแกน QR ไม่โหลด chunk เหล่านี้เลย ส่วนฝั่งพนักงานโหลดเฉพาะแท็บที่กดจริง
+const StaffLoginScreen = lazy(() => import("./staff/StaffLoginScreen").then((m) => ({ default: m.StaffLoginScreen })));
+const StaffOrdersScreen = lazy(() => import("./staff/StaffOrdersScreen").then((m) => ({ default: m.StaffOrdersScreen })));
+const StaffPaymentScreen = lazy(() => import("./staff/StaffPaymentScreen").then((m) => ({ default: m.StaffPaymentScreen })));
+const StaffMenuScreen = lazy(() => import("./staff/StaffMenuScreen").then((m) => ({ default: m.StaffMenuScreen })));
+const StaffManualTableScreen = lazy(() => import("./staff/StaffManualTableScreen").then((m) => ({ default: m.StaffManualTableScreen })));
+const StaffMenuEditScreen = lazy(() => import("./staff/StaffMenuEditScreen").then((m) => ({ default: m.StaffMenuEditScreen })));
+const StaffHistoryScreen = lazy(() => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen })));
+const StaffExpensesScreen = lazy(() => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen })));
+const StaffStatsScreen = lazy(() => import("./staff/StaffStatsScreen").then((m) => ({ default: m.StaffStatsScreen })));
+const StaffActivityScreen = lazy(() => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen })));
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
