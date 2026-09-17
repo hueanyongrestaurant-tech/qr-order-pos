@@ -32,7 +32,7 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
     // ใช้ absolute inset-0 ซ้อนเต็มพื้นที่ wrapper เพื่อโชว์ skeleton ระหว่างรอโหลด
     // แล้ว fade รูปจริงเข้ามาทับตอนโหลดเสร็จ โดยไม่ทำให้ขนาดกล่องรูปเปลี่ยนไปจากเดิม
     <div className={`relative overflow-hidden ${className ?? ''}`} style={style}>
-      {!isLoaded && <div className="absolute inset-0 bg-muted animate-pulse" />}
+      <div className={`absolute inset-0 bg-muted animate-pulse ${isLoaded ? 'hidden' : ''}`} />
       <img
         src={src}
         alt={alt}
