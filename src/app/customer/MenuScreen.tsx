@@ -192,7 +192,7 @@ export function MenuScreen({
                 className="bg-card rounded-2xl overflow-hidden text-left border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-150 active:scale-95 group"
               >
                 {item.photo && (
-                  <div className="aspect-[4/3] relative bg-muted overflow-hidden rounded-t-2xl">
+                  <div className="aspect-[4/3] relative bg-muted overflow-hidden">
                     <ImageWithFallback
                       src={resolvePhoto(item.photo, 400, 300)}
                       alt={lang === "en" ? item.name.en : item.name.th}
