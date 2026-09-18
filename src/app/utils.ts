@@ -19,7 +19,8 @@ export function itemPrice(
   portion: Portion | undefined,
   addEgg: boolean,
   addOns: string[],
-  customSelections: Record<string, string[]> = {}
+  customSelections: Record<string, string[]> = {},
+  customAddOnPrice = 0 // ราคารายการที่พนักงานพิมพ์เพิ่มเอง (ไม่มีในเมนู) — staff-only
 ): number {
   let price = item.price;
   if (meat && item.meatPriceDeltas?.[meat]) price += item.meatPriceDeltas[meat]!;
@@ -35,12 +36,13 @@ export function itemPrice(
       if (selected.includes(choice.id)) price += choice.priceDelta;
     });
   });
+  price += customAddOnPrice;
   return price;
 }
 
 // ราคาต่อหน่วยของรายการ (ยังไม่คูณจำนวน) — ใช้ตอนต้องบันทึกมูลค่าที่ถูก void ลง log
 export function cartItemUnitPrice(ci: CartItem): number {
-  return itemPrice(ci.item, ci.meat, ci.portion, ci.addEgg, ci.addOns, ci.customSelections);
+  return itemPrice(ci.item, ci.meat, ci.portion, ci.addEgg, ci.addOns, ci.customSelections, ci.customAddOnPrice || 0);
 }
 
 export function cartItemTotal(ci: CartItem): number {
@@ -82,6 +84,8 @@ export function cartItemKey(ci: CartItem): string {
     addOns: [...(ci.addOns || [])].sort(),
     customSelections: ci.customSelections,
     note: ci.note || "",
+    customNote: ci.customNote || "",
+    customAddOnPrice: ci.customAddOnPrice || 0,
   });
 }
 

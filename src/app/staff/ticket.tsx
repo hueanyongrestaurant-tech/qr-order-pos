@@ -185,6 +185,11 @@ export function ReceiptTicket({ data, lang }: { data: ReceiptData; lang: Languag
               {formatOptionDetails(ci, lang)}
             </div>
           )}
+          {ci.customNote && (
+            <div style={{ fontSize: "12px", marginLeft: "14px" }}>
+              + {ci.customNote} (+{t.thb}{ci.customAddOnPrice || 0})
+            </div>
+          )}
         </div>
       ))}
       <div style={{ borderTop: "1px dashed #000", margin: "6px 0" }} />
@@ -245,6 +250,11 @@ export function KitchenTicket({ order, lang }: { order: Order; lang: Language })
           {ci.note && (
             <div style={{ fontSize: "18px", marginLeft: "20px", fontStyle: "italic" }}>
               "{ci.note}"
+            </div>
+          )}
+          {ci.customNote && (
+            <div style={{ fontSize: "18px", marginLeft: "20px", fontWeight: 700 }}>
+              + {ci.customNote} (+{T[lang].thb}{ci.customAddOnPrice || 0})
             </div>
           )}
         </div>

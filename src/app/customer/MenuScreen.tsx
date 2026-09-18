@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, Flame, ShoppingCart, Star, Utensils, X } from "lucide-react";
+import { ChevronLeft, Flame, Plus, ShoppingCart, Star, Utensils, X } from "lucide-react";
 import type { Category, CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
 import { cartTotal, resolvePhoto } from "../utils";
@@ -92,11 +92,12 @@ interface MenuProps {
   categories: Category[];
   isBusy?: boolean;
   onExit?: () => void;
+  onAddOn?: () => void; // จุดเข้าไปหน้า "Add-on" (staff-only) — ส่งมาเฉพาะตอน staff ลงออเดอร์แทนลูกค้าเท่านั้น ห้ามส่งให้ฝั่งลูกค้าเด็ดขาด
 }
 
 export function MenuScreen({
   lang, tableNumber, cart, menuItems, categories, activeCategory,
-  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit
+  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit, onAddOn
 }: MenuProps) {
   const t = T[lang];
   const [busyDismissed, setBusyDismissed] = useState(false);
@@ -169,6 +170,15 @@ export function MenuScreen({
                 {cat.signature && <span className="text-[9px] opacity-70">★</span>}
               </button>
             ))}
+            {onAddOn && (
+              <button
+                onClick={onAddOn}
+                className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium border-2 border-dashed border-[#D07E35] text-[#D07E35] hover:bg-[#D07E35]/10 transition-all"
+              >
+                <Plus size={13} />
+                <span>Add-on</span>
+              </button>
+            )}
           </div>
         </header>
 

@@ -17,11 +17,12 @@ interface ItemDetailProps {
   onAddToCart: (ci: CartItem) => void;
   onViewCart: () => void;
   onLangToggle: () => void;
-  isTakeaway?: boolean
+  isTakeaway?: boolean;
+  isStaffMode?: boolean; // true เฉพาะตอนพนักงานพิมพ์ออเดอร์แทนลูกค้า (manual order) — คุม custom add-on ห้ามให้ลูกค้าเห็น
 }
 
 export function ItemDetailScreen({
-  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway,
+  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode,
 }: ItemDetailProps) {
   const t = T[lang];
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
@@ -32,11 +33,14 @@ export function ItemDetailScreen({
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   const [customSelections, setCustomSelections] = useState<Record<string, string[]>>({});
   const [note, setNote] = useState("");
+  const [customNote, setCustomNote] = useState("");
+  const [customAddOnPrice, setCustomAddOnPrice] = useState(0);
   const [quantity, setQuantity] = useState(1);
 
   const meats: MeatChoice[] = (["pork", "chicken", "beef"] as MeatChoice[]).filter((m) => !item.disabledMeats?.includes(m));
   const spiceLevels: SpiceLevel[] = [0, 1, 2, 3];
-  const totalPrice = itemPrice(item, meat, portion, addEgg, selectedAddOns, customSelections) * quantity;
+  const effectiveCustomAddOnPrice = isStaffMode ? customAddOnPrice : 0;
+  const totalPrice = itemPrice(item, meat, portion, addEgg, selectedAddOns, customSelections, effectiveCustomAddOnPrice) * quantity;
 
   const toggleCustomChoice = (groupId: string, choiceId: string, type: "single" | "multi") => {
     setCustomSelections((prev) => {
@@ -70,6 +74,9 @@ export function ItemDetailScreen({
       addOns: selectedAddOns,
       customSelections,
       note: note.trim() || undefined,
+      // customNote/customAddOnPrice เป็นของ staff mode เท่านั้น — กันไว้อีกชั้นไม่ให้หลุดไปแม้ isStaffMode จะ false
+      customNote: isStaffMode ? (customNote.trim() || undefined) : undefined,
+      customAddOnPrice: isStaffMode && customAddOnPrice > 0 ? customAddOnPrice : undefined,
       quantity,
     });
   };
@@ -315,6 +322,35 @@ export function ItemDetailScreen({
             </div>
           </div>
         ))}
+
+        {/* Custom add-on — staff-only: พนักงานพิมพ์รายการ/ราคาที่ลูกค้าขอเพิ่มเอง (ไม่มีในเมนู) ต่อท้ายรายการนี้
+            ห้ามแสดงตอนลูกค้าสแกนสั่งเอง (isStaffMode จะเป็น false เสมอในเคสนั้น) */}
+        {isStaffMode && (
+          <div className="mb-5 p-4 rounded-2xl border-2 border-dashed border-amber-400 bg-amber-50/50 dark:bg-amber-950/20">
+            <h3 className="font-semibold text-foreground mb-3 text-sm">
+              {lang === "en" ? "Custom Add-on" : "Add-on"}
+            </h3>
+            <input
+              type="text"
+              value={customNote}
+              onChange={(e) => setCustomNote(e.target.value)}
+              placeholder={lang === "en" ? "Item name" : "ชื่อรายการ"}
+              className="w-full bg-card border-2 border-border rounded-xl px-4 py-2.5 text-sm text-foreground outline-none focus:border-primary transition-all mb-2"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground text-sm">{t.thb}</span>
+              <input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={customAddOnPrice === 0 ? "" : customAddOnPrice}
+                onChange={(e) => setCustomAddOnPrice(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="0"
+                className="flex-1 bg-card border-2 border-border rounded-xl px-4 py-2.5 text-sm text-foreground outline-none focus:border-primary transition-all"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Note */}
         <div className="mb-5">

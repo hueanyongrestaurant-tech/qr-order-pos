@@ -18,7 +18,8 @@ export type View =
   | "staff-activity"
   | "staff-manual-table"
   | "staff-manual-menu"
-  | "staff-manual-cart";;
+  | "staff-manual-cart"
+  | "staff-manual-addon";
 
 export type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses" | "activity";
 export type MeatChoice = "pork" | "chicken" | "beef";
@@ -93,6 +94,8 @@ export interface CartItem {
   portion?: Portion;
   customSelections?: Record<string, string[]>;
   note?: string;
+  customNote?: string;         // ชื่อรายการที่พนักงานพิมพ์เพิ่มเอง (ไม่มีในเมนู) — staff-only, ห้ามให้ลูกค้าเห็น/กรอก
+  customAddOnPrice?: number;   // ราคาของ customNote ที่พนักงานกรอกเอง — staff-only เช่นกัน
   spiceLevel: SpiceLevel;
   addEgg: boolean;
   addOns: string[];

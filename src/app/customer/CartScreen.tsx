@@ -121,6 +121,11 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
                     {ci.note && (
                       <div className="text-muted-foreground text-xs mt-0.5 italic">"{ci.note}"</div>
                     )}
+                    {ci.customNote && (
+                      <div className="text-primary text-xs mt-0.5 font-medium">
+                        + {ci.customNote} (+{t.thb}{ci.customAddOnPrice || 0})
+                      </div>
+                    )}
                     <div className="flex items-center justify-between mt-2.5">
                       <div className="flex items-center gap-2">
                         <button

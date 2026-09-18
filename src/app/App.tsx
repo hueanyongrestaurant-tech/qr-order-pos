@@ -105,6 +105,7 @@ const StaffOrdersScreen = lazy(() => import("./staff/StaffOrdersScreen").then((m
 const StaffPaymentScreen = lazy(() => import("./staff/StaffPaymentScreen").then((m) => ({ default: m.StaffPaymentScreen })));
 const StaffMenuScreen = lazy(() => import("./staff/StaffMenuScreen").then((m) => ({ default: m.StaffMenuScreen })));
 const StaffManualTableScreen = lazy(() => import("./staff/StaffManualTableScreen").then((m) => ({ default: m.StaffManualTableScreen })));
+const StaffAddOnScreen = lazy(() => import("./staff/StaffAddOnScreen").then((m) => ({ default: m.StaffAddOnScreen })));
 const StaffMenuEditScreen = lazy(() => import("./staff/StaffMenuEditScreen").then((m) => ({ default: m.StaffMenuEditScreen })));
 const StaffHistoryScreen = lazy(() => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen })));
 const StaffExpensesScreen = lazy(() => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen })));
@@ -728,6 +729,30 @@ export default function App() {
     setView("staff-manual-menu");
   };
 
+  // เพิ่มรายการ "Add-on" ที่ไม่ผูกกับเมนูไหนเลย (ค่าถุง, ค่าห่อพิเศษ ฯลฯ) — staff-only, เข้าถึงได้จาก
+  // staff-manual-menu เท่านั้น ไม่มีการสร้าง document ใน categories/menuItems เลย สร้างแค่ MenuItem
+  // สังเคราะห์ (synthetic) ที่มี id ใหม่ทุกครั้งไว้ในหน่วยความจำ เพื่อให้เข้ากับ CartItem/itemPrice/
+  // cartItemKey เดิมได้โดยไม่ต้องแก้โครงสร้าง — categoryId ตั้งเป็นค่าที่ไม่มีหมวดหมู่จริงตรงกัน
+  // จึงไม่มีทางไปโผล่ในกริดเมนูของใครเลย
+  const handleManualAddOn = (name: string, price: number) => {
+    const syntheticItem: MenuItem = {
+      id: `addon-${uid()}`,
+      categoryId: "__addon__",
+      name: { en: name, th: name },
+      description: { en: "", th: "" },
+      price,
+      photo: "",
+    };
+    handleManualAddToCart({
+      cartId: uid(),
+      item: syntheticItem,
+      spiceLevel: 0,
+      addEgg: false,
+      addOns: [],
+      quantity: 1,
+    });
+  };
+
   const handleManualUpdateQty = (cartId: string, qty: number) => {
     if (qty <= 0) {
       setManualCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
@@ -1257,6 +1282,7 @@ export default function App() {
           onViewCart={() => setView(isManualFlow ? "staff-manual-cart" : "cart")}
           onLangToggle={toggleLang}
           isTakeaway={isManualFlow && manualIsTakeaway}
+          isStaffMode={isManualFlow}
         />
       ) : null;
       break;
@@ -1484,6 +1510,20 @@ export default function App() {
             onLangToggle={toggleLang}
             isTakeaway={manualIsTakeaway}
             onExit={handleExitManualOrder}
+            onAddOn={() => setView("staff-manual-addon")}
+          />
+        </Suspense>
+      );
+      break;
+
+    case "staff-manual-addon":
+      content = (
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffAddOnScreen
+            lang={lang}
+            onAdd={handleManualAddOn}
+            onCancel={() => setView("staff-manual-menu")}
+            onLangToggle={toggleLang}
           />
         </Suspense>
       );

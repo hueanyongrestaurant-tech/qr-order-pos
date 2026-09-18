@@ -225,6 +225,11 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
                             {ci.note && (
                               <div className="text-amber-700 text-xs mt-0.5 italic">"{ci.note}"</div>
                             )}
+                            {ci.customNote && (
+                              <div className="text-primary text-xs mt-0.5 font-medium">
+                                + {ci.customNote} (+{t.thb}{ci.customAddOnPrice || 0})
+                              </div>
+                            )}
                             {ci.voided && (
                               <div className="text-destructive text-xs mt-0.5">
                                 {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
