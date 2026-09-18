@@ -154,12 +154,16 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
           const last = new Date(`${endDate}T00:00:00`);
           while (cursor <= last) {
             const key = formatDateInput(cursor);
+            const dateMonth = cursor.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
+              day: "numeric",
+              month: "short",
+            });
+            const weekday = cursor.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
+              weekday: "short",
+            });
             days.push({
               date: key,
-              label: cursor.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
-                day: "numeric",
-                month: "short",
-              }),
+              label: `${dateMonth} (${weekday})`,
               revenue: revByDay[key] || 0,
             });
             cursor.setDate(cursor.getDate() + 1);
