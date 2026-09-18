@@ -62,6 +62,7 @@ export const T = {
     activityTitle: "Activity Log",
     voidItemReasonTitle: "Reason for removing this item",
     cancelOrderReasonTitle: "Reason for cancelling this order",
+    adjustItemReasonTitle: "Reason for adjusting quantity",
     voidedLabel: "Cancelled",
     voidCancelSummary: "Voided / cancelled today",
     filterAllActions: "All actions",
@@ -69,6 +70,7 @@ export const T = {
     actionLabels: {
       void_item: "Item removed",
       cancel_order: "Order cancelled",
+      adjust_item_qty: "Quantity adjusted",
       menu_item_added: "Menu item added",
       menu_item_edited: "Menu item edited",
       menu_item_deleted: "Menu item deleted",
@@ -148,6 +150,7 @@ export const T = {
     activityTitle: "ประวัติกิจกรรม",
     voidItemReasonTitle: "เหตุผลที่ลบรายการนี้",
     cancelOrderReasonTitle: "เหตุผลที่ยกเลิกออเดอร์นี้",
+    adjustItemReasonTitle: "เหตุผลในการปรับจำนวน",
     voidedLabel: "ยกเลิกแล้ว",
     voidCancelSummary: "ยอดที่ถูกยกเลิก/void วันนี้",
     filterAllActions: "ทุกประเภท",
@@ -155,6 +158,7 @@ export const T = {
     actionLabels: {
       void_item: "ลบรายการ",
       cancel_order: "ยกเลิกออเดอร์",
+      adjust_item_qty: "ปรับจำนวนสินค้า",
       menu_item_added: "เพิ่มเมนู",
       menu_item_edited: "แก้ไขเมนู",
       menu_item_deleted: "ลบเมนู",

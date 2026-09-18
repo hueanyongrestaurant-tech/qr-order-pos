@@ -976,16 +976,31 @@ export default function App() {
   };
 
   // ปรับจำนวนรายการตอนชำระเงิน — ลดจนเหลือ 0 = void (ต้องกรอกเหตุผลก่อน) แทนการลบออกจาก array
+  // ปรับ +1/-1 แบบไม่ถึง void ก็ต้องกรอกเหตุผลก่อนเช่นกัน แล้วบันทึก log adjust_item_qty
   const handleAdjustPaymentItem = async (contributingOrders: Order[], key: string, delta: number) => {
     for (const order of contributingOrders) {
       const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
       if (!target) continue;
       const newQty = target.quantity + delta;
       if (newQty > 0) {
-        const newItems = order.items.map((ci) =>
-          ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
-        );
-        await updateDoc(doc(db, "orders", order.id), { items: newItems });
+        const oldQty = target.quantity;
+        askReason(T[lang].adjustItemReasonTitle, (reason) => {
+          void (async () => {
+            const newItems = order.items.map((ci) =>
+              ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
+            );
+            await updateDoc(doc(db, "orders", order.id), { items: newItems });
+            await logActivity({
+              action: "adjust_item_qty",
+              orderId: order.id,
+              tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
+              itemName: target.item.name.th,
+              amount: delta * cartItemUnitPrice(target),
+              reason,
+              details: { oldQty, newQty },
+            });
+          })();
+        });
       } else {
         askReason(T[lang].voidItemReasonTitle, (reason) => {
           void voidOrderItem(order, target.cartId, reason);
@@ -1002,10 +1017,24 @@ export default function App() {
     if (!target) return;
     const newQty = target.quantity + delta;
     if (newQty > 0) {
-      const newItems = order.items.map((ci) =>
-        ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
-      );
-      await updateDoc(doc(db, "orders", orderId), { items: newItems });
+      const oldQty = target.quantity;
+      askReason(T[lang].adjustItemReasonTitle, (reason) => {
+        void (async () => {
+          const newItems = order.items.map((ci) =>
+            ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
+          );
+          await updateDoc(doc(db, "orders", orderId), { items: newItems });
+          await logActivity({
+            action: "adjust_item_qty",
+            orderId,
+            tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
+            itemName: target.item.name.th,
+            amount: delta * cartItemUnitPrice(target),
+            reason,
+            details: { oldQty, newQty },
+          });
+        })();
+      });
     } else {
       askReason(T[lang].voidItemReasonTitle, (reason) => {
         void voidOrderItem(order, target.cartId, reason);

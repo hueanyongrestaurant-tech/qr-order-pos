@@ -91,7 +91,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
 
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
-    "all", "void_item", "cancel_order",
+    "all", "void_item", "cancel_order", "adjust_item_qty",
     "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted",
   ];
 
@@ -171,7 +171,10 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   {l.tableNumber && <span>{lang === "en" ? "Table/Ref" : "โต๊ะ/อ้างอิง"}: {l.tableNumber}</span>}
                   {l.itemName && <span className="text-foreground">{l.itemName}</span>}
                   {typeof l.amount === "number" && (
-                    <span className="font-semibold text-foreground">{t.thb}{l.amount}</span>
+                    <span className="font-semibold text-foreground">
+                      {l.amount < 0 ? "-" : l.action === "adjust_item_qty" ? "+" : ""}
+                      {t.thb}{Math.abs(l.amount)}
+                    </span>
                   )}
                 </div>
 
@@ -184,6 +187,12 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                 {l.action === "menu_item_edited" && l.details && (
                   <div className="mt-1 text-xs text-muted-foreground">
                     {t.thb}{l.details.oldPrice} → {t.thb}{l.details.newPrice}
+                  </div>
+                )}
+
+                {l.action === "adjust_item_qty" && l.details && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {l.details.oldQty} → {l.details.newQty} {lang === "en" ? "pcs" : "ชิ้น"}
                   </div>
                 )}
 

@@ -46,6 +46,7 @@ export type PaymentMethod = "cash" | "transfer";
 export type ActivityAction =
   | "void_item"
   | "cancel_order"
+  | "adjust_item_qty"
   | "menu_item_added"
   | "menu_item_edited"
   | "menu_item_deleted"
