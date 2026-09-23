@@ -200,6 +200,14 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   </div>
                 )}
 
+                {/* ยอดบิลก่อน/หลังปรับ — มีเฉพาะ log ที่เกิดจากหน้าชำระเงิน (log เก่าไม่มี field นี้) */}
+                {typeof l.details?.billTotalBefore === "number" && typeof l.details?.billTotalAfter === "number" && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {lang === "en" ? "Bill" : "ยอดบิล"}: {t.thb}{l.details.billTotalBefore} →{" "}
+                    <span className="font-semibold text-foreground">{t.thb}{l.details.billTotalAfter}</span>
+                  </div>
+                )}
+
                 {l.details?.paymentMethod && (
                   <div className="mt-1 text-xs text-muted-foreground">
                     {l.details.paymentMethod === "cash"

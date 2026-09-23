@@ -895,7 +895,9 @@ export default function App() {
 
   // mark 1 รายการใน order เป็น voided — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array)
   // + ตัดรูปทิ้ง + เขียน log void_item ถ้าทุกรายการถูก void หมด เปลี่ยน status เป็น "cancelled" (ไม่ลบ doc)
-  const voidOrderItem = async (order: Order, cartId: string, reason: string) => {
+  // billTotalBefore: ส่งมาเฉพาะตอน void จากหน้าชำระเงิน — ยอดบิลที่พนักงานเห็นบนการ์ดก่อนกด
+  // (โต๊ะ = รวมทุกออเดอร์ของโต๊ะ) ใช้บันทึก "ยอดเดิม → ยอดใหม่" ลง log
+  const voidOrderItem = async (order: Order, cartId: string, reason: string, billTotalBefore?: number) => {
     const target = order.items.find((ci) => ci.cartId === cartId);
     if (!target || target.voided) return;
     const amount = cartItemUnitPrice(target) * target.quantity;
@@ -912,6 +914,9 @@ export default function App() {
       itemName: target.item.name.th,
       amount,
       reason,
+      ...(billTotalBefore !== undefined
+        ? { details: { billTotalBefore, billTotalAfter: billTotalBefore - amount } }
+        : {}),
     });
     await addVoidReason(reason);
     await updateDoc(doc(db, "orders", order.id), {
@@ -987,6 +992,8 @@ export default function App() {
   // ปรับจำนวนรายการตอนชำระเงิน — ลดจนเหลือ 0 = void (ต้องกรอกเหตุผลก่อน) แทนการลบออกจาก array
   // ปรับ +1/-1 แบบไม่ถึง void ก็ต้องกรอกเหตุผลก่อนเช่นกัน แล้วบันทึก log adjust_item_qty
   const handleAdjustPaymentItem = async (contributingOrders: Order[], key: string, delta: number) => {
+    // ยอดบิลของทั้งโต๊ะ (ตรงกับตัวเลขบนการ์ดหน้าชำระเงิน) ณ ตอนกด
+    const billTotalBefore = contributingOrders.reduce((s, o) => s + orderTotal(o), 0);
     for (const order of contributingOrders) {
       const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
       if (!target) continue;
@@ -999,20 +1006,21 @@ export default function App() {
               ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
             );
             await updateDoc(doc(db, "orders", order.id), { items: newItems });
+            const amount = delta * cartItemUnitPrice(target);
             await logActivity({
               action: "adjust_item_qty",
               orderId: order.id,
               tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
               itemName: target.item.name.th,
-              amount: delta * cartItemUnitPrice(target),
+              amount,
               reason,
-              details: { oldQty, newQty },
+              details: { oldQty, newQty, billTotalBefore, billTotalAfter: billTotalBefore + amount },
             });
           })();
         });
       } else {
         askReason(T[lang].voidItemReasonTitle, (reason) => {
-          void voidOrderItem(order, target.cartId, reason);
+          void voidOrderItem(order, target.cartId, reason, billTotalBefore);
         });
       }
       return;
@@ -1025,6 +1033,7 @@ export default function App() {
     const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
     if (!target) return;
     const newQty = target.quantity + delta;
+    const billTotalBefore = orderTotal(order);
     if (newQty > 0) {
       const oldQty = target.quantity;
       askReason(T[lang].adjustItemReasonTitle, (reason) => {
@@ -1033,20 +1042,21 @@ export default function App() {
             ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
           );
           await updateDoc(doc(db, "orders", orderId), { items: newItems });
+          const amount = delta * cartItemUnitPrice(target);
           await logActivity({
             action: "adjust_item_qty",
             orderId,
             tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
             itemName: target.item.name.th,
-            amount: delta * cartItemUnitPrice(target),
+            amount,
             reason,
-            details: { oldQty, newQty },
+            details: { oldQty, newQty, billTotalBefore, billTotalAfter: billTotalBefore + amount },
           });
         })();
       });
     } else {
       askReason(T[lang].voidItemReasonTitle, (reason) => {
-        void voidOrderItem(order, target.cartId, reason);
+        void voidOrderItem(order, target.cartId, reason, billTotalBefore);
       });
     }
   };
