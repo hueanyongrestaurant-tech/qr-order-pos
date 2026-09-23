@@ -6,71 +6,6 @@ import { cartTotal, resolvePhoto } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
-function OnboardingModal({ lang, onClose }: { lang: Language; onClose: () => void }) {
-  const steps =
-    lang === "en"
-      ? [
-        "Pick dishes from the menu",
-        "Add them to your cart and confirm",
-        "Wait at your table, we'll bring the food",
-        "Pay at the counter when you're done",
-      ]
-      : [
-        "เลือกเมนูที่อยากทาน",
-        "ใส่ตะกร้า แล้วกดยืนยันสั่ง",
-        "รออาหารที่โต๊ะได้เลย",
-        "ทานเสร็จแล้วจ่ายเงินที่เคาน์เตอร์",
-      ];
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center px-6"
-      onClick={onClose}
-    >
-      <div
-        className="bg-card rounded-3xl p-6 max-w-sm w-full border border-border shadow-2xl relative"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <X size={20} />
-        </button>
-
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-5">
-          {lang === "en" ? "How it works" : "วิธีสั่งอาหาร"}
-        </p>
-
-        <div>
-          {steps.map((s, i) => (
-            <div key={i} className="flex gap-3">
-              <div className="flex flex-col items-center flex-shrink-0">
-                <span className="flex items-center justify-center w-9 h-9 rounded-full bg-primary text-primary-foreground text-sm font-semibold flex-shrink-0">
-                  {i + 1}
-                </span>
-                {i < steps.length - 1 && (
-                  <span className="w-px h-full bg-border my-1" />
-                )}
-              </div>
-              <p className="text-foreground text-sm leading-relaxed pt-1.5 pb-4">
-                {s}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        <button
-          onClick={onClose}
-          className="w-full mt-1 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95"
-        >
-          {lang === "en" ? "Order Now" : "สั่งอาหาร"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
 
 interface MenuProps {
@@ -100,8 +35,6 @@ export function MenuScreen({
     if (isBusy) setBusyDismissed(false);
   }, [isBusy]);
 
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const dismissOnboarding = () => setShowOnboarding(false);
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
   const cartSum = cartTotal(cart);
   const filtered = menuItems
@@ -110,7 +43,6 @@ export function MenuScreen({
 
   return (
     <>
-      {showOnboarding && <OnboardingModal lang={lang} onClose={dismissOnboarding} />}
       <div className="min-h-screen bg-background flex flex-col">
         {/* Sticky header */}
         <header className="sticky top-0 z-50 bg-[#3C2414] shadow-xl">
