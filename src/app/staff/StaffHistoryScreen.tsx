@@ -154,7 +154,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
         {loadFailed && (
           <div className="flex items-center justify-between gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5 mb-4">
             <span className="text-destructive text-xs">
-              {lang === "en" ? "Couldn't load data. Check your connection." : "โหลดข้อมูลไม่สำเร็จ เช็คการเชื่อมต่อของคุณ"}
+              {lang === "en" ? "Couldn't load. Check the internet and try again." : "โหลดไม่สำเร็จ เช็คอินเทอร์เน็ตแล้วลองใหม่"}
             </span>
             <button
               onClick={resetRetry}
@@ -171,7 +171,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
               ? (lang === "en" ? "Loading…" : "กำลังโหลด…")
               : loadFailed
                 ? (lang === "en" ? "Couldn't load data" : "โหลดข้อมูลไม่สำเร็จ")
-                : (lang === "en" ? "No completed orders on this day" : "ไม่มีออเดอร์ที่เสร็จสิ้นในวันนี้")}
+                : (lang === "en" ? "No paid bills on this day" : "ไม่มีบิลที่จ่ายแล้วในวันที่เลือก")}
           </div>
         ) : (
           <div className="space-y-2">

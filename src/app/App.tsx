@@ -202,7 +202,7 @@ function ReasonPickerModal({ title, reasons, onConfirm, onCancel, lang }: Reason
       >
         <p className="text-foreground text-sm font-semibold mb-1">{title}</p>
         <p className="text-muted-foreground text-xs mb-4">
-          {lang === "en" ? "Pick or type a reason — required" : "เลือกหรือพิมพ์เหตุผล — จำเป็นต้องกรอก"}
+          {lang === "en" ? "A reason is required. Pick one or type your own." : "ต้องใส่เหตุผล เลือกจากรายการหรือพิมพ์เองก็ได้"}
         </p>
 
         {reasons.length > 0 && (
@@ -820,7 +820,7 @@ export default function App() {
       setView("staff-orders");
     };
     if (manualCart.length > 0) {
-      askConfirm(lang === "en" ? "Discard this order?" : "ยกเลิกออเดอร์นี้?", reset);
+      askConfirm(lang === "en" ? "Discard the selected items?" : "ทิ้งรายการที่เลือกไว้?", reset);
     } else {
       reset();
     }

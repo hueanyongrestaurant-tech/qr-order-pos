@@ -59,61 +59,14 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
       const { isNativePrintAvailable, testPrintSelectedPrinter } = await import("./nativePrinter");
       if (!isNativePrintAvailable()) {
         setTestStatus(lang === "en"
-          ? "Native printing only works inside the installed Android app, not this web preview."
-          : "พิมพ์จริงได้เฉพาะในแอป Android ที่ติดตั้งแล้วเท่านั้น ไม่ใช่หน้าเว็บนี้");
+          ? "Printing only works from the Android app."
+          : "สั่งพิมพ์ได้จากแอป Android เท่านั้น");
         return;
       }
       await testPrintSelectedPrinter();
       setTestStatus(lang === "en" ? "Test ticket sent!" : "ส่งทดสอบพิมพ์แล้ว");
     } catch (err: any) {
-      setTestStatus((lang === "en" ? "Failed: " : "ล้มเหลว: ") + (err?.message || String(err)));
-    } finally {
-      setIsTesting(false);
-    }
-  };
-
-  // ทดสอบแยกสาเหตุ "โ หายไป" กับ "โต๊ะ 1-1 แตกเป็น 3 บรรทัด" — ดูรายละเอียดที่ nativePrinter.ts
-  const handleTestWrapDiagnostic = async () => {
-    setIsTesting(true);
-    setTestStatus(null);
-    try {
-      const { isNativePrintAvailable, printWrapDiagnostic } = await import("./nativePrinter");
-      if (!isNativePrintAvailable()) {
-        setTestStatus(lang === "en"
-          ? "Native printing only works inside the installed Android app, not this web preview."
-          : "พิมพ์จริงได้เฉพาะในแอป Android ที่ติดตั้งแล้วเท่านั้น ไม่ใช่หน้าเว็บนี้");
-        return;
-      }
-      await printWrapDiagnostic();
-      setTestStatus(lang === "en"
-        ? "Diagnostic printed — check sections A-E."
-        : "พิมพ์ชุดทดสอบแล้ว — ดูผลแต่ละหัวข้อ A-E");
-    } catch (err: any) {
-      setTestStatus((lang === "en" ? "Failed: " : "ล้มเหลว: ") + (err?.message || String(err)));
-    } finally {
-      setIsTesting(false);
-    }
-  };
-
-  // ทดสอบว่า inverse video (GS B) ใช้ได้จริงกับเครื่องนี้หรือไม่ ก่อนใช้กับ note/customNote
-  // จริงในตั๋วครัว — ดูรายละเอียดที่ nativePrinter.ts (USE_INVERSE_FOR_NOTES)
-  const handleTestInverse = async () => {
-    setIsTesting(true);
-    setTestStatus(null);
-    try {
-      const { isNativePrintAvailable, printInverseTest } = await import("./nativePrinter");
-      if (!isNativePrintAvailable()) {
-        setTestStatus(lang === "en"
-          ? "Native printing only works inside the installed Android app, not this web preview."
-          : "พิมพ์จริงได้เฉพาะในแอป Android ที่ติดตั้งแล้วเท่านั้น ไม่ใช่หน้าเว็บนี้");
-        return;
-      }
-      await printInverseTest();
-      setTestStatus(lang === "en"
-        ? "Printed A (inverse), B (bold fallback), C (underline) — check which show correctly."
-        : "พิมพ์แล้ว A (กลับสี), B (ตัวหนา fallback), C (เส้นใต้) — ดูว่าอันไหนแสดงผลได้จริง");
-    } catch (err: any) {
-      setTestStatus((lang === "en" ? "Failed: " : "ล้มเหลว: ") + (err?.message || String(err)));
+      setTestStatus((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
     } finally {
       setIsTesting(false);
     }
@@ -137,8 +90,8 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
 
         <p className="text-xs text-muted-foreground mb-3">
           {lang === "en"
-            ? "Pick which printer this device auto-prints new orders to. Leave unset on devices that only view orders."
-            : "เลือกเครื่องพิมพ์ที่เครื่องนี้จะ auto-print ตั๋วครัวไปให้ เครื่องที่แค่เปิดดูออเดอร์ไม่ต้องเลือก"}
+            ? "Pick a printer if this device should print kitchen tickets automatically. Devices that only view orders can skip this."
+            : "ถ้าอยากให้เครื่องนี้พิมพ์ตั๋วครัวอัตโนมัติ ให้เลือกเครื่องพิมพ์ ถ้าใช้ดูออเดอร์อย่างเดียวไม่ต้องเลือก"}
         </p>
 
         <div className="space-y-2 mb-3">
@@ -217,20 +170,6 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
               className="w-full py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground disabled:opacity-60"
             >
               {isTesting ? (lang === "en" ? "Testing..." : "กำลังทดสอบ...") : (lang === "en" ? "Test print" : "ทดสอบพิมพ์")}
-            </button>
-            <button
-              onClick={handleTestWrapDiagnostic}
-              disabled={isTesting}
-              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-muted text-foreground disabled:opacity-60"
-            >
-              {lang === "en" ? "Test wrap/vowel diagnostic" : "ทดสอบวินิจฉัยตัดบรรทัด/สระหาย"}
-            </button>
-            <button
-              onClick={handleTestInverse}
-              disabled={isTesting}
-              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-muted text-foreground disabled:opacity-60"
-            >
-              {lang === "en" ? "Test inverse video" : "ทดสอบข้อความกลับสี"}
             </button>
           </div>
         )}

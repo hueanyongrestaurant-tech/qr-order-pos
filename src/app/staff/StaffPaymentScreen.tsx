@@ -259,7 +259,7 @@ export function StaffPaymentScreen({
               {tableGroups.length > 0 && (
                 <div className="mb-6">
                   <h3 className="font-semibold text-foreground text-sm mb-3">
-                    {lang === "en" ? "Dine-in — Awaiting Payment" : "ในร้าน — รอชำระเงิน"}
+                    {lang === "en" ? "Dine-in" : "ทานที่ร้าน"}
                   </h3>
                   <div className="grid gap-3 md:grid-cols-2">
                     {tableGroups.map((g) => (
@@ -305,7 +305,7 @@ export function StaffPaymentScreen({
               {takeawayAwaiting.length > 0 && (
                 <div className="mb-6">
                   <h3 className="font-semibold text-foreground text-sm mb-3">
-                    {lang === "en" ? "Takeaway — Awaiting Payment" : "กลับบ้าน — รอชำระเงิน"}
+                    {lang === "en" ? "Takeaway" : "กลับบ้าน"}
                   </h3>
                   <div className="grid gap-3 md:grid-cols-2">
                     {takeawayAwaiting.map((order) => (

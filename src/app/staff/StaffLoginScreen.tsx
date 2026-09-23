@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, Eye, EyeOff } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Eye, EyeOff } from "lucide-react";
 import logo from "../../assets/logo.png";
 import type { Language } from "../types";
 import { T } from "../translations";
@@ -64,7 +64,7 @@ export function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }:
 
           {error && (
             <p className="text-destructive text-sm mb-3 flex items-center gap-1.5">
-              <span>⚠️</span> {t.wrongPass}
+              <AlertTriangle size={16} className="flex-shrink-0" /> {t.wrongPass}
             </p>
           )}
 

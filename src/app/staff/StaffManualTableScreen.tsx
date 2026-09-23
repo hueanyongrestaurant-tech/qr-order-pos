@@ -32,7 +32,7 @@ export function StaffManualTableScreen({
           onClick={onSelectTakeaway}
           className="w-full mb-6 py-4 rounded-2xl bg-accent/15 border-2 border-accent text-accent font-semibold text-base hover:bg-accent/25 transition-all active:scale-95"
         >
-          {lang === "en" ? "Takeaway (no table)" : "กลับบ้าน (ไม่มีโต๊ะ)"}
+          {lang === "en" ? "Takeaway" : "กลับบ้าน"}
         </button>
 
         {floors.map((f) => (

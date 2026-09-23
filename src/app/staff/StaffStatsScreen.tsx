@@ -222,7 +222,7 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
         {loadFailed && (
           <div className="flex items-center justify-between gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5 mb-4">
             <span className="text-destructive text-xs">
-              {lang === "en" ? "Couldn't load data. Check your connection." : "โหลดข้อมูลไม่สำเร็จ เช็คการเชื่อมต่อของคุณ"}
+              {lang === "en" ? "Couldn't load. Check the internet and try again." : "โหลดไม่สำเร็จ เช็คอินเทอร์เน็ตแล้วลองใหม่"}
             </span>
             <button
               onClick={resetRetry}
@@ -244,11 +244,11 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
 
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-card rounded-2xl border border-border p-4">
-            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Total Revenue" : "รายได้รวม"}</div>
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Total Revenue" : "ยอดขายรวม"}</div>
             <div className="font-display font-bold text-2xl text-primary">{t.thb}{totalRevenue}</div>
           </div>
           <div className="bg-card rounded-2xl border border-border p-4">
-            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Customer Groups" : "จำนวนกลุ่มลูกค้า"}</div>
+            <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Tables" : "จำนวนโต๊ะ"}</div>
             <div className="font-display font-bold text-2xl text-foreground">{uniqueGroups}</div>
           </div>
           <div className="bg-card rounded-2xl border border-border p-4">
@@ -284,7 +284,7 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
         )}
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
-          {lang === "en" ? "Items Ordered" : "รายการที่ขายทั้งหมด"}
+          {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}
         </h3>
         <input
           type="text"

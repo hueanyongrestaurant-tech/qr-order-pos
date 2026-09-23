@@ -172,7 +172,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                 </div>
 
                 <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5">
-                  {l.tableNumber && <span>{lang === "en" ? "Table/Ref" : "โต๊ะ/อ้างอิง"}: {l.tableNumber}</span>}
+                  {l.tableNumber && <span>{lang === "en" ? "Table" : "โต๊ะ"}: {l.tableNumber}</span>}
                   {l.itemName && <span className="text-foreground">{l.itemName}</span>}
                   {typeof l.amount === "number" && (
                     <span className="font-semibold text-foreground">

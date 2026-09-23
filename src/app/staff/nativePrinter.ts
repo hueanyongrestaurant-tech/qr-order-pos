@@ -472,8 +472,11 @@ export async function testPrintSelectedPrinter(): Promise<void> {
   await builder.write();
 }
 
-// ─── Inverse-video diagnostic — MUST be run once on real hardware before
-// trusting USE_INVERSE_FOR_NOTES above ─────────────────────────────────────
+// ─── Inverse-video diagnostic (kept as a utility, not wired into the UI) ───
+//
+// Already run on the real POS-5890U-L and the result confirmed (2026-09), so
+// its button was removed from PrinterSettingsModal. Kept here in case the
+// printer model changes and USE_INVERSE_FOR_NOTES needs re-checking.
 //
 // GS B (inverse video) has never been tested on the POS-5890U-L. Prints both
 // candidates side by side, labeled in plain ASCII, so one printout settles

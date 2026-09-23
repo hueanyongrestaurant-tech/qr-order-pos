@@ -10,20 +10,16 @@ function OnboardingModal({ lang, onClose }: { lang: Language; onClose: () => voi
   const steps =
     lang === "en"
       ? [
-        { emoji: "👋", text: "Welcome! Here's how ordering works" },
-        { emoji: "🍽️", text: "Browse the menu and pick what you like" },
-        { emoji: "🛒", text: "Add items to your cart, then confirm your order" },
-        { emoji: "👨‍🍳", text: "Sit back while the kitchen gets cooking" },
-        { emoji: "😋", text: "Enjoy your meal!" },
-        { emoji: "💳", text: "Pay at the counter when you're done" },
+        "Pick dishes from the menu",
+        "Add them to your cart and confirm",
+        "Wait at your table, we'll bring the food",
+        "Pay at the counter when you're done",
       ]
       : [
-        { emoji: "👋", text: "ยินดีต้อนรับค่ะ มาดูวิธีสั่งอาหารกันก่อนนะคะ" },
-        { emoji: "🍽️", text: "เลือกเมนูที่ถูกใจจากหน้าเมนูได้เลยค่ะ" },
-        { emoji: "🛒", text: "ใส่ตะกร้าแล้วกดยืนยันสั่งอาหารได้เลยค่ะ" },
-        { emoji: "👨‍🍳", text: "รอสักครู่นะคะ ครัวกำลังปรุงอาหารให้อยู่ค่ะ" },
-        { emoji: "😋", text: "ทานให้อร่อยค่ะ" },
-        { emoji: "💳", text: "เสร็จแล้วชำระเงินที่เคาน์เตอร์ได้เลยค่ะ" },
+        "เลือกเมนูที่อยากทาน",
+        "ใส่ตะกร้า แล้วกดยืนยันสั่ง",
+        "รออาหารที่โต๊ะได้เลย",
+        "ทานเสร็จแล้วจ่ายเงินที่เคาน์เตอร์",
       ];
 
   return (
@@ -58,8 +54,7 @@ function OnboardingModal({ lang, onClose }: { lang: Language; onClose: () => voi
                 )}
               </div>
               <p className="text-foreground text-sm leading-relaxed pt-1.5 pb-4">
-                <span className="mr-1">{s.emoji}</span>
-                {s.text}
+                {s}
               </p>
             </div>
           ))}

@@ -142,7 +142,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
         <div className="h-px bg-border my-5" />
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
-          {lang === "en" ? "Options" : "ตัวเลือกของเมนูนี้"}
+          {lang === "en" ? "Options" : "ตัวเลือก"}
         </h3>
 
         {/* Built-in toggles */}
@@ -178,7 +178,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
         {form.hasMeatChoice && (
           <div className="mb-5">
             <label className="text-sm font-semibold text-foreground block mb-2">
-              {lang === "en" ? "Extra price per meat type (0 = same price)" : "ราคาเพิ่มต่อชนิดเนื้อ (0 = ราคาเท่ากัน)"}
+              {lang === "en" ? "Extra charge by meat (enter 0 if same price)" : "บวกราคาตามเนื้อ (ใส่ 0 ถ้าราคาเท่ากัน)"}
             </label>
             <div className="grid grid-cols-3 gap-2">
               {(["pork", "chicken", "beef"] as MeatChoice[]).map((m) => {
@@ -223,7 +223,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
         {form.hasPortion && (
           <div className="mb-5">
             <label className="text-sm font-semibold text-foreground block mb-1.5">
-              {lang === "en" ? "Extra price for Special portion" : "ราคาเพิ่มถ้าเลือกขนาดพิเศษ"}
+              {lang === "en" ? "Extra charge for Special portion" : "บวกราคาจานพิเศษ"}
             </label>
             <input
               type="text"
@@ -293,7 +293,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
 
               <div className="flex items-center gap-2 mb-2.5">
                 <span className="text-xs text-muted-foreground">
-                  {lang === "en" ? "Selection type:" : "แบบเลือก:"}
+                  {lang === "en" ? "Can choose:" : "เลือกได้:"}
                 </span>
                 <select
                   value={group.type}
@@ -304,8 +304,8 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                   }}
                   className="bg-background border border-border rounded-lg px-2 py-1 text-xs outline-none"
                 >
-                  <option value="single">{lang === "en" ? "Choose 1" : "เลือกได้ 1"}</option>
-                  <option value="multi">{lang === "en" ? "Choose many" : "เลือกได้หลายอย่าง"}</option>
+                  <option value="single">{lang === "en" ? "1 only" : "1 อย่าง"}</option>
+                  <option value="multi">{lang === "en" ? "Several" : "หลายอย่าง"}</option>
                 </select>
                 <button
                   onClick={() => {
@@ -315,7 +315,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                   }}
                   className={`text-[10px] px-2 py-1 rounded-full font-medium ${group.required ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}
                 >
-                  {lang === "en" ? "Required" : "บังคับเลือก"}
+                  {lang === "en" ? "Required" : "ต้องเลือก"}
                 </button>
               </div>
 

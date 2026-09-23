@@ -355,7 +355,7 @@ export function ItemDetailScreen({
         {/* Note */}
         <div className="mb-5">
           <h3 className="font-semibold text-foreground mb-3 text-sm">
-            {lang === "en" ? "Special Requests" : "หมายเหตุเพิ่มเติม"}
+            {lang === "en" ? "Special Requests" : "หมายเหตุ"}
           </h3>
           <textarea
             value={note}

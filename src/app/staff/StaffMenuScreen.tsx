@@ -103,7 +103,7 @@ interface StaffMenuProps {
   onToggleCategorySignature: (categoryId: string, signature: boolean) => void;
   onReorderCategories: (orderedIds: string[]) => void;
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
-  scrollTopRef: React.MutableRefObject<number>;   // ⭐ เพิ่มบรรทัดนี้
+  scrollTopRef: React.MutableRefObject<number>;
 }
 
 export function StaffMenuScreen({
