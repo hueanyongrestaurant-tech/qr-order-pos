@@ -5,6 +5,7 @@ import type { CartItem, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { compareTables, formatClock, liveItems, orderTotal, timeAgo } from "../utils";
 import { StaffHeader } from "./StaffHeader";
+import { kitchenOptionSummary } from "./ticket";
 import { useSelectedPrinterAddress } from "./printerStore";
 
 // ─── Staff Orders Screen ──────────────────────────────────────────────────────
@@ -62,19 +63,34 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
   const awaitingTables = Object.entries(awaitingByTable)
     .sort(([a], [b]) => compareTables(a, b));
 
-  function optionSummary(ci: CartItem): string {
-    const parts: string[] = [];
-    if (ci.meat) parts.push(T[lang].meats[ci.meat]);
-    if (ci.portion === "special") parts.push(t.special);
-    if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(T[lang].spiceLevels[ci.spiceLevel]);
-    if (ci.addEgg) parts.push(t.eggAdded);
-    ci.item.customGroups?.forEach((group) => {
-      const selected = ci.customSelections?.[group.id] || [];
-      group.choices.forEach((choice) => {
-        if (selected.includes(choice.id)) parts.push(lang === "en" ? choice.labelEn : choice.labelTh);
-      });
-    });
-    return parts.join(", ");
+  // รายละเอียดของ 1 รายการ (ชื่อ/ตัวเลือก/หมายเหตุ/custom add-on/ป้าย void) — ใช้ร่วมกันทั้งการ์ดโต๊ะในร้าน
+  // และการ์ดกลับบ้าน ให้พนักงานเห็นข้อมูลครบเท่ากันเสมอ ตัวเลือกใช้ kitchenOptionSummary() ตัวเดียวกับตั๋วครัว
+  function renderItemDetails(ci: CartItem) {
+    const options = kitchenOptionSummary(ci, lang);
+    return (
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm font-medium leading-tight ${ci.voided ? "line-through text-muted-foreground" : "text-foreground"}`}>
+          {lang === "en" ? ci.item.name.en : ci.item.name.th}
+        </div>
+        {options && (
+          // ตัวเลือกพิเศษเป็นสีแดงให้ครัวเห็นชัด — รายการที่ void แล้วคงสีเทา ไม่ให้สับสนกับป้าย void (สีแดงเหมือนกัน)
+          <div className={`text-xs mt-0.5 ${ci.voided ? "text-muted-foreground" : "text-red-600"}`}>{options}</div>
+        )}
+        {ci.note && (
+          <div className="text-amber-700 text-xs mt-0.5 italic">"{ci.note}"</div>
+        )}
+        {ci.customNote && (
+          <div className="text-primary text-xs mt-0.5 font-medium">
+            + {ci.customNote} (+{t.thb}{ci.customAddOnPrice || 0})
+          </div>
+        )}
+        {ci.voided && (
+          <div className="text-destructive text-xs mt-0.5">
+            {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -134,14 +150,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
                           <div className={`font-bold text-xs w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${ci.voided ? "bg-muted text-muted-foreground" : "bg-primary/15 text-primary"}`}>
                             {ci.quantity}
                           </div>
-                          <div className={`text-sm font-medium leading-tight ${ci.voided ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                            {lang === "en" ? ci.item.name.en : ci.item.name.th}
-                            {ci.voided && (
-                              <span className="text-destructive not-italic no-underline ml-1">
-                                ({t.voidedLabel}{ci.voidReason ? `: ${ci.voidReason}` : ""})
-                              </span>
-                            )}
-                          </div>
+                          {renderItemDetails(ci)}
                         </div>
                       ))}
                     </div>
@@ -218,28 +227,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
                           <div className={`font-bold text-xs w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${ci.voided ? "bg-muted text-muted-foreground" : "bg-primary/15 text-primary"}`}>
                             {ci.quantity}
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className={`text-sm font-medium leading-tight ${ci.voided ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                              {lang === "en" ? ci.item.name.en : ci.item.name.th}
-                            </div>
-                            {optionSummary(ci) && (
-                              // ตัวเลือกพิเศษเป็นสีแดงให้ครัวเห็นชัด — รายการที่ void แล้วคงสีเทา ไม่ให้สับสนกับป้าย void (สีแดงเหมือนกัน)
-                              <div className={`text-xs mt-0.5 ${ci.voided ? "text-muted-foreground" : "text-red-600"}`}>{optionSummary(ci)}</div>
-                            )}
-                            {ci.note && (
-                              <div className="text-amber-700 text-xs mt-0.5 italic">"{ci.note}"</div>
-                            )}
-                            {ci.customNote && (
-                              <div className="text-primary text-xs mt-0.5 font-medium">
-                                + {ci.customNote} (+{t.thb}{ci.customAddOnPrice || 0})
-                              </div>
-                            )}
-                            {ci.voided && (
-                              <div className="text-destructive text-xs mt-0.5">
-                                {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
-                              </div>
-                            )}
-                          </div>
+                          {renderItemDetails(ci)}
                           {!ci.voided && (
                             <button
                               onClick={() => onRemoveItem(order.id, ci.cartId)}
