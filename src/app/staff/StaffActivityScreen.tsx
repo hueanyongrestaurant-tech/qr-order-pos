@@ -6,6 +6,7 @@ import type { ActivityAction, ActivityLog, Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { formatClock, formatDateInput } from "../utils";
 import { StaffHeader } from "./StaffHeader";
+import { diagWatch } from "../diag"; // TEMP DIAGNOSTICS
 
 // ─── Staff Activity Log Screen ────────────────────────────────────────────────
 
@@ -38,14 +39,16 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
 
   useEffect(() => {
     let retryTimer: number | undefined;
+    const logsQuery = query(
+      collection(db, "activityLogs"),
+      where("createdAt", ">=", dayStart),
+      where("createdAt", "<=", dayEnd),
+      orderBy("createdAt", "desc"),
+      limit(500),
+    );
+    const unDiag = diagWatch("activityLogs", logsQuery); // TEMP DIAGNOSTICS
     const unsubscribe = onSnapshot(
-      query(
-        collection(db, "activityLogs"),
-        where("createdAt", ">=", dayStart),
-        where("createdAt", "<=", dayEnd),
-        orderBy("createdAt", "desc"),
-        limit(500),
-      ),
+      logsQuery,
       (snapshot) => {
         logsFailureCountRef.current = 0; // สำเร็จแล้ว รีเซ็ต backoff กลับไปเริ่มต้น
         setLogs(snapshot.docs.map((d) => {
@@ -76,6 +79,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
     );
     return () => {
       unsubscribe();
+      unDiag();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -3,6 +3,7 @@ import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
 import { collection, getDocs, orderBy, query, where, limit } from "firebase/firestore";
+import { diagTime } from "./diag"; // TEMP DIAGNOSTICS
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
@@ -212,14 +213,18 @@ export function compressImage(file: File, maxWidth = 600, quality = 0.7): Promis
 // limit เป็นแค่กันหลุด (safety cap) ไม่ใช่ pagination จริง
 export const PAID_ORDERS_QUERY_CAP = 8000;
 export async function fetchPaidOrders(startInclusive: Date, endExclusive: Date): Promise<Order[]> {
-  const snap = await getDocs(
-    query(
-      collection(db, "orders"),
-      where("createdAt", ">=", startInclusive),
-      where("createdAt", "<", endExclusive),
-      orderBy("createdAt", "asc"),
-      limit(PAID_ORDERS_QUERY_CAP),
+  const snap = await diagTime( // TEMP DIAGNOSTICS
+    "GETDOCS paidOrders",
+    () => getDocs(
+      query(
+        collection(db, "orders"),
+        where("createdAt", ">=", startInclusive),
+        where("createdAt", "<", endExclusive),
+        orderBy("createdAt", "asc"),
+        limit(PAID_ORDERS_QUERY_CAP),
+      ),
     ),
+    (s) => `${s.size} docs, ${formatDateInput(startInclusive)}..${formatDateInput(endExclusive)}`,
   );
   return snap.docs
     .map((d) => mapOrderDoc(d.id, d.data()))

@@ -43,6 +43,7 @@ import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { diagImport, diagWatch, diagLog, DiagSpinnerSpy } from "./diag"; // TEMP DIAGNOSTICS
 
 import type {
   Language,
@@ -104,17 +105,17 @@ import { OrderSentScreen } from "./customer/OrderSentScreen";
 // ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
 // แต่ละ Staff*Screen import ตรงจากไฟล์ตัวเอง แยกเป็นคนละ JS chunk ต่อหน้าจอ
 // ลูกค้าที่สแกน QR ไม่โหลด chunk เหล่านี้เลย ส่วนฝั่งพนักงานโหลดเฉพาะแท็บที่กดจริง
-const StaffLoginScreen = lazy(() => import("./staff/StaffLoginScreen").then((m) => ({ default: m.StaffLoginScreen })));
-const StaffOrdersScreen = lazy(() => import("./staff/StaffOrdersScreen").then((m) => ({ default: m.StaffOrdersScreen })));
-const StaffPaymentScreen = lazy(() => import("./staff/StaffPaymentScreen").then((m) => ({ default: m.StaffPaymentScreen })));
-const StaffMenuScreen = lazy(() => import("./staff/StaffMenuScreen").then((m) => ({ default: m.StaffMenuScreen })));
-const StaffManualTableScreen = lazy(() => import("./staff/StaffManualTableScreen").then((m) => ({ default: m.StaffManualTableScreen })));
-const StaffAddOnScreen = lazy(() => import("./staff/StaffAddOnScreen").then((m) => ({ default: m.StaffAddOnScreen })));
-const StaffMenuEditScreen = lazy(() => import("./staff/StaffMenuEditScreen").then((m) => ({ default: m.StaffMenuEditScreen })));
-const StaffHistoryScreen = lazy(() => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen })));
-const StaffExpensesScreen = lazy(() => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen })));
-const StaffStatsScreen = lazy(() => import("./staff/StaffStatsScreen").then((m) => ({ default: m.StaffStatsScreen })));
-const StaffActivityScreen = lazy(() => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen })));
+const StaffLoginScreen = lazy(diagImport("StaffLoginScreen", () => import("./staff/StaffLoginScreen").then((m) => ({ default: m.StaffLoginScreen }))));
+const StaffOrdersScreen = lazy(diagImport("StaffOrdersScreen", () => import("./staff/StaffOrdersScreen").then((m) => ({ default: m.StaffOrdersScreen }))));
+const StaffPaymentScreen = lazy(diagImport("StaffPaymentScreen", () => import("./staff/StaffPaymentScreen").then((m) => ({ default: m.StaffPaymentScreen }))));
+const StaffMenuScreen = lazy(diagImport("StaffMenuScreen", () => import("./staff/StaffMenuScreen").then((m) => ({ default: m.StaffMenuScreen }))));
+const StaffManualTableScreen = lazy(diagImport("StaffManualTableScreen", () => import("./staff/StaffManualTableScreen").then((m) => ({ default: m.StaffManualTableScreen }))));
+const StaffAddOnScreen = lazy(diagImport("StaffAddOnScreen", () => import("./staff/StaffAddOnScreen").then((m) => ({ default: m.StaffAddOnScreen }))));
+const StaffMenuEditScreen = lazy(diagImport("StaffMenuEditScreen", () => import("./staff/StaffMenuEditScreen").then((m) => ({ default: m.StaffMenuEditScreen }))));
+const StaffHistoryScreen = lazy(diagImport("StaffHistoryScreen", () => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen }))));
+const StaffExpensesScreen = lazy(diagImport("StaffExpensesScreen", () => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen }))));
+const StaffStatsScreen = lazy(diagImport("StaffStatsScreen", () => import("./staff/StaffStatsScreen").then((m) => ({ default: m.StaffStatsScreen }))));
+const StaffActivityScreen = lazy(diagImport("StaffActivityScreen", () => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen }))));
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
@@ -366,7 +367,8 @@ export default function App() {
       setAllCategories(data);
       setCategories(data.filter((c) => c.active !== false));
     });
-    return () => unsubscribe();
+    const unDiag = diagWatch("categories", query(collection(db, "categories"), orderBy("order", "asc"))); // TEMP DIAGNOSTICS
+    return () => { unsubscribe(); unDiag(); };
   }, []);
 
   useEffect(() => {
@@ -376,7 +378,8 @@ export default function App() {
       setAllMenuItems(data);
       setMenuItems(data.filter((m) => m.active !== false));
     });
-    return () => unsubscribe();
+    const unDiag = diagWatch("menuItems", collection(db, "menuItems")); // TEMP DIAGNOSTICS
+    return () => { unsubscribe(); unDiag(); };
   }, []);
 
   // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน sessionStorage แทน realtime listener
@@ -532,7 +535,8 @@ export default function App() {
         });
       }
     });
-    return () => unsubscribe();
+    const unDiag = diagWatch("orders(active)", q); // TEMP DIAGNOSTICS
+    return () => { unsubscribe(); unDiag(); };
   }, [everAuthed]);
 
   // บัญชีรายจ่าย — ดึงเฉพาะช่วงวันที่ที่หน้า Expenses กำลังดู (1 doc ต่อวัน, id = "YYYY-MM-DD")
@@ -563,7 +567,13 @@ export default function App() {
         setExpenseDays(data);
       },
     );
-    return () => unsubscribeExpenses();
+    const unDiag = diagWatch("expenses", query( // TEMP DIAGNOSTICS
+      collection(db, "expenses"),
+      where("date", ">=", expenseRangeStart),
+      where("date", "<=", expenseRangeEnd),
+      limit(750),
+    ));
+    return () => { unsubscribeExpenses(); unDiag(); };
   }, [everAuthed, expenseRangeStart, expenseRangeEnd]);
 
   // รายชื่อของที่เคยกรอก (autocomplete) — เป็น catalog ที่มีจำนวนจำกัด ดึงทั้งหมดได้ แต่ใส่ limit กันหลุด
@@ -579,7 +589,8 @@ export default function App() {
         setExpenseCatalog(data);
       },
     );
-    return () => unsubscribeCatalog();
+    const unDiag = diagWatch("expenseItems", query(collection(db, "expenseItems"), limit(1000))); // TEMP DIAGNOSTICS
+    return () => { unsubscribeCatalog(); unDiag(); };
   }, [everAuthed]);
 
   // รายการเหตุผลที่ใช้ซ้ำได้ (void/cancel) — เฉพาะฝั่งพนักงานเท่านั้น
@@ -593,7 +604,8 @@ export default function App() {
       const raw = snap.data();
       setVoidReasons(Array.isArray(raw?.reasons) ? raw!.reasons : []);
     });
-    return () => unsubscribeReasons();
+    const unDiag = diagWatch("voidReasons", doc(db, "voidReasons", "list")); // TEMP DIAGNOSTICS
+    return () => { unsubscribeReasons(); unDiag(); };
   }, [everAuthed]);
 
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
@@ -623,7 +635,8 @@ export default function App() {
       setBusyTables(busyTables);
       setBusyItems(busyItems);
     });
-    return () => unsubscribe();
+    const unDiag = diagWatch("status/live", doc(db, "status", "live")); // TEMP DIAGNOSTICS
+    return () => { unsubscribe(); unDiag(); };
   }, []);
 
   // คำนวณสถานะยุ่งจากออเดอร์ที่เห็น (มีผลจริงเฉพาะฝั่งพนักงานที่ login แล้วเท่านั้น เพราะลูกค้าอ่าน orders ไม่ได้)
@@ -1039,6 +1052,7 @@ export default function App() {
   };
 
   const handleStaffTabChange = (tab: StaffTab) => {
+    diagLog(`TAB → ${tab}`); // TEMP DIAGNOSTICS
     setStaffTab(tab);
     writeSession("staffTab", tab);
     setView(STAFF_TAB_VIEW[tab]);
@@ -1269,6 +1283,7 @@ export default function App() {
       <div className="flex items-center gap-2 text-muted-foreground text-sm">
         <Loader2 size={18} className="animate-spin" />
         {lang === "en" ? "Loading..." : "กำลังโหลด..."}
+        <DiagSpinnerSpy where={view} />{/* TEMP DIAGNOSTICS */}
       </div>
     </div>
   );
