@@ -486,6 +486,13 @@ export default function App() {
 
     return () => window.clearTimeout(timer);
   }, [categories.length, menuItems.length]);
+  // แอป Android: เตรียม AudioContext ตั้งแต่แตะจอครั้งแรก (ปกติคือตอนกด login) — WebView ไม่ยอมให้
+  // เล่นเสียงจนกว่าผู้ใช้จะแตะจอสักครั้ง เสียงแจ้งออเดอร์ใหม่หลังจากนั้นจึงดังได้เองโดยไม่ต้องแตะอีก
+  useEffect(() => {
+    if (import.meta.env.MODE !== "capacitor") return;
+    import("./staff/notificationSound").then(({ primeNotificationSound }) => primeNotificationSound());
+  }, []);
+
   useEffect(() => {
     const isStaff = getTableFromUrl() === null; // ถ้าไม่มี ?table= = ฝั่งพนักงาน
     if (!isStaff) return; // ลูกค้าไม่ต้องฟัง orders เลย เลี่ยง permission error
@@ -523,6 +530,17 @@ export default function App() {
       // ทำงานเฉพาะเครื่องที่ตั้งค่าเลือกเครื่องพิมพ์ไว้แล้วเท่านั้น (printerStore) เครื่องอื่นที่แค่
       // เปิดดู/กดเสิร์ฟจะไม่ auto-print ซ้ำกัน
       const addedDocs = snapshot.docChanges().filter((c) => c.type === "added");
+
+      // เสียง "ติง-ต่อง" แจ้งออเดอร์ใหม่ — เฉพาะแอป Android (build mode capacitor) ใช้ trigger เดียวกับ
+      // auto-print ด้านล่าง แต่แยก path กันสิ้นเชิง: ดังเสมอแม้ไม่ได้เลือกเครื่องพิมพ์หรือพิมพ์ล้มเหลว
+      // ดังครั้งเดียวต่อ snapshot ต่อให้มีหลายออเดอร์เข้ามาพร้อมกัน
+      // guard เป็นค่าคงที่ตอน build — build เว็บตัด import นี้ทิ้งทั้งก้อน ไม่มีโค้ดเสียงหลุดไป gh-pages
+      if (import.meta.env.MODE === "capacitor" && addedDocs.length > 0) {
+        import("./staff/notificationSound")
+          .then(({ playNewOrderChime }) => playNewOrderChime())
+          .catch((err) => console.error("New-order chime failed:", err));
+      }
+
       if (addedDocs.length > 0 && getSelectedPrinterAddress()) {
         import("./staff/nativePrinter").then(({ isNativePrintAvailable, printKitchenTicketNative }) => {
           if (!isNativePrintAvailable()) return;
