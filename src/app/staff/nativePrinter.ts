@@ -1,6 +1,7 @@
 // ─── Native Bluetooth Printing (Capacitor Android app only) ───────────────────
 //
-// Renders the same content as KitchenTicket/ReceiptTicket (ticket.tsx) but as
+// Renders the same content as the old KitchenTicket/ReceiptTicket JSX (since
+// removed from ticket.tsx — see git history) but as
 // ESC/POS builder commands sent straight to the paired thermal printer, instead
 // of window.print() + the OS print dialog. Only usable inside the Capacitor
 // Android build — isNativePrintAvailable() must be checked before calling
@@ -35,7 +36,7 @@
 //   whole kitchen ticket prints at GS ! 0x11 (width+height x2, SIZE_DOUBLE)
 //   so it's legible from across the kitchen, the whole receipt stays at
 //   normal size (SIZE_NORMAL). Content/wording/line order in both functions
-//   match KitchenTicket/ReceiptTicket in ticket.tsx exactly — only bold
+//   match the old KitchenTicket/ReceiptTicket JSX exactly — only bold
 //   (matching each JSX block's fontWeight) and this uniform size differ from
 //   plain text.
 
@@ -326,12 +327,12 @@ export async function printKitchenTicketNative(order: Order, lang: Language): Pr
   // ตั๋วครัวทั้งใบขยาย GS! 0x10 (กว้าง x2 อย่างเดียว ไม่ขยายความสูง) เท่ากันหมด ไม่มีบรรทัดไหน
   // ใหญ่กว่ากัน — ยืนยันจาก printSizeCommandSweep() ว่า GS! ใช้ได้จริงบนเครื่องนี้ ตัวหนา/ไม่หนา
   // ยังคงตามต้นฉบับ (bold เฉพาะ label/ชื่อรายการ/customNote — ตรงกับ fontWeight:700 ใน
-  // KitchenTicket ที่ ticket.tsx) ไม่พิมพ์ชื่อร้านที่หัวใบแล้ว เนื้อหา/ลำดับ/ข้อความส่วนที่เหลือ
+  // KitchenTicket JSX เดิม) ไม่พิมพ์ชื่อร้านที่หัวใบแล้ว เนื้อหา/ลำดับ/ข้อความส่วนที่เหลือ
   // ให้ตรงกับ JSX เดิมเป๊ะ — เส้นคั่นใช้ KITCHEN_LINE_WIDTH (ครึ่งหนึ่งของ LINE_WIDTH) เพราะ
   // ตัวอักษรกว้างเป็น 2 เท่า ถ้าใช้ LINE_WIDTH เต็มจะยาวเกินกระดาษจริงแล้ว wrap ไปอีกบรรทัด
   // ดูเหมือนมีเส้นคั่นซ้ำสองบรรทัด
   const builder = CapacitorThermalPrinter.begin().raw(selectCodepageCmd(THAI_CODEPAGE_N));
-  // ขอบบนก่อนเนื้อหาบรรทัดแรก — ต้นฉบับ KitchenTicket JSX (ticket.tsx) เว้นไว้
+  // ขอบบนก่อนเนื้อหาบรรทัดแรก — ต้นฉบับ KitchenTicket JSX เดิม (ลบไปแล้ว) เว้นไว้
   // <div style={{ height: "30mm" }} /> ก่อนเริ่มเนื้อหา ไม่มีสูตรแปลง mm เป็นจำนวนบรรทัด
   // กระดาษความร้อนตรงเป๊ะ (ขึ้นกับ DPI/font ของเครื่องพิมพ์) — ปรับเพิ่มเป็น 5 บรรทัดว่าง
   // ตามที่แจ้งว่า 2 บรรทัดยังน้อยเกินไป — เว้นตอนขนาดปกติ (ก่อนสั่ง SIZE_WIDE)

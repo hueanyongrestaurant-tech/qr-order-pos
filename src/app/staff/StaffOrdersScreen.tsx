@@ -101,19 +101,6 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
             {lang === "en" ? "Create Order for Table" : "สร้างออเดอร์ให้โต๊ะ"}
           </button>
 
-          {/* ปุ่มทดสอบพิมพ์จริงผ่าน Bluetooth (BLE) — พักไว้ก่อน ยังจับคู่ช้าอยู่ ค่อยกลับมาแก้ต่อ
-          <button
-            onClick={() => {
-              const testOrder = [...takeawayOrders, ...inProgress][0];
-              if (!testOrder) { alert("ยังไม่มีออเดอร์ให้ทดสอบพิมพ์ ลองสร้างออเดอร์ก่อน"); return; }
-              printKitchenTicketBLE(testOrder, lang);
-            }}
-            className="w-full mb-5 bg-muted text-foreground py-2.5 rounded-xl font-semibold text-xs hover:bg-muted/80 transition-all active:scale-95"
-          >
-            🖨️ ทดสอบพิมพ์จริง (BLE)
-          </button>
-          */}
-
           {/* Takeaway orders */}
           {takeawayOrders.length > 0 && (
             <div className="mb-7">

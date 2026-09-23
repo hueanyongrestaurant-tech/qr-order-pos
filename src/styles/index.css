@@ -1,27 +1,3 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
-
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  #kitchen-ticket-print,
-  #kitchen-ticket-print *,
-  #receipt-print,
-  #receipt-print * {
-    visibility: visible;
-  }
-  #kitchen-ticket-print,
-  #receipt-print {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 58mm;
-    font-family: 'Tahoma', sans-serif;
-    color: #000;
-  }
-  @page {
-    margin: 0;
-  }
-}
