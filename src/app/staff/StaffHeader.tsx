@@ -1,7 +1,9 @@
-import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star } from "lucide-react";
+import { useState } from "react";
+import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Printer } from "lucide-react";
 import type { Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { LannaBorder, RestaurantLogo } from "../shared";
+import { PrinterSettingsModal } from "./PrinterSettingsModal";
 
 // ─── Staff Header (shared) ────────────────────────────────────────────────────
 
@@ -15,6 +17,9 @@ interface StaffHeaderProps {
 
 export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangToggle, }: StaffHeaderProps) {
   const t = T[lang];
+  // เก็บ state เปิด/ปิด modal ไว้ในตัวเอง ไม่ผ่าน props — StaffHeader ถูกเรียกใช้จาก 7 หน้าจอ
+  // จะได้ไม่ต้องแก้ signature/props ที่ต้นทางทุกที่ที่เรียกใช้
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   return (
     <div className="bg-[#3C2414] sticky top-0 z-50">
       <LannaBorder />
@@ -24,11 +29,21 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
           <button onClick={onLangToggle} className="text-[#D07E35] text-xs px-2 py-1 hover:text-[#FFF8F0] transition-colors">
             {t.langSwitch}
           </button>
+          <button
+            onClick={() => setShowPrinterSettings(true)}
+            className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5"
+            title={lang === "en" ? "Printer settings" : "ตั้งค่าเครื่องพิมพ์"}
+          >
+            <Printer size={17} />
+          </button>
           <button onClick={onLogout} className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5">
             <LogOut size={17} />
           </button>
         </div>
       </div>
+      {showPrinterSettings && (
+        <PrinterSettingsModal lang={lang} onClose={() => setShowPrinterSettings(false)} />
+      )}
       <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
         {(["orders", "payment", "menu", "history", "expenses", "stats", "activity"] as const).map((tab) => (
           <button

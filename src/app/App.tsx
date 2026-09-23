@@ -91,6 +91,10 @@ import {
   compressImage,
 } from "./utils";
 import { LannaBorder, RestaurantLogo } from "./shared";
+// เฉพาะ printerStore เพราะเป็น localStorage ล้วน ไม่มี Capacitor — ส่วน nativePrinter.ts
+// (import capacitor-thermal-printer) โหลดแบบ dynamic import เฉพาะตอนจะใช้จริงเท่านั้น ไม่งั้น
+// ลูกค้าที่สแกน QR จะโดนดึง plugin ของฝั่งพนักงานไปรวมกับ chunk หลักด้วย
+import { getSelectedPrinterAddress } from "./staff/printerStore";
 import { MenuScreen } from "./customer/MenuScreen";
 import { ItemDetailScreen } from "./customer/ItemDetailScreen";
 import { CartScreen } from "./customer/CartScreen";
@@ -313,6 +317,9 @@ export default function App() {
   const isResumingCustomerSession = !!initialTableFromUrl && savedCustomerTable === initialTableFromUrl;
 
   const [lang, setLang] = useState<Language>("th");
+  const langRef = useRef(lang);
+  useEffect(() => { langRef.current = lang; }, [lang]);
+  const isFirstOrdersSnapshotRef = useRef(true);
   const [view, setView] = useState<View>(() => {
     if (!initialTableFromUrl) return "staff-login"; // ฝั่งพนักงาน: effect ของ onAuthStateChanged จะจัดหน้าที่ถูกต้องให้เอง
     if (isResumingCustomerSession) {
@@ -492,11 +499,38 @@ export default function App() {
       where("status", "in", ["in-progress", "awaiting-payment"]),
       limit(300),
     );
+    // true จนกว่าจะผ่าน snapshot แรกของการ subscribe รอบนี้ — กัน auto-print ยิงซ้ำใส่
+    // ออเดอร์เก่าทุกใบตอน mount/reconnect (Firestore ส่ง docChanges "added" ทุก doc ที่มีอยู่
+    // แล้วในสแนปช็อตแรกเสมอ ไม่ใช่แค่ของใหม่จริง ๆ)
+    isFirstOrdersSnapshotRef.current = true;
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs
         .map((d) => mapOrderDoc(d.id, d.data()))
         .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
       setOrders(data);
+
+      if (isFirstOrdersSnapshotRef.current) {
+        isFirstOrdersSnapshotRef.current = false;
+        return;
+      }
+
+      // Auto-print ตั๋วครัวตอนออเดอร์ใหม่ "เข้าครั้งแรก" เท่านั้น — docChanges "added" หมายถึง
+      // doc เพิ่งเข้ามาอยู่ใน query นี้เป็นครั้งแรก แก้ไขรายการ (updateDoc items) ทำให้ได้ "modified"
+      // ไม่ใช่ "added" จึงไม่พิมพ์ซ้ำเองอัตโนมัติ — ตรงกับ requirement พอดีโดยไม่ต้องเช็คเพิ่ม
+      // ทำงานเฉพาะเครื่องที่ตั้งค่าเลือกเครื่องพิมพ์ไว้แล้วเท่านั้น (printerStore) เครื่องอื่นที่แค่
+      // เปิดดู/กดเสิร์ฟจะไม่ auto-print ซ้ำกัน
+      const addedDocs = snapshot.docChanges().filter((c) => c.type === "added");
+      if (addedDocs.length > 0 && getSelectedPrinterAddress()) {
+        import("./staff/nativePrinter").then(({ isNativePrintAvailable, printKitchenTicketNative }) => {
+          if (!isNativePrintAvailable()) return;
+          addedDocs.forEach((change) => {
+            const order = mapOrderDoc(change.doc.id, change.doc.data());
+            printKitchenTicketNative(order, langRef.current).catch((err) => {
+              console.error("Auto-print kitchen ticket failed:", err);
+            });
+          });
+        });
+      }
     });
     return () => unsubscribe();
   }, [everAuthed]);

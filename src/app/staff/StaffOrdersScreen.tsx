@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Check, Clock, Plus, Printer, Trash2, X } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
 import type { CartItem, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { compareTables, formatClock, liveItems, orderTotal, timeAgo } from "../utils";
 import { StaffHeader } from "./StaffHeader";
-import { KitchenTicket } from "./ticket";
+import { useSelectedPrinterAddress } from "./printerStore";
 
 // ─── Staff Orders Screen ──────────────────────────────────────────────────────
 
@@ -23,12 +24,27 @@ interface StaffOrdersProps {
 
 export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder }: StaffOrdersProps) {
   const t = T[lang];
-  const [printOrder, setPrintOrder] = useState<Order | null>(null);
+  const [isPrinting, setIsPrinting] = useState(false);
+  // native printing ต้องเปิดผ่านแอป Capacitor จริง + ตั้งเครื่องพิมพ์ไว้แล้วบนเครื่องนี้ —
+  // เครื่องที่ไม่เข้าเงื่อนไขให้ปุ่มพิมพ์ disabled ไปเลย ไม่ fallback ไป window.print()/RawBT แล้ว
+  // ใช้ hook แทนอ่าน localStorage ตรงๆ เพราะเลือกเครื่องพิมพ์ใหม่ใน PrinterSettingsModal
+  // (ซึ่งอยู่ลึกใน StaffHeader) ไม่ทำให้หน้านี้ re-render เอง ต้องมี event subscription
+  const selectedPrinterAddress = useSelectedPrinterAddress();
+  const canPrint = Capacitor.isNativePlatform() && !!selectedPrinterAddress;
 
-  const handlePrintKitchen = (order: Order) => {
-    setPrintOrder(order);
-    // รอให้ React render เนื้อหาก่อนค่อยสั่งพิมพ์
-    setTimeout(() => window.print(), 50);
+  // ปุ่มพิมพ์เอง — ใช้ตอนสร้างออเดอร์ใหม่ (ที่ auto-print ไปแล้ว แต่พิมพ์ซ้ำได้ถ้ากระดาษติด/พลาด)
+  // และตอนแก้ไขรายการออเดอร์ที่กำลังทำอยู่ (auto-print จะไม่ยิงซ้ำให้ ต้องกดเองตรงนี้)
+  const handlePrintKitchen = async (order: Order) => {
+    if (isPrinting) return;
+    setIsPrinting(true);
+    try {
+      const { printKitchenTicketNative } = await import("./nativePrinter");
+      await printKitchenTicketNative(order, lang);
+    } catch (err: any) {
+      alert((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
+    } finally {
+      setIsPrinting(false);
+    }
   };
   const takeawayOrders = orders.filter((o) => o.isTakeaway && o.status === "in-progress");
   const inProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
@@ -252,7 +268,8 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
                     <div className="px-4 pb-4 flex gap-2">
                       <button
                         onClick={() => handlePrintKitchen(order)}
-                        className="flex-shrink-0 bg-muted text-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                        disabled={!canPrint || isPrinting}
+                        className="flex-shrink-0 bg-muted text-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Printer size={15} />
                       </button>
@@ -323,7 +340,6 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
           </div>
         </div>
       </div>
-      {printOrder && <KitchenTicket order={printOrder} lang={lang} />}
     </>
   );
 }

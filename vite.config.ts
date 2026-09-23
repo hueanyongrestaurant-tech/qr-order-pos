@@ -16,8 +16,12 @@ function figmaAssetResolver() {
   }
 }
 
-export default defineConfig({
-  base: '/qr-order-pos/',
+// mode "capacitor" builds the Android app bundle: assets must resolve relatively
+// (file://) inside the WebView, unlike the gh-pages site which is served from
+// the /qr-order-pos/ subpath. Run with: vite build --mode capacitor
+export default defineConfig(({ mode }) => ({
+  base: mode === 'capacitor' ? './' : '/qr-order-pos/',
+  build: mode === 'capacitor' ? { outDir: 'dist-android' } : undefined,
   plugins: [
     figmaAssetResolver(),
     // The React and Tailwind plugins are both required for Make, even if
@@ -34,4 +38,4 @@ export default defineConfig({
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
-})
+}))

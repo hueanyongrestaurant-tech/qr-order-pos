@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Check, CreditCard, Minus, Plus, Printer } from "lucide-react";
-import logoImg from "../../assets/logo-black.png";
+import { Capacitor } from "@capacitor/core";
 import type { CartItem, Language, Order, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
 import { cartItemKey, cartItemTotal, compareTables, formatOptionDetails, liveItemCount, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
-import { ReceiptTicket, type ReceiptData } from "./ticket";
+import type { ReceiptData } from "./ticket";
+import { useSelectedPrinterAddress } from "./printerStore";
 
 // ─── Staff Payment Screen ─────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ interface PaymentCardProps {
   closeAction: () => void;
   cancelAction?: () => void;
   printReceiptAction?: () => void;
+  printDisabled: boolean;
   expandedKey: string | null;
   select: (key: string) => void;
   paymentMethod: PaymentMethod;
@@ -47,7 +49,7 @@ interface PaymentCardProps {
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, printReceiptAction,
+  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, printReceiptAction, printDisabled,
   expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
@@ -155,7 +157,7 @@ function PaymentCard({
             {printReceiptAction && (
               <button
                 onClick={printReceiptAction}
-                disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2)}
+                disabled={printDisabled || (paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2))}
                 className="flex-shrink-0 bg-muted text-foreground px-4 py-3 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Printer size={16} />
@@ -184,18 +186,25 @@ export function StaffPaymentScreen({
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
-  const [printReceiptData, setPrintReceiptData] = useState<ReceiptData | null>(null);
+  const [isPrinting, setIsPrinting] = useState(false);
+  // native printing ต้องเปิดผ่านแอป Capacitor จริง + ตั้งเครื่องพิมพ์ไว้แล้วบนเครื่องนี้ —
+  // เครื่องที่ไม่เข้าเงื่อนไขให้ปุ่มพิมพ์ disabled ไปเลย ไม่ fallback ไป window.print()/RawBT แล้ว
+  // ใช้ hook แทนอ่าน localStorage ตรงๆ เพราะเลือกเครื่องพิมพ์ใหม่ใน PrinterSettingsModal
+  // (ซึ่งอยู่ลึกใน StaffHeader) ไม่ทำให้หน้านี้ re-render เอง ต้องมี event subscription
+  const selectedPrinterAddress = useSelectedPrinterAddress();
+  const canPrintReceipt = Capacitor.isNativePlatform() && !!selectedPrinterAddress;
+  const printDisabled = !canPrintReceipt || isPrinting;
 
-  const handlePrintReceipt = (data: ReceiptData) => {
-    setPrintReceiptData(data);
-    const img = new Image();
-    img.src = logoImg;
-    const doPrint = () => setTimeout(() => window.print(), 50);
-    if (img.complete) {
-      doPrint();
-    } else {
-      img.onload = doPrint;
-      img.onerror = doPrint; // ถ้าโหลดรูปไม่สำเร็จ ก็ยังปริ้นต่อได้ (แค่ไม่มีโลโก้)
+  const handlePrintReceipt = async (data: ReceiptData) => {
+    if (isPrinting) return;
+    setIsPrinting(true);
+    try {
+      const { printReceiptNative } = await import("./nativePrinter");
+      await printReceiptNative(data, lang);
+    } catch (err: any) {
+      alert((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -274,6 +283,7 @@ export function StaffPaymentScreen({
                             cashReceived: paymentMethod === "cash" ? Number(cashInput || 0) : undefined,
                           })
                         }
+                        printDisabled={printDisabled}
                         cancelAction={() => {
                           onCancelOrders(g.orders.map((o) => o.id));
                           setExpandedKey(null);
@@ -319,6 +329,7 @@ export function StaffPaymentScreen({
                             cashReceived: paymentMethod === "cash" ? Number(cashInput || 0) : undefined,
                           })
                         }
+                        printDisabled={printDisabled}
                         cancelAction={() => { onCancelOrder(order.id); setExpandedKey(null); }}
                         expandedKey={expandedKey}
                         select={select}
@@ -337,7 +348,6 @@ export function StaffPaymentScreen({
           )}
         </div>
       </div>
-      {printReceiptData && <ReceiptTicket data={printReceiptData} lang={lang} />}
     </>
   );
 }

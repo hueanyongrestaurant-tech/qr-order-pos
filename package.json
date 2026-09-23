@@ -7,9 +7,13 @@
     "build": "vite build",
     "dev": "vite",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist",
+    "build:android": "vite build --mode capacitor && npx cap sync android"
   },
   "dependencies": {
+    "@capacitor/android": "7.6.9",
+    "@capacitor/cli": "7.6.9",
+    "@capacitor/core": "7.6.9",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",
@@ -43,6 +47,7 @@
     "@radix-ui/react-tooltip": "1.1.8",
     "@supabase/supabase-js": "^2.116.0",
     "canvas-confetti": "1.9.4",
+    "capacitor-thermal-printer": "0.2.5",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
