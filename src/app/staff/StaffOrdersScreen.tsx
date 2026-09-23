@@ -236,7 +236,8 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onRemoveItem, on
                               {lang === "en" ? ci.item.name.en : ci.item.name.th}
                             </div>
                             {optionSummary(ci) && (
-                              <div className="text-muted-foreground text-xs mt-0.5">{optionSummary(ci)}</div>
+                              // ตัวเลือกพิเศษเป็นสีแดงให้ครัวเห็นชัด — รายการที่ void แล้วคงสีเทา ไม่ให้สับสนกับป้าย void (สีแดงเหมือนกัน)
+                              <div className={`text-xs mt-0.5 ${ci.voided ? "text-muted-foreground" : "text-red-600"}`}>{optionSummary(ci)}</div>
                             )}
                             {ci.note && (
                               <div className="text-amber-700 text-xs mt-0.5 italic">"{ci.note}"</div>
