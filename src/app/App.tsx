@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { diagImport, diagWatch, diagLog, DiagSpinnerSpy } from "./diag"; // TEMP DIAGNOSTICS
 
@@ -76,6 +76,7 @@ import {
   stripItemPhoto,
   liveItems,
   liveItemCount,
+  unservedItems,
   cartTotal,
   orderTotal,
   cartItemKey,
@@ -663,10 +664,12 @@ export default function App() {
   //  2) throttle 4 วิ — เขียนได้มากสุด 1 ครั้ง/4 วิ ต่อเครื่อง โดย flush "ค่าล่าสุด" เสมอ (ไม่ตกหล่นตอนรัชชั่วโมง)
   useEffect(() => {
     if (!staffLoggedIn) return; // rules อนุญาตเขียนเฉพาะ auth อยู่แล้ว — เลี่ยงยิง setDoc ที่จะโดนปฏิเสธ
-    const dineInProgress = orders.filter((o) => o.status === "in-progress" && !o.isTakeaway);
-    const allInProgress = orders.filter((o) => o.status === "in-progress");
-    const tables = new Set(dineInProgress.map((o) => o.tableNumber)).size;
-    const items = allInProgress.reduce((s, o) => s + liveItemCount(o.items), 0);
+    // นับเฉพาะรายการที่ยังไม่เสิร์ฟ — จานที่เสิร์ฟไปแล้วไม่ใช่งานค้างของครัว
+    // (unservedItems คืน [] ให้ออเดอร์ที่พ้น in-progress แล้วเสมอ)
+    const tables = new Set(
+      orders.filter((o) => !o.isTakeaway && unservedItems(o).length > 0).map((o) => o.tableNumber),
+    ).size;
+    const items = orders.reduce((s, o) => s + liveItemCount(unservedItems(o)), 0);
 
     if (liveStatusRef.current.busyTables === tables && liveStatusRef.current.busyItems === items) {
       pendingStatusRef.current = null;
@@ -911,6 +914,55 @@ export default function App() {
     await updateDoc(doc(db, "orders", orderId), { status: "awaiting-payment" });
   };
 
+  // เลิกทำ "เสิร์ฟทั้งหมด" — ย้อนได้เฉพาะตอนยังรอชำระอยู่ (จ่ายไปแล้ว/ยกเลิกแล้ว ไม่แตะ)
+  const handleUnmarkServed = async (orderId: string) => {
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists() || snap.data().status !== "awaiting-payment") return;
+      tx.update(ref, { status: "in-progress" });
+    });
+  };
+
+  // เสิร์ฟทีละรายการ — เขียนแค่ key เดียวใน servedAt (ไม่แตะ items[] ที่ใช้คิดเงิน) และถ้ารายการที่ไม่ถูก void
+  // เสิร์ฟครบทุกตัวแล้ว เปลี่ยน status เป็น awaiting-payment ในจังหวะเดียวกัน ทำใน transaction เพื่อเช็คจากข้อมูล
+  // ล่าสุดบน server — กันเคสแท็บเล็ต 2 เครื่องกดเสิร์ฟคนละรายการพร้อมกันแล้วไม่มีใครเปลี่ยน status ให้
+  const handleServeItem = async (orderId: string, cartId: string) => {
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const raw = snap.data();
+      if (raw.status !== "in-progress") return;
+      const items: CartItem[] = raw.items || [];
+      const served: Record<string, unknown> = raw.servedAt || {};
+      const target = items.find((ci) => ci.cartId === cartId);
+      if (!target || target.voided || served[cartId]) return;
+      const allServed = liveItems(items).every((ci) => ci.cartId === cartId || !!served[ci.cartId]);
+      if (allServed) {
+        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp(), "status", "awaiting-payment");
+      } else {
+        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp());
+      }
+    });
+  };
+
+  // เลิกทำการเสิร์ฟ 1 รายการ — ถ้าออเดอร์ถูกเปลี่ยนเป็นรอชำระไปแล้ว (แต่ยังไม่จ่าย) ย้อนกลับเป็น in-progress ด้วย
+  const handleUnserveItem = async (orderId: string, cartId: string) => {
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const status = snap.data().status;
+      if (status !== "in-progress" && status !== "awaiting-payment") return;
+      if (status === "awaiting-payment") {
+        tx.update(ref, new FieldPath("servedAt", cartId), deleteField(), "status", "in-progress");
+      } else {
+        tx.update(ref, new FieldPath("servedAt", cartId), deleteField());
+      }
+    });
+  };
+
   // mark 1 รายการใน order เป็น voided — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array)
   // + ตัดรูปทิ้ง + เขียน log void_item ถ้าทุกรายการถูก void หมด เปลี่ยน status เป็น "cancelled" (ไม่ลบ doc)
   // billTotalBefore: ส่งมาเฉพาะตอน void จากหน้าชำระเงิน — ยอดบิลที่พนักงานเห็นบนการ์ดก่อนกด
@@ -925,6 +977,12 @@ export default function App() {
         : ci
     );
     const allVoided = newItems.every((ci) => ci.voided);
+    // void รายการสุดท้ายที่ยังไม่เสิร์ฟ แล้วที่เหลือเสิร์ฟครบหมดแล้ว — ออเดอร์ต้องย้ายไปรอชำระ ไม่งั้นจะค้าง
+    // อยู่ในโซนกำลังเตรียมแบบไม่มีรายการให้กด
+    const allServedNow =
+      !allVoided &&
+      order.status === "in-progress" &&
+      liveItems(newItems).every((ci) => !!order.servedAt?.[ci.cartId]);
     await logActivity({
       action: "void_item",
       orderId: order.id,
@@ -941,7 +999,9 @@ export default function App() {
       items: newItems,
       ...(allVoided
         ? { status: "cancelled", cancelReason: reason, cancelledAt: new Date() }
-        : {}),
+        : allServedNow
+          ? { status: "awaiting-payment" }
+          : {}),
     });
   };
 
@@ -1412,6 +1472,9 @@ export default function App() {
             lang={lang}
             orders={orders}
             onMarkServed={handleMarkServed}
+            onUnmarkServed={handleUnmarkServed}
+            onServeItem={handleServeItem}
+            onUnserveItem={handleUnserveItem}
             onRemoveItem={(orderId, cartId) =>
               askReason(T[lang].voidItemReasonTitle, (reason) => handleRemoveOrderItem(orderId, cartId, reason))
             }

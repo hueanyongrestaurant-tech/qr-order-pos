@@ -67,6 +67,13 @@ export function liveItemCount(items: CartItem[]): number {
   return liveItems(items).reduce((s, ci) => s + ci.quantity, 0);
 }
 
+// รายการที่ยังไม่เสิร์ฟ (ไม่นับที่ void แล้ว) — ออเดอร์ที่พ้น in-progress ไปแล้วถือว่าเสิร์ฟครบทุกรายการ
+// (รวมออเดอร์เก่าที่กด "เสิร์ฟทั้งหมด" ซึ่งไม่มี servedAt เลย)
+export function unservedItems(order: Order): CartItem[] {
+  if (order.status !== "in-progress") return [];
+  return liveItems(order.items).filter((ci) => !order.servedAt?.[ci.cartId]);
+}
+
 export function cartTotal(cart: CartItem[]): number {
   return cart.reduce((sum, ci) => sum + cartItemTotal(ci), 0);
 }
@@ -153,6 +160,12 @@ export function mapOrderDoc(id: string, raw: any): Order {
     timestamp: raw.createdAt?.toDate ? raw.createdAt.toDate() : new Date(),
     items: raw.items,
     status: raw.status,
+    // serverTimestamp() ที่ยังเขียนไม่เสร็จจะอ่านได้เป็น null — ใช้เวลาเครื่องแทนไปก่อน key ยังอยู่ครบ
+    servedAt: raw.servedAt
+      ? Object.fromEntries(
+          Object.entries(raw.servedAt).map(([k, v]: [string, any]) => [k, v?.toDate ? v.toDate() : new Date()]),
+        )
+      : undefined,
     paymentMethod: raw.paymentMethod,
     cashReceived: raw.cashReceived,
     isTakeaway: raw.isTakeaway,

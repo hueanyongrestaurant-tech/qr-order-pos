@@ -111,6 +111,9 @@ export interface Order {
   timestamp: Date;
   items: CartItem[];
   status: OrderStatus;
+  // เวลาที่เสิร์ฟแต่ละรายการ (key = cartId) — ใช้แค่แบ่งโซนบนหน้า Orders เท่านั้น ไม่เกี่ยวกับเงินเลย
+  // แยกเป็น map ของตัวเอง ไม่ใส่ใน items[] เพื่อให้กดเสิร์ฟไม่ต้องเขียน items (ข้อมูลที่ใช้คิดเงิน) ซ้ำทั้งก้อน
+  servedAt?: Record<string, Date>;
   paymentMethod?: PaymentMethod;
   cashReceived?: number;
   isTakeaway?: boolean;
