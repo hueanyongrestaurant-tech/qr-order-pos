@@ -70,7 +70,12 @@ function playNote(c: AudioContext, freq: number, start: number, duration: number
   harmonic.stop(start + duration);
 }
 
-// เล่น "ติง-ต่อง" 1 ครั้ง (~0.8 วิ) — ไม่วน ไม่ต้องกดรับทราบ
+// "ติง-ต่อง" 1 รอบยาว 0.78 วิ (โน้ตต่ำเริ่มที่ 0.28 + ยาว 0.5) — เริ่มรอบใหม่ทุก 0.86 วิ ให้หางของ "ต่อง"
+// จางจนแทบเงียบก่อนรอบถัดไป ฟังออกเป็น 3 รอบ ไม่ติดเป็นก้อนเดียว และไม่มีโน้ตข้ามรอบซ้อนกัน (ความดังสูงสุดเท่าเดิม)
+const CHIME_REPEATS = 3;
+const CHIME_PERIOD_S = 0.86;
+
+// เล่น "ติง-ต่อง" ×3 เป็นเสียงชุดเดียว (~2.5 วิ) ต่อการมีออเดอร์ใหม่ — ไม่วนต่อ ไม่ต้องกดรับทราบ
 export async function playNewOrderChime(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   const c = getContext();
@@ -81,7 +86,10 @@ export async function playNewOrderChime(): Promise<void> {
     // อ่าน state ใหม่หลัง await (TS narrow ค่าไว้เป็น "suspended" จาก if ด้านบน ไม่รู้ว่า resume() เปลี่ยนมัน)
     if ((c.state as AudioContextState) !== "running") return;
   }
-  const t = c.currentTime + 0.02;
-  playNote(c, HIGH_NOTE_HZ, t, 0.4); // "ติง"
-  playNote(c, LOW_NOTE_HZ, t + 0.28, 0.5); // "ต่อง" — เริ่มก่อนโน้ตแรกจางหมด ให้ต่อเนื่องแบบกระดิ่ง
+  const t0 = c.currentTime + 0.02;
+  for (let i = 0; i < CHIME_REPEATS; i++) {
+    const t = t0 + i * CHIME_PERIOD_S;
+    playNote(c, HIGH_NOTE_HZ, t, 0.4); // "ติง"
+    playNote(c, LOW_NOTE_HZ, t + 0.28, 0.5); // "ต่อง" — เริ่มก่อนโน้ตแรกจางหมด ให้ต่อเนื่องแบบกระดิ่ง
+  }
 }
