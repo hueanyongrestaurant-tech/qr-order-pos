@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Printer, Trash2, X } from "lucide-react";
+import { Bell, BellOff, Plus, Printer, Trash2, X } from "lucide-react";
 import type { Language } from "../types";
 import {
   addSavedPrinter,
@@ -9,6 +9,7 @@ import {
   setSelectedPrinterAddress,
   type SavedPrinter,
 } from "./printerStore";
+import { isSoundMuted, setSoundMuted } from "./soundStore";
 
 // ─── Printer Settings Modal (per-device: which printer THIS device prints to) ─
 //
@@ -29,6 +30,13 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
   const [newAddress, setNewAddress] = useState("");
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+  const [soundOn, setSoundOn] = useState(() => !isSoundMuted());
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    setSoundMuted(!next);
+  };
 
   const handleSelect = (address: string | null) => {
     setSelected(address);
@@ -87,6 +95,25 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
             <X size={18} />
           </button>
         </div>
+
+        {/* เสียงแจ้งออเดอร์ใหม่มีเฉพาะแอป Android — เว็บไม่มีเสียงอยู่แล้วจึงไม่แสดงสวิตช์
+            ปิดเสียงแล้วจำไว้ในเครื่องนี้ (soundStore) ไม่กระทบ auto-print */}
+        {import.meta.env.MODE === "capacitor" && (
+          <button
+            onClick={toggleSound}
+            role="switch"
+            aria-checked={soundOn}
+            className="w-full flex items-center justify-between gap-3 px-3 py-2.5 mb-4 rounded-xl border border-border text-sm"
+          >
+            <span className="flex items-center gap-2 text-foreground font-medium">
+              {soundOn ? <Bell size={15} /> : <BellOff size={15} className="text-muted-foreground" />}
+              {lang === "en" ? "New-order sound" : "เสียงแจ้งออเดอร์ใหม่"}
+            </span>
+            <span className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${soundOn ? "bg-secondary" : "bg-muted-foreground/30"}`}>
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${soundOn ? "left-[18px]" : "left-0.5"}`} />
+            </span>
+          </button>
+        )}
 
         <p className="text-xs text-muted-foreground mb-3">
           {lang === "en"

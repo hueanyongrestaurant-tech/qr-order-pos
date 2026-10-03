@@ -97,6 +97,7 @@ import { LannaBorder, RestaurantLogo } from "./shared";
 // (import capacitor-thermal-printer) โหลดแบบ dynamic import เฉพาะตอนจะใช้จริงเท่านั้น ไม่งั้น
 // ลูกค้าที่สแกน QR จะโดนดึง plugin ของฝั่งพนักงานไปรวมกับ chunk หลักด้วย
 import { getSelectedPrinterAddress } from "./staff/printerStore";
+import { isSoundMuted } from "./staff/soundStore";
 import { MenuScreen } from "./customer/MenuScreen";
 import { ItemDetailScreen } from "./customer/ItemDetailScreen";
 import { CartScreen } from "./customer/CartScreen";
@@ -539,7 +540,8 @@ export default function App() {
       // auto-print ด้านล่าง แต่แยก path กันสิ้นเชิง: ดังเสมอแม้ไม่ได้เลือกเครื่องพิมพ์หรือพิมพ์ล้มเหลว
       // ดังครั้งเดียวต่อ snapshot ต่อให้มีหลายออเดอร์เข้ามาพร้อมกัน
       // guard เป็นค่าคงที่ตอน build — build เว็บตัด import นี้ทิ้งทั้งก้อน ไม่มีโค้ดเสียงหลุดไป gh-pages
-      if (import.meta.env.MODE === "capacitor" && addedDocs.length > 0) {
+      // ปิดเสียงได้ในหน้าตั้งค่าเครื่องพิมพ์ (soundStore) — ข้ามแค่เสียง auto-print ด้านล่างยังทำงานตามปกติ
+      if (import.meta.env.MODE === "capacitor" && addedDocs.length > 0 && !isSoundMuted()) {
         import("./staff/notificationSound")
           .then(({ playNewOrderChime }) => playNewOrderChime())
           .catch((err) => console.error("New-order chime failed:", err));
