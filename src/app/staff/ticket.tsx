@@ -27,4 +27,5 @@ export interface ReceiptData {
   total: number;
   paymentMethod: PaymentMethod;
   cashReceived?: number;
+  transferAmount?: number; // split เท่านั้น: ยอดโอนของทั้งบิล — ส่วนเงินสด = total - transferAmount
 }

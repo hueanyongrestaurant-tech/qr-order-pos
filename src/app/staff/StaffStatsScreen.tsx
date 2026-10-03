@@ -13,6 +13,7 @@ import {
   FETCH_RETRY_DELAY_MS,
   formatDateInput,
   orderTotal,
+  orderPaymentBreakdown,
 } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 
@@ -80,8 +81,10 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
   const filtered = paidOrders.filter((o) => o.timestamp >= rangeStart && o.timestamp <= rangeEnd);
 
   const totalRevenue = filtered.reduce((s, o) => s + orderTotal(o), 0);
-  const cashRevenue = filtered.filter((o) => o.paymentMethod === "cash").reduce((s, o) => s + orderTotal(o), 0);
-  const transferRevenue = filtered.filter((o) => o.paymentMethod === "transfer").reduce((s, o) => s + orderTotal(o), 0);
+  // บิลจ่ายแยก (split) นับเข้าแต่ละฝั่งตามจำนวนจริง — บิลเก่านับทั้งใบเข้าฝั่งเดียวเหมือนเดิม
+  const breakdowns = filtered.map(orderPaymentBreakdown);
+  const cashRevenue = breakdowns.reduce((s, b) => s + b.cash, 0);
+  const transferRevenue = breakdowns.reduce((s, b) => s + b.transfer, 0);
   const orderCount = filtered.length;
   const uniqueGroups = new Set(
     filtered.filter((o) => !o.isTakeaway).map((o) => o.paymentBatchId || o.id)

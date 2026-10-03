@@ -41,7 +41,15 @@ export interface CustomGroup {
   required?: boolean;
 }
 export type OrderStatus = "in-progress" | "awaiting-payment" | "paid" | "cancelled";
-export type PaymentMethod = "cash" | "transfer";
+// "split" = บิลเดียวจ่ายเงินสดส่วนหนึ่ง + โอนอีกส่วนหนึ่ง (ดู Order.transferAmount)
+export type PaymentMethod = "cash" | "transfer" | "split";
+
+// สิ่งที่หน้าชำระเงินส่งมาตอนปิดบิล — ยอดโอนเป็นยอดของ "ทั้งบิล" (App แบ่งลงออเดอร์แต่ละใบเอง)
+export interface PaymentInput {
+  method: PaymentMethod;
+  cashReceived?: number;   // cash/split: เงินสดที่รับมา (ใช้คิดเงินทอน)
+  transferAmount?: number; // split เท่านั้น: ยอดโอนของทั้งบิล
+}
 
 // ─── Activity Log (บันทึกกิจกรรมที่มีความเสี่ยงด้านการเงิน/ข้อมูล) ─────────────
 export type ActivityAction =
@@ -121,6 +129,9 @@ export interface Order {
   servedAt?: Record<string, Date>;
   paymentMethod?: PaymentMethod;
   cashReceived?: number;
+  // split เท่านั้น: ส่วนที่เป็นเงินโอนของ "ออเดอร์ใบนี้" (ไม่ใช่ทั้งบิล) — ส่วนเงินสด = orderTotal - transferAmount
+  // บิลโต๊ะมีหลายออเดอร์ ยอดโอนของทั้งบิลจึงถูกแบ่งลงแต่ละใบ (allocateTransfer) ให้สถิติรวมทีละใบได้ตรง
+  transferAmount?: number;
   isTakeaway?: boolean;
   takeawayLabel?: string;
   paymentBatchId?: string;

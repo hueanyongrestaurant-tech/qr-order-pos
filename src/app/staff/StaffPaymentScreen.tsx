@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check, CreditCard, Minus, Plus, Printer } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
-import type { CartItem, Language, Order, PaymentMethod, StaffTab } from "../types";
+import type { CartItem, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
 import { cartItemKey, cartItemTotal, compareTables, formatOptionDetails, liveItemCount, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
@@ -13,8 +13,8 @@ import { useSelectedPrinterAddress } from "./printerStore";
 interface StaffPaymentProps {
   lang: Language;
   orders: Order[];
-  onCloseTable: (n: string, paymentMethod: PaymentMethod, cashReceived?: number) => void;
-  onCloseTakeaway: (orderId: string, paymentMethod: PaymentMethod, cashReceived?: number) => void;
+  onCloseTable: (n: string, payment: PaymentInput) => void;
+  onCloseTakeaway: (orderId: string, payment: PaymentInput) => void;
   onAdjustItem: (contributingOrders: Order[], key: string, delta: number) => void;
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
@@ -34,9 +34,9 @@ interface PaymentCardProps {
   voidedItems?: CartItem[];
   onAdjust: (key: string, delta: number) => void;
   total2: number;
-  closeAction: () => void;
+  closeAction: (payment: PaymentInput) => void;
   cancelAction?: () => void;
-  printReceiptAction?: () => void;
+  printReceiptAction?: (payment: PaymentInput) => void;
   printDisabled: boolean;
   expandedKey: string | null;
   select: (key: string) => void;
@@ -44,15 +44,35 @@ interface PaymentCardProps {
   setPaymentMethod: (m: PaymentMethod) => void;
   cashInput: string;
   setCashInput: (v: string) => void;
+  transferInput: string;
+  setTransferInput: (v: string) => void;
   lang: Language;
   t: typeof T["en"];
 }
 
 function PaymentCard({
   keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, printReceiptAction, printDisabled,
-  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, lang, t,
+  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, transferInput, setTransferInput, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
+  const cashLabel = lang === "en" ? "Cash" : "เงินสด";
+  const transferLabel = lang === "en" ? "Transfer" : "เงินโอน";
+
+  // split: พนักงานกรอกยอดโอน ระบบคิดส่วนเงินสด = ยอดบิล − ยอดโอน แล้วคิดเงินทอนจากส่วนเงินสด
+  // ยอดโอนต้องอยู่ระหว่าง 0 ถึงยอดบิล (ไม่รวมขอบ) — เท่ากับ 0 หรือเต็มบิลให้ใช้ปุ่มเงินสด/เงินโอนแทน
+  const transferNum = Number(transferInput);
+  const splitTransferValid = transferInput !== "" && transferNum > 0 && transferNum < total2;
+  const cashDue = paymentMethod === "cash" ? total2 : paymentMethod === "split" ? total2 - transferNum : 0;
+  const cashNum = Number(cashInput);
+  const canClose =
+    paymentMethod === "transfer" ||
+    (paymentMethod === "cash" && cashInput !== "" && cashNum >= cashDue) ||
+    (paymentMethod === "split" && splitTransferValid && cashInput !== "" && cashNum >= cashDue);
+  const payment: PaymentInput = {
+    method: paymentMethod,
+    ...(paymentMethod !== "transfer" ? { cashReceived: Number(cashInput || 0) } : {}),
+    ...(paymentMethod === "split" ? { transferAmount: transferNum } : {}),
+  };
   return (
     <div className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(60,36,20,0.15)" }}>
       <button onClick={() => select(keyId)} className="w-full px-4 py-3 flex items-center justify-between">
@@ -119,34 +139,63 @@ function PaymentCard({
           )}
 
           <div className="flex gap-2 mb-3">
-            {(["cash", "transfer"] as PaymentMethod[]).map((m) => (
+            {(["cash", "transfer", "split"] as PaymentMethod[]).map((m) => (
               <button
                 key={m}
-                onClick={() => { setPaymentMethod(m); setCashInput(""); }}
+                onClick={() => { setPaymentMethod(m); setCashInput(""); setTransferInput(""); }}
                 className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
                   ? "bg-primary text-primary-foreground border-primary"
                   : "bg-card border-border text-foreground"
                   }`}
               >
-                {m === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
+                {m === "cash" ? cashLabel : m === "transfer" ? transferLabel : (lang === "en" ? "Cash + Transfer" : "สด + โอน")}
               </button>
             ))}
           </div>
 
-          {paymentMethod === "cash" && (
+          {paymentMethod === "split" && (
+            <div className="mb-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={transferInput}
+                  onChange={(e) => setTransferInput(e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder={lang === "en" ? "Transfer amount" : "ยอดโอน"}
+                  className="flex-1 min-w-0 bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                {/* แบ่งครึ่ง: ส่วนโอนปัดลง เศษไปอยู่ส่วนเงินสด (เช่นบิล 351 → โอน 175 สด 176) */}
+                <button
+                  onClick={() => setTransferInput(String(Math.floor(total2 / 2)))}
+                  className="flex-shrink-0 px-3 py-2 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/80 transition-all active:scale-95"
+                >
+                  {lang === "en" ? "Half" : "แบ่งครึ่ง"}
+                </button>
+              </div>
+              {transferInput !== "" && (
+                <div className={`text-sm font-semibold mt-1.5 ${splitTransferValid ? "text-foreground" : "text-destructive"}`}>
+                  {splitTransferValid
+                    ? `${lang === "en" ? "Cash part" : "ส่วนเงินสด"}: ${t.thb}${cashDue}`
+                    : (lang === "en" ? `Transfer must be ${t.thb}1–${t.thb}${total2 - 1}` : `ยอดโอนต้องอยู่ระหว่าง ${t.thb}1 ถึง ${t.thb}${total2 - 1}`)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(paymentMethod === "cash" || (paymentMethod === "split" && splitTransferValid)) && (
             <div className="mb-3">
               <input
                 type="text"
                 inputMode="numeric"
                 value={cashInput}
                 onChange={(e) => setCashInput(e.target.value.replace(/[^0-9]/g, ""))}
-                placeholder={lang === "en" ? "Cash received" : "รับเงินมา"}
+                placeholder={paymentMethod === "split" ? (lang === "en" ? "Cash received (cash part)" : "รับเงินสดมา (ส่วนเงินสด)") : (lang === "en" ? "Cash received" : "รับเงินมา")}
                 className="w-full bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
               />
               {cashInput !== "" && (
-                <div className={`text-sm font-semibold mt-1.5 ${Number(cashInput) >= total2 ? "text-secondary" : "text-destructive"}`}>
-                  {Number(cashInput) >= total2
-                    ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${Number(cashInput) - total2}`
+                <div className={`text-sm font-semibold mt-1.5 ${cashNum >= cashDue ? "text-secondary" : "text-destructive"}`}>
+                  {cashNum >= cashDue
+                    ? `${lang === "en" ? "Change" : "เงินทอน"}: ${t.thb}${cashNum - cashDue}`
                     : (lang === "en" ? "Amount not enough" : "จำนวนเงินไม่พอ")}
                 </div>
               )}
@@ -156,16 +205,16 @@ function PaymentCard({
           <div className="flex gap-2">
             {printReceiptAction && (
               <button
-                onClick={printReceiptAction}
-                disabled={printDisabled || (paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2))}
+                onClick={() => printReceiptAction(payment)}
+                disabled={printDisabled || !canClose}
                 className="flex-shrink-0 bg-muted text-foreground px-4 py-3 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Printer size={16} />
               </button>
             )}
             <button
-              onClick={closeAction}
-              disabled={paymentMethod === "cash" && (cashInput === "" || Number(cashInput) < total2)}
+              onClick={() => closeAction(payment)}
+              disabled={!canClose}
               className="flex-1 bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Check size={16} />
@@ -186,6 +235,7 @@ export function StaffPaymentScreen({
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
+  const [transferInput, setTransferInput] = useState("");
   const [isPrinting, setIsPrinting] = useState(false);
   // native printing ต้องเปิดผ่านแอป Capacitor จริง + ตั้งเครื่องพิมพ์ไว้แล้วบนเครื่องนี้ —
   // เครื่องที่ไม่เข้าเงื่อนไขให้ปุ่มพิมพ์ disabled ไปเลย ไม่ fallback ไป window.print()/RawBT แล้ว
@@ -212,6 +262,7 @@ export function StaffPaymentScreen({
     setExpandedKey((prev) => (prev === key ? null : key));
     setPaymentMethod("cash");
     setCashInput("");
+    setTransferInput("");
   };
 
   const awaitingPayment = orders.filter((o) => o.status === "awaiting-payment" && !o.isTakeaway);
@@ -273,14 +324,15 @@ export function StaffPaymentScreen({
                         items={g.items}
                         voidedItems={g.voidedItems}
                         onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
-                        closeAction={() => onCloseTable(g.tableNumber, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
-                        printReceiptAction={() =>
+                        closeAction={(payment) => onCloseTable(g.tableNumber, payment)}
+                        printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: `${t.tableLabel} ${g.tableNumber}`,
                             items: g.items,
                             total: g.total,
-                            paymentMethod,
-                            cashReceived: paymentMethod === "cash" ? Number(cashInput || 0) : undefined,
+                            paymentMethod: payment.method,
+                            cashReceived: payment.cashReceived,
+                            transferAmount: payment.transferAmount,
                           })
                         }
                         printDisabled={printDisabled}
@@ -294,6 +346,8 @@ export function StaffPaymentScreen({
                         setPaymentMethod={setPaymentMethod}
                         cashInput={cashInput}
                         setCashInput={setCashInput}
+                        transferInput={transferInput}
+                        setTransferInput={setTransferInput}
                         lang={lang}
                         t={t}
                       />
@@ -319,14 +373,15 @@ export function StaffPaymentScreen({
                         items={order.items.filter((ci) => !ci.voided)}
                         voidedItems={order.items.filter((ci) => ci.voided)}
                         onAdjust={(key, delta) => onAdjustTakeawayItem(order.id, key, delta)}
-                        closeAction={() => onCloseTakeaway(order.id, paymentMethod, paymentMethod === "cash" ? Number(cashInput || 0) : undefined)}
-                        printReceiptAction={() =>
+                        closeAction={(payment) => onCloseTakeaway(order.id, payment)}
+                        printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"),
                             items: order.items.filter((ci) => !ci.voided),
                             total: orderTotal(order),
-                            paymentMethod,
-                            cashReceived: paymentMethod === "cash" ? Number(cashInput || 0) : undefined,
+                            paymentMethod: payment.method,
+                            cashReceived: payment.cashReceived,
+                            transferAmount: payment.transferAmount,
                           })
                         }
                         printDisabled={printDisabled}
@@ -337,6 +392,8 @@ export function StaffPaymentScreen({
                         setPaymentMethod={setPaymentMethod}
                         cashInput={cashInput}
                         setCashInput={setCashInput}
+                        transferInput={transferInput}
+                        setTransferInput={setTransferInput}
                         lang={lang}
                         t={t}
                       />

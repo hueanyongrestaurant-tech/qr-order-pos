@@ -127,6 +127,32 @@ export function orderTotal(order: Order): number {
   return order.items.reduce((sum, ci) => sum + cartItemTotal(ci), 0);
 }
 
+// ยอดเงินสด/โอนของออเดอร์ที่จ่ายแล้ว 1 ใบ — หน้าสถิติ/ประวัติใช้ตัวนี้ตัวเดียว
+// บิลเก่า (cash/transfer) นับทั้งใบเข้าฝั่งเดียวเหมือนเดิม ไม่มี paymentMethod = ไม่นับทั้งสองฝั่ง (เหมือนเดิม)
+export function orderPaymentBreakdown(order: Order): { cash: number; transfer: number } {
+  const total = orderTotal(order);
+  switch (order.paymentMethod) {
+    case "cash": return { cash: total, transfer: 0 };
+    case "transfer": return { cash: 0, transfer: total };
+    case "split": {
+      const transfer = Math.min(Math.max(order.transferAmount ?? 0, 0), total);
+      return { cash: total - transfer, transfer };
+    }
+    default: return { cash: 0, transfer: 0 };
+  }
+}
+
+// แบ่งยอดโอนของทั้งบิลลงออเดอร์แต่ละใบ: เติมทีละใบตามลำดับที่ส่งมา (เก่า→ใหม่) จนครบยอด
+// ผลรวมเท่ากับ transferTotal พอดี (ถ้าไม่เกินยอดบิล) และไม่มีใบไหนได้เกินยอดของตัวเอง ไม่มีเศษทศนิยม
+export function allocateTransfer(orderTotals: number[], transferTotal: number): number[] {
+  let remaining = transferTotal;
+  return orderTotals.map((total) => {
+    const share = Math.min(total, Math.max(remaining, 0));
+    remaining -= share;
+    return share;
+  });
+}
+
 export function cartItemKey(ci: CartItem): string {
   return JSON.stringify({
     id: ci.item.id,
@@ -213,6 +239,7 @@ export function mapOrderDoc(id: string, raw: any): Order {
       : undefined,
     paymentMethod: raw.paymentMethod,
     cashReceived: raw.cashReceived,
+    transferAmount: raw.transferAmount,
     isTakeaway: raw.isTakeaway,
     takeawayLabel: raw.takeawayLabel,
     paymentBatchId: raw.paymentBatchId,

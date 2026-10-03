@@ -13,6 +13,7 @@ import {
   formatOptionDetails,
   liveItemCount,
   orderTotal,
+  orderPaymentBreakdown,
 } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 
@@ -21,6 +22,18 @@ interface StaffHistoryProps {
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
+}
+
+// วิธีชำระของทั้งบิล — รวมทุกออเดอร์ในบิล ไม่ดูแค่ใบแรก เพราะบิลจ่ายแยกแบ่งยอดโอนไว้คนละใบ
+// จ่ายแยกแสดงยอดจริงของแต่ละฝั่ง บิลเก่า/จ่ายทางเดียวแสดงแค่ชื่อวิธีเหมือนเดิม
+function paymentSummary(orders: Order[], lang: Language, thb: string): string {
+  const cashLabel = lang === "en" ? "Cash" : "เงินสด";
+  const transferLabel = lang === "en" ? "Transfer" : "เงินโอน";
+  if (orders.some((o) => o.paymentMethod === "split")) {
+    const sum = orders.map(orderPaymentBreakdown).reduce((a, b) => ({ cash: a.cash + b.cash, transfer: a.transfer + b.transfer }), { cash: 0, transfer: 0 });
+    return `${cashLabel} ${thb}${sum.cash} · ${transferLabel} ${thb}${sum.transfer}`;
+  }
+  return orders[0].paymentMethod === "cash" ? cashLabel : transferLabel;
 }
 
 interface HistoryEntry {
@@ -220,7 +233,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
                       ))}
                       {e.orders[0]?.paymentMethod && (
                         <div className="text-muted-foreground text-xs pt-1">
-                          {e.orders[0].paymentMethod === "cash" ? (lang === "en" ? "Cash" : "เงินสด") : (lang === "en" ? "Transfer" : "เงินโอน")}
+                          {paymentSummary(e.orders, lang, t.thb)}
                         </div>
                       )}
                     </div>

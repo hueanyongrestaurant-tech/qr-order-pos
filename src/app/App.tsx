@@ -55,7 +55,7 @@ import type {
   CustomChoice,
   CustomGroup,
   OrderStatus,
-  PaymentMethod,
+  PaymentInput,
   ActivityAction,
   ActivityLog,
   MenuItem,
@@ -93,6 +93,7 @@ import {
   getTodayKey,
   compressImage,
   fetchUnavailableMenuItems,
+  allocateTransfer,
 } from "./utils";
 import { LannaBorder, RestaurantLogo } from "./shared";
 // เฉพาะ printerStore เพราะเป็น localStorage ล้วน ไม่มี Capacitor — ส่วน nativePrinter.ts
@@ -1095,30 +1096,39 @@ export default function App() {
     });
   };
 
-  const handleCloseTable = async (tableNum: string, paymentMethod: PaymentMethod, cashReceived?: number) => {
+  // ฟิลด์การชำระเงินที่เขียนลงออเดอร์ 1 ใบ — transferAmount คือส่วนโอนของ "ใบนี้" (split เท่านั้น)
+  const paymentFields = (payment: PaymentInput, orderTransferAmount?: number) => ({
+    paymentMethod: payment.method,
+    ...(payment.cashReceived !== undefined ? { cashReceived: payment.cashReceived } : {}),
+    ...(payment.method === "split" && orderTransferAmount !== undefined ? { transferAmount: orderTransferAmount } : {}),
+  });
+
+  const handleCloseTable = async (tableNum: string, payment: PaymentInput) => {
+    // orders เรียงเก่า→ใหม่อยู่แล้ว (listener sort ตาม timestamp) — ยอดโอนของ split จึงถูกเติมลงรอบแรกๆ ก่อน
     const toClose = orders.filter(
       (o) => o.tableNumber === tableNum && o.status === "awaiting-payment"
     );
     if (toClose.length === 0) return;
     const batchId = uid();
+    const transferShares = payment.method === "split"
+      ? allocateTransfer(toClose.map(orderTotal), payment.transferAmount ?? 0)
+      : [];
     await Promise.all(
-      toClose.map((o) =>
+      toClose.map((o, i) =>
         updateDoc(doc(db, "orders", o.id), {
           status: "paid",
-          paymentMethod,
           paymentBatchId: batchId,
-          ...(cashReceived !== undefined ? { cashReceived } : {}),
+          ...paymentFields(payment, transferShares[i]),
         })
       )
     );
     setSelectedPayTable(null);
   };
 
-  const handleCloseTakeawayOrder = async (orderId: string, paymentMethod: PaymentMethod, cashReceived?: number) => {
+  const handleCloseTakeawayOrder = async (orderId: string, payment: PaymentInput) => {
     await updateDoc(doc(db, "orders", orderId), {
       status: "paid",
-      paymentMethod,
-      ...(cashReceived !== undefined ? { cashReceived } : {}),
+      ...paymentFields(payment, payment.transferAmount),
     });
   };
 
