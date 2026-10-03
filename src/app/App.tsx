@@ -66,7 +66,7 @@ import type {
   ExpenseCatalogEntry,
   Category,
 } from "./types";
-import { ADD_ONS } from "./constants";
+import { ADD_ONS, AUDIT_UI_ENABLED } from "./constants";
 import { T } from "./translations";
 import {
   resolvePhoto,
@@ -133,6 +133,8 @@ async function logActivity(entry: Omit<ActivityLog, "id" | "createdAt">): Promis
   Object.entries(entry).forEach(([k, v]) => {
     if (v !== undefined) clean[k] = v;
   });
+  // reason ว่าง (ตอน AUDIT_UI_ENABLED = false ไม่ถามเหตุผล) → ไม่ใส่ field reason เลย
+  if (clean.reason === "") delete clean.reason;
   try {
     await addDoc(collection(db, "activityLogs"), { ...clean, createdAt: serverTimestamp() });
   } catch (err) {
@@ -307,7 +309,8 @@ const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   expenses: "staff-expenses",
   activity: "staff-activity",
 };
-const STAFF_TABS: StaffTab[] = ["orders", "payment", "menu", "history", "expenses", "stats", "activity"];
+// AUDIT_UI_ENABLED = false (ดู constants.ts) → ไม่ให้ session เก่าที่ค้างแท็บ activity กู้กลับไปหน้าที่ซ่อนอยู่
+const STAFF_TABS: StaffTab[] = ["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity" as const] : [])];
 function isStaffTab(v: unknown): v is StaffTab {
   return typeof v === "string" && (STAFF_TABS as string[]).includes(v);
 }
@@ -635,7 +638,17 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm });
   const [reasonPrompt, setReasonPrompt] = useState<{ title: string; onConfirm: (reason: string) => void } | null>(null);
-  const askReason = (title: string, onConfirm: (reason: string) => void) => setReasonPrompt({ title, onConfirm });
+  // AUDIT_UI_ENABLED = false (ปิดชั่วคราว ดู constants.ts) → ข้ามหน้าต่างถามเหตุผล ทำงานทันทีด้วย reason ว่าง
+  // (log ยังถูกเขียนตามเดิม เพียงไม่มี field reason) — เปิด flag กลับแล้วหน้าต่างเดิมจะกลับมาเอง
+  const askReason = (title: string, onConfirm: (reason: string) => void) => {
+    if (!AUDIT_UI_ENABLED) { onConfirm(""); return; }
+    setReasonPrompt({ title, onConfirm });
+  };
+  // ยกเลิกทั้งออเดอร์ — ตอน flag ปิดใช้หน้าต่างยืนยันธรรมดาแทน (กันกดพลาด เพราะลบทั้งใบ)
+  const askCancelOrder = (onConfirm: (reason: string) => void) => {
+    if (!AUDIT_UI_ENABLED) { askConfirm(T[lang].cancelOrderConfirm, () => onConfirm("")); return; }
+    askReason(T[lang].cancelOrderReasonTitle, onConfirm);
+  };
   const [busyTables, setBusyTables] = useState(0);
   const [busyItems, setBusyItems] = useState(0);
 
@@ -973,7 +986,7 @@ export default function App() {
     const amount = cartItemUnitPrice(target) * target.quantity;
     const newItems = order.items.map((ci) =>
       ci.cartId === cartId
-        ? stripItemPhoto({ ...ci, voided: true, voidReason: reason, voidedAt: new Date() })
+        ? stripItemPhoto({ ...ci, voided: true, ...(reason ? { voidReason: reason } : {}), voidedAt: new Date() })
         : ci
     );
     const allVoided = newItems.every((ci) => ci.voided);
@@ -998,7 +1011,7 @@ export default function App() {
     await updateDoc(doc(db, "orders", order.id), {
       items: newItems,
       ...(allVoided
-        ? { status: "cancelled", cancelReason: reason, cancelledAt: new Date() }
+        ? { status: "cancelled", ...(reason ? { cancelReason: reason } : {}), cancelledAt: new Date() }
         : allServedNow
           ? { status: "awaiting-payment" }
           : {}),
@@ -1034,7 +1047,7 @@ export default function App() {
     await addVoidReason(reason);
     await updateDoc(doc(db, "orders", orderId), {
       status: "cancelled",
-      cancelReason: reason,
+      ...(reason ? { cancelReason: reason } : {}),
       cancelledAt: new Date(),
       items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
     });
@@ -1069,6 +1082,7 @@ export default function App() {
 
   // ปรับจำนวนรายการตอนชำระเงิน — ลดจนเหลือ 0 = void (ต้องกรอกเหตุผลก่อน) แทนการลบออกจาก array
   // ปรับ +1/-1 แบบไม่ถึง void ก็ต้องกรอกเหตุผลก่อนเช่นกัน แล้วบันทึก log adjust_item_qty
+  // (ตอน AUDIT_UI_ENABLED = false askReason จะข้ามหน้าต่างแล้วทำงานทันที — ดู askReason)
   const handleAdjustPaymentItem = async (contributingOrders: Order[], key: string, delta: number) => {
     // ยอดบิลของทั้งโต๊ะ (ตรงกับตัวเลขบนการ์ดหน้าชำระเงิน) ณ ตอนกด
     const billTotalBefore = contributingOrders.reduce((s, o) => s + orderTotal(o), 0);
@@ -1479,7 +1493,7 @@ export default function App() {
               askReason(T[lang].voidItemReasonTitle, (reason) => handleRemoveOrderItem(orderId, cartId, reason))
             }
             onCancelOrder={(orderId) =>
-              askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
+              askCancelOrder((reason) => handleCancelOrder(orderId, reason))
             }
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
@@ -1502,10 +1516,10 @@ export default function App() {
             onAdjustItem={handleAdjustPaymentItem}
             onAdjustTakeawayItem={handleAdjustTakeawayItem}
             onCancelOrder={(orderId) =>
-              askReason(T[lang].cancelOrderReasonTitle, (reason) => handleCancelOrder(orderId, reason))
+              askCancelOrder((reason) => handleCancelOrder(orderId, reason))
             }
             onCancelOrders={(orderIds) =>
-              askReason(T[lang].cancelOrderReasonTitle, (reason) =>
+              askCancelOrder((reason) =>
                 orderIds.forEach((id) => handleCancelOrder(id, reason))
               )
             }

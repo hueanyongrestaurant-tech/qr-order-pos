@@ -4,6 +4,7 @@ import type { Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { PrinterSettingsModal } from "./PrinterSettingsModal";
+import { AUDIT_UI_ENABLED } from "../constants";
 
 // ─── Staff Header (shared) ────────────────────────────────────────────────────
 
@@ -45,7 +46,8 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
         <PrinterSettingsModal lang={lang} onClose={() => setShowPrinterSettings(false)} />
       )}
       <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-        {(["orders", "payment", "menu", "history", "expenses", "stats", "activity"] as const).map((tab) => (
+        {/* แท็บ activity ซ่อนชั่วคราวเมื่อ AUDIT_UI_ENABLED = false — เปิดกลับที่ constants.ts */}
+        {(["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity"] as const : [])] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}
