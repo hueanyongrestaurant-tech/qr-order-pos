@@ -25,6 +25,15 @@ interface StaffPaymentProps {
   onLangToggle: () => void;
 }
 
+// จ่ายแยก: ช่องที่พนักงานพิมพ์เองล่าสุด (side) + ค่าที่พิมพ์ — อีกช่องคิดจากยอดบิลเสมอ
+// เก็บค่าเดียวแบบนี้แทน 2 ช่องแยกกัน ทั้งสองช่องจึงรวมกันเท่ายอดบิลพอดีเสมอ ไม่มีทางขัดกันเอง
+type SplitSide = "transfer" | "cash";
+interface SplitEntry {
+  side: SplitSide;
+  value: string;
+}
+const EMPTY_SPLIT: SplitEntry = { side: "transfer", value: "" };
+
 interface PaymentCardProps {
   keyId: string;
   label: string;
@@ -44,24 +53,69 @@ interface PaymentCardProps {
   setPaymentMethod: (m: PaymentMethod) => void;
   cashInput: string;
   setCashInput: (v: string) => void;
-  transferInput: string;
-  setTransferInput: (v: string) => void;
+  splitEntry: SplitEntry;
+  setSplitEntry: (v: SplitEntry) => void;
   lang: Language;
   t: typeof T["en"];
 }
 
+// ช่องยอดของการจ่ายแยก 1 ช่อง — ช่องที่พนักงานพิมพ์เองดูเป็นช่องกรอกปกติ ส่วนช่องที่ระบบคิดให้
+// พื้นจาง ขอบประ มีป้าย "คิดให้" แต่ยังแตะแก้ได้: แตะแล้วเลือกตัวเลขทั้งหมดไว้ พิมพ์ทับได้ทันที
+// แล้วช่องนั้นกลายเป็นช่องที่กรอกเอง อีกช่องกลับไปเป็นช่องคิดให้แทน
+function SplitAmountField({
+  label, autoLabel, thb, entry, side, computed, onChange,
+}: {
+  label: string;
+  autoLabel: string;
+  thb: string;
+  entry: SplitEntry;
+  side: SplitSide;
+  computed: number;
+  onChange: (value: string) => void;
+}) {
+  const isEntered = entry.side === side;
+  // ช่องคิดให้แสดงตัวเลขเฉพาะตอนผลคิดได้มากกว่า 0 — ค่าติดลบ/0 ปล่อยว่าง (ข้อความเตือนใต้ช่องบอกเหตุผลเอง)
+  const value = isEntered ? entry.value : entry.value !== "" && computed > 0 ? String(computed) : "";
+  return (
+    <label className="block min-w-0">
+      <span className="block text-xs font-medium text-foreground mb-1">{label}</span>
+      <span className="relative block">
+        <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${isEntered ? "text-foreground" : "text-muted-foreground"}`}>{thb}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={value}
+          // select หลังเฟรมถัดไป — มือถือ/WebView วาง caret ตามจุดที่แตะทีหลัง focus ทำให้ select ทันทีหลุด
+          onFocus={(e) => { if (!isEntered) { const el = e.target; requestAnimationFrame(() => el.select()); } }}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ""))}
+          className={`w-full rounded-xl pl-7 pr-3 py-2 text-sm outline-none transition-colors focus:border-primary focus:border-solid ${isEntered
+            ? "bg-background border-2 border-border text-foreground font-semibold"
+            : "bg-muted/50 border-2 border-dashed border-border text-muted-foreground"
+            }`}
+        />
+        {!isEntered && value !== "" && (
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-muted-foreground bg-background/80 px-1.5 py-0.5 rounded-md">
+            {autoLabel}
+          </span>
+        )}
+      </span>
+    </label>
+  );
+}
+
 function PaymentCard({
   keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, printReceiptAction, printDisabled,
-  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, transferInput, setTransferInput, lang, t,
+  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
   const cashLabel = lang === "en" ? "Cash" : "เงินสด";
   const transferLabel = lang === "en" ? "Transfer" : "เงินโอน";
 
-  // split: พนักงานกรอกยอดโอน ระบบคิดส่วนเงินสด = ยอดบิล − ยอดโอน แล้วคิดเงินทอนจากส่วนเงินสด
-  // ยอดโอนต้องอยู่ระหว่าง 0 ถึงยอดบิล (ไม่รวมขอบ) — เท่ากับ 0 หรือเต็มบิลให้ใช้ปุ่มเงินสด/เงินโอนแทน
-  const transferNum = Number(transferInput);
-  const splitTransferValid = transferInput !== "" && transferNum > 0 && transferNum < total2;
+  // split: กรอกช่องไหนก็ได้ (ยอดโอน หรือ ส่วนเงินสด) อีกช่อง = ยอดบิล − ช่องที่กรอก แล้วคิดเงินทอนจากส่วนเงินสด
+  // ทั้งสองส่วนต้องมากกว่า 0 — ส่วนใดส่วนหนึ่งเป็น 0 หรือเต็มบิลให้ใช้ปุ่มเงินสด/เงินโอนแทน
+  const enteredNum = Number(splitEntry.value);
+  const transferNum = splitEntry.side === "transfer" ? enteredNum : total2 - enteredNum;
+  const splitTransferValid = splitEntry.value !== "" && transferNum > 0 && transferNum < total2;
   const cashDue = paymentMethod === "cash" ? total2 : paymentMethod === "split" ? total2 - transferNum : 0;
   const cashNum = Number(cashInput);
   const canClose =
@@ -142,7 +196,7 @@ function PaymentCard({
             {(["cash", "transfer", "split"] as PaymentMethod[]).map((m) => (
               <button
                 key={m}
-                onClick={() => { setPaymentMethod(m); setCashInput(""); setTransferInput(""); }}
+                onClick={() => { setPaymentMethod(m); setCashInput(""); setSplitEntry(EMPTY_SPLIT); }}
                 className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all ${paymentMethod === m
                   ? "bg-primary text-primary-foreground border-primary"
                   : "bg-card border-border text-foreground"
@@ -155,28 +209,37 @@ function PaymentCard({
 
           {paymentMethod === "split" && (
             <div className="mb-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={transferInput}
-                  onChange={(e) => setTransferInput(e.target.value.replace(/[^0-9]/g, ""))}
-                  placeholder={lang === "en" ? "Transfer amount" : "ยอดโอน"}
-                  className="flex-1 min-w-0 bg-background border-2 border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary"
-                />
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs text-muted-foreground">
+                  {lang === "en" ? "Fill in either box" : "กรอกช่องไหนก็ได้ อีกช่องคิดให้"}
+                </span>
                 {/* แบ่งครึ่ง: ส่วนโอนปัดลง เศษไปอยู่ส่วนเงินสด (เช่นบิล 351 → โอน 175 สด 176) */}
                 <button
-                  onClick={() => setTransferInput(String(Math.floor(total2 / 2)))}
-                  className="flex-shrink-0 px-3 py-2 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/80 transition-all active:scale-95"
+                  onClick={() => setSplitEntry({ side: "transfer", value: String(Math.floor(total2 / 2)) })}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-muted/80 transition-all active:scale-95"
                 >
                   {lang === "en" ? "Half" : "แบ่งครึ่ง"}
                 </button>
               </div>
-              {transferInput !== "" && (
-                <div className={`text-sm font-semibold mt-1.5 ${splitTransferValid ? "text-foreground" : "text-destructive"}`}>
-                  {splitTransferValid
-                    ? `${lang === "en" ? "Cash part" : "ส่วนเงินสด"}: ${t.thb}${cashDue}`
-                    : (lang === "en" ? `Transfer must be ${t.thb}1–${t.thb}${total2 - 1}` : `ยอดโอนต้องอยู่ระหว่าง ${t.thb}1 ถึง ${t.thb}${total2 - 1}`)}
+              <div className="grid grid-cols-2 gap-2">
+                {(["transfer", "cash"] as SplitSide[]).map((side) => (
+                  <SplitAmountField
+                    key={side}
+                    label={side === "transfer" ? (lang === "en" ? "Transfer" : "ยอดโอน") : (lang === "en" ? "Cash part" : "ส่วนเงินสด")}
+                    autoLabel={lang === "en" ? "auto" : "คิดให้"}
+                    thb={t.thb}
+                    entry={splitEntry}
+                    side={side}
+                    computed={side === "transfer" ? transferNum : total2 - transferNum}
+                    onChange={(value) => setSplitEntry({ side, value })}
+                  />
+                ))}
+              </div>
+              {splitEntry.value !== "" && !splitTransferValid && (
+                <div className="text-sm font-semibold mt-1.5 text-destructive">
+                  {lang === "en"
+                    ? `Both parts must be above ${t.thb}0 and add up to ${t.thb}${total2}`
+                    : `ทั้งสองส่วนต้องมากกว่า ${t.thb}0 และรวมกันได้ ${t.thb}${total2}`}
                 </div>
               )}
             </div>
@@ -235,7 +298,7 @@ export function StaffPaymentScreen({
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
-  const [transferInput, setTransferInput] = useState("");
+  const [splitEntry, setSplitEntry] = useState<SplitEntry>(EMPTY_SPLIT);
   const [isPrinting, setIsPrinting] = useState(false);
   // native printing ต้องเปิดผ่านแอป Capacitor จริง + ตั้งเครื่องพิมพ์ไว้แล้วบนเครื่องนี้ —
   // เครื่องที่ไม่เข้าเงื่อนไขให้ปุ่มพิมพ์ disabled ไปเลย ไม่ fallback ไป window.print()/RawBT แล้ว
@@ -262,7 +325,7 @@ export function StaffPaymentScreen({
     setExpandedKey((prev) => (prev === key ? null : key));
     setPaymentMethod("cash");
     setCashInput("");
-    setTransferInput("");
+    setSplitEntry(EMPTY_SPLIT);
   };
 
   const awaitingPayment = orders.filter((o) => o.status === "awaiting-payment" && !o.isTakeaway);
@@ -346,8 +409,8 @@ export function StaffPaymentScreen({
                         setPaymentMethod={setPaymentMethod}
                         cashInput={cashInput}
                         setCashInput={setCashInput}
-                        transferInput={transferInput}
-                        setTransferInput={setTransferInput}
+                        splitEntry={splitEntry}
+                        setSplitEntry={setSplitEntry}
                         lang={lang}
                         t={t}
                       />
@@ -392,8 +455,8 @@ export function StaffPaymentScreen({
                         setPaymentMethod={setPaymentMethod}
                         cashInput={cashInput}
                         setCashInput={setCashInput}
-                        transferInput={transferInput}
-                        setTransferInput={setTransferInput}
+                        splitEntry={splitEntry}
+                        setSplitEntry={setSplitEntry}
                         lang={lang}
                         t={t}
                       />
