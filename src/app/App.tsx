@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion, deleteField, FieldPath } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { diagImport, diagWatch, diagLog, DiagSpinnerSpy } from "./diag"; // TEMP DIAGNOSTICS
 
@@ -92,7 +92,10 @@ import {
   uid,
   getTodayKey,
   compressImage,
-  fetchUnavailableMenuItems,
+  fetchFreshMenuItems,
+  isCartItemUnavailable,
+  withLiveAvailability,
+  type MeatOption,
   allocateTransfer,
 } from "./utils";
 import { LannaBorder, RestaurantLogo } from "./shared";
@@ -777,21 +780,24 @@ export default function App() {
 
   const isSubmittingOrderRef = useRef(false);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-  // id เมนูในตะกร้าที่เช็คตอนกดยืนยันแล้วพบว่าหมด/ถูกซ่อน — CartScreen ใช้ขึ้นป้าย "หมด" + ข้อความเตือน
-  // ใช้ร่วมกันทั้งตะกร้าลูกค้าและตะกร้าพนักงานสั่งแทน (คนละเครื่องกันอยู่แล้ว) เขียนทับทุกครั้งที่กดยืนยัน
-  const [cartUnavailableIds, setCartUnavailableIds] = useState<string[]>([]);
+  // cartId ของรายการในตะกร้าที่เช็คตอนกดยืนยันแล้วพบว่าสั่งไม่ได้ (เมนูหมด/ซ่อน หรือเลือกเนื้อสัตว์ที่หมด/ถูกซ่อน)
+  // CartScreen ใช้ขึ้นป้าย "หมด" + ข้อความเตือน — ใช้ร่วมกันทั้งตะกร้าลูกค้าและตะกร้าพนักงานสั่งแทน
+  // (คนละเครื่องกันอยู่แล้ว) เขียนทับทุกครั้งที่กดยืนยัน
+  const [cartUnavailableCartIds, setCartUnavailableCartIds] = useState<string[]>([]);
 
-  // true = มีเมนูหมดในตะกร้า ห้ามส่ง | false = ส่งได้ (รวมกรณีเช็คไม่สำเร็จ/ช้าเกิน — ไม่ให้ลูกค้าติดส่งไม่ได้)
-  // เจอเมนูหมดแล้วอัปเดตเมนูในเครื่อง + cache ฝั่งลูกค้าให้ตรงด้วย ไม่ต้องรอ cache 3 นาทีหมดอายุ
+  // true = มีรายการที่สั่งไม่ได้ในตะกร้า ห้ามส่ง | false = ส่งได้ (รวมกรณีเช็คไม่สำเร็จ/ช้าเกิน — ไม่ให้ลูกค้าติดส่งไม่ได้)
+  // เจอแล้วเอาข้อมูลเมนูล่าสุดทับในเครื่อง + cache ฝั่งลูกค้าด้วย ไม่ต้องรอ cache 3 นาทีหมดอายุ
   const cartHasUnavailableItems = async (items: CartItem[]): Promise<boolean> => {
-    const unavailable = await fetchUnavailableMenuItems(items.map((ci) => ci.item.id), SOLD_OUT_CHECK_TIMEOUT_MS);
-    setCartUnavailableIds([...unavailable.keys()]);
-    if (unavailable.size === 0) return false;
+    const fresh = await fetchFreshMenuItems(items.map((ci) => ci.item.id), SOLD_OUT_CHECK_TIMEOUT_MS);
+    const unavailable = items.filter((ci) => {
+      const f = fresh.get(ci.item.id);
+      return f ? isCartItemUnavailable(ci, f) : false;
+    });
+    setCartUnavailableCartIds(unavailable.map((ci) => ci.cartId));
+    if (unavailable.length === 0) return false;
     const patch = <M extends MenuItem>(m: M): M => {
-      const a = unavailable.get(m.id);
-      if (a === "hidden") return { ...m, active: false };
-      if (a === "soldOut") return { ...m, soldOut: true };
-      return m;
+      const f = fresh.get(m.id);
+      return f ? { ...m, ...f } : m;
     };
     setAllMenuItems((prev) => prev.map(patch));
     setMenuItems((prev) => prev.map(patch).filter((m) => m.active !== false));
@@ -818,7 +824,7 @@ export default function App() {
         createdAt: serverTimestamp(),
       });
       setCart([]);
-      setCartUnavailableIds([]);
+      setCartUnavailableCartIds([]);
       setView("order-sent");
     } finally {
       isSubmittingOrderRef.current = false;
@@ -939,7 +945,7 @@ export default function App() {
         });
       }
       setManualCart([]);
-      setCartUnavailableIds([]);
+      setCartUnavailableCartIds([]);
       setManualTable(null);
       setManualIsTakeaway(false);
       setView("staff-orders");
@@ -1266,15 +1272,8 @@ export default function App() {
     }
     // กรณีอื่น (photo ไม่เปลี่ยน / ยังเป็น Unsplash ID เดิม) ไม่ต้องแตะ Storage เลย
 
-    // setDoc เขียนทับทั้ง doc — สถานะการขาย (active/soldOut) ต้องเอาจากค่าล่าสุดใน Firestore (prev) ไม่ใช่จาก
-    // form ที่ copy ไว้ตอนเปิดหน้าแก้ ไม่งั้นแก้ชื่อ/ราคาเมนูที่ "หมด" อยู่แล้วเมนูจะกลับมาขาย หรือทับสถานะที่
-    // เครื่องอื่นเพิ่งเปลี่ยนระหว่างที่เปิดหน้าแก้ค้างไว้ เมนูใหม่เริ่มที่ขายปกติ
-    await setDoc(doc(db, "menuItems", item.id), {
-      ...item,
-      photo,
-      active: prev ? prev.active ?? true : true,
-      soldOut: prev?.soldOut ?? false,
-    });
+    // setDoc เขียนทับทั้ง doc — สถานะการขายทั้งหมด (เมนู + ตัวเลือกเนื้อสัตว์) เอาจากค่าล่าสุด ดู withLiveAvailability
+    await setDoc(doc(db, "menuItems", item.id), { ...withLiveAvailability(item, prev), photo });
     if (!prev) {
       await logActivity({ action: "menu_item_added", itemName: item.name.th, details: { price: item.price } });
     } else if (prev.price !== item.price) {
@@ -1294,6 +1293,29 @@ export default function App() {
       active: availability !== "hidden",
       soldOut: availability === "soldOut",
     });
+  };
+
+  // สลับ หมด/ขาย ของตัวเลือกเนื้อสัตว์ 1 ตัว (ชิปในหน้าจัดการเมนู) — บันทึกทันที ไม่ผ่านหน้าแก้เมนู
+  // แบบในตัว: เพิ่ม/ลบใน soldOutMeats แบบ atomic | แบบกลุ่ม: Firestore แก้ element ใน array ตรงๆ ไม่ได้
+  // จึงเขียน customGroups ทั้งก้อนใหม่ โดยเริ่มจากข้อมูลล่าสุดใน allMenuItems (realtime) แล้วแก้แค่ตัวเลือกนั้น
+  const handleToggleMeatSoldOut = async (item: MenuItem, option: MeatOption) => {
+    const ref = doc(db, "menuItems", item.id);
+    if (option.meat) {
+      await updateDoc(ref, { soldOutMeats: option.soldOut ? arrayRemove(option.meat) : arrayUnion(option.meat) });
+      return;
+    }
+    const live = allMenuItems.find((m) => m.id === item.id) ?? item;
+    const customGroups = (live.customGroups || []).map((g) =>
+      g.id !== option.groupId ? g : {
+        ...g,
+        choices: g.choices.map((c) => {
+          if (c.id !== option.choiceId) return c;
+          if (!option.soldOut) return { ...c, soldOut: true };
+          const { soldOut: _soldOut, ...rest } = c; // กลับมาขาย = ลบฟิลด์ออก (ไม่มีค่า = ขายปกติ)
+          return rest;
+        }),
+      });
+    await updateDoc(ref, { customGroups });
   };
 
   // รับ id ที่เรียงลำดับใหม่แล้ว (จากการลาก) แล้วเขียนค่า order ทับทั้งหมวด
@@ -1484,7 +1506,9 @@ export default function App() {
         <ItemDetailScreen
           lang={lang}
           tableNumber={isManualFlow ? (manualIsTakeaway ? "0" : manualTable!) : tableNumber!}
-          item={activeItem}
+          // ส่งข้อมูลสดจาก menuItems ไม่ใช่ activeItem ที่ copy ไว้ตอนกดเข้ามา — กด "หมด" (ทั้งเมนูหรือเนื้อสัตว์)
+          // ระหว่างเปิดหน้านี้ค้างไว้ก็เห็นทันที (ฝั่งพนักงาน realtime; ฝั่งลูกค้าตาม cache)
+          item={menuItems.find((m) => m.id === activeItem.id) ?? activeItem}
           cart={isManualFlow ? manualCart : cart}
           onBack={() => {
             if (isManualFlow) { setManualSelectedItem(null); setView("staff-manual-menu"); }
@@ -1498,8 +1522,6 @@ export default function App() {
           onLangToggle={toggleLang}
           isTakeaway={isManualFlow && manualIsTakeaway}
           isStaffMode={isManualFlow}
-          // อ่านสถานะสดจาก menuItems ไม่ใช่จาก activeItem ที่ copy ไว้ตอนกดเข้ามา — กด "หมด" ระหว่างเปิดหน้านี้ค้างไว้ก็เห็นทันที
-          soldOut={menuItems.find((m) => m.id === activeItem.id)?.soldOut === true}
         />
       ) : null;
       break;
@@ -1517,7 +1539,7 @@ export default function App() {
           onConfirm={handleConfirmOrder}
           onLangToggle={toggleLang}
           submitting={isSubmittingOrder}
-          unavailableIds={cartUnavailableIds}
+          unavailableCartIds={cartUnavailableCartIds}
         />
       );
       break;
@@ -1614,6 +1636,7 @@ export default function App() {
             onAdd={handleAddNewItem}
             onEdit={handleEditItem}
             onSetAvailability={handleSetAvailability}
+            onToggleMeatSoldOut={handleToggleMeatSoldOut}
             onDelete={handleDeleteItem}
             onAddCategory={handleAddCategory}
             onDeleteCategory={handleDeleteCategory}
@@ -1769,7 +1792,7 @@ export default function App() {
             onLangToggle={toggleLang}
             isTakeaway={manualIsTakeaway}
             submitting={isSubmittingManualOrder}
-            unavailableIds={cartUnavailableIds}
+            unavailableCartIds={cartUnavailableCartIds}
           />
         </Suspense>
       );

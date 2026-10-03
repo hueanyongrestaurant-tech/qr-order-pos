@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { ChevronLeft, Flame, Plus, ShoppingCart, Star, Utensils, X } from "lucide-react";
 import type { Category, CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
-import { cartTotal, resolvePhoto } from "../utils";
+import { cartTotal, menuAvailability, resolvePhoto } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
@@ -124,7 +124,8 @@ export function MenuScreen({
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {filtered.map((item) => {
               // หมด = ยังแสดงตำแหน่งเดิม แต่เป็นสีเทา + ป้าย "หมด" กดไม่ได้ (เมนูที่ซ่อนถูกกรองออกตั้งแต่ App แล้ว)
-              const soldOut = item.soldOut === true;
+              // รวมกรณีเนื้อสัตว์ที่บังคับเลือกหมดทุกตัว (menuAvailability คิดให้)
+              const soldOut = menuAvailability(item) === "soldOut";
               return (
               <button
                 key={item.id}
@@ -136,9 +137,17 @@ export function MenuScreen({
                   : "hover:border-primary/30 hover:shadow-lg active:scale-95"
                   }`}
               >
-                {soldOut && (
+                {/* มีรูป: ป้ายลอยมุมขวาบนของรูป | ไม่มีรูป: ป้ายอยู่บรรทัดบนสุดเหนือชื่อ (ลอยแล้วจะทับชื่อ) */}
+                {soldOut && item.photo && (
                   <div className="absolute top-2 right-2 z-10 bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
                     {t.soldOut}
+                  </div>
+                )}
+                {soldOut && !item.photo && (
+                  <div className="px-2.5 pt-2.5 -mb-1">
+                    <span className="inline-block bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
+                      {t.soldOut}
+                    </span>
                   </div>
                 )}
                 <div className={soldOut ? "grayscale opacity-50" : ""}>

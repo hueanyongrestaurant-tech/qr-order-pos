@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { GripVertical, Plus, Trash2, Utensils } from "lucide-react";
 import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from "../types";
-import { menuAvailability } from "../utils";
+import { allMeatsSoldOut, meatOptions, menuAvailabilitySetting, type MeatOption } from "../utils";
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
 
@@ -93,6 +93,7 @@ interface StaffMenuProps {
   onAdd: () => void;
   onEdit: (item: MenuItem) => void;
   onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
+  onToggleMeatSoldOut: (item: MenuItem, option: MeatOption) => void;
   onDelete: (itemId: string) => void;
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
@@ -108,7 +109,7 @@ interface StaffMenuProps {
 }
 
 export function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onSetAvailability, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
+  lang, items, onAdd, onEdit, onSetAvailability, onToggleMeatSoldOut, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
   scrollTopRef,
 }: StaffMenuProps) {
   const t = T[lang];
@@ -235,6 +236,7 @@ export function StaffMenuScreen({
               catItems={catItems}
               onReorderMenuItems={onReorderMenuItems}
               onSetAvailability={onSetAvailability}
+              onToggleMeatSoldOut={onToggleMeatSoldOut}
               onEdit={onEdit}
               onDelete={onDelete}
               onAskConfirm={onAskConfirm}
@@ -255,7 +257,7 @@ const AVAILABILITY_OPTIONS: { value: MenuAvailability; th: string; en: string; s
 // รายการเมนูภายในหมวดหมู่เดียว แยกเป็นคอมโพเนนต์ต่างหาก
 // เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
 function CategoryMenuItemsList({
-  lang, t, cat, catItems, onReorderMenuItems, onSetAvailability, onEdit, onDelete, onAskConfirm,
+  lang, t, cat, catItems, onReorderMenuItems, onSetAvailability, onToggleMeatSoldOut, onEdit, onDelete, onAskConfirm,
 }: {
   lang: Language;
   t: (typeof T)["en"];
@@ -263,6 +265,7 @@ function CategoryMenuItemsList({
   catItems: (MenuItem & { active?: boolean })[];
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
   onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
+  onToggleMeatSoldOut: (item: MenuItem, option: MeatOption) => void;
   onEdit: (item: MenuItem) => void;
   onDelete: (itemId: string) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
@@ -275,11 +278,17 @@ function CategoryMenuItemsList({
         {lang === "en" ? cat.nameEn : cat.nameTh}
       </h3>
       <div className="space-y-2">
-        {itemDrag.orderedList.map((item) => (
+        {itemDrag.orderedList.map((item) => {
+          const meats = meatOptions(item);
+          // ปุ่ม ขาย/หมด/ซ่อน แสดงค่าที่ "ตั้งไว้" — เนื้อหมดทุกตัวทำให้ลูกค้าเห็นว่าหมดก็จริง แต่ไม่เปลี่ยนปุ่ม
+          // (คิดตอนแสดงผล ไม่เขียน DB) แค่บอกเหตุผลไว้ใต้ราคาแทน เปิดเนื้อกลับมาขาย เมนูก็กลับมาขายเอง
+          const setting = menuAvailabilitySetting(item);
+          const meatsOut = setting === "available" && allMeatsSoldOut(item);
+          return (
           <div
             key={item.id}
             ref={itemDrag.setItemRef(item.id)}
-            className={`bg-card rounded-xl border border-border p-3 flex items-center gap-3 transition-shadow ${item.active === false ? "opacity-50" : ""
+            className={`bg-card rounded-xl border border-border p-3 flex flex-wrap items-center gap-x-3 gap-y-2 transition-shadow ${item.active === false ? "opacity-50" : ""
               } ${itemDrag.dragId === item.id ? "shadow-lg ring-2 ring-primary/40 relative z-10" : ""}`}
             style={{ touchAction: itemDrag.dragId ? "none" : undefined }}
           >
@@ -299,7 +308,7 @@ function CategoryMenuItemsList({
             {/* สลับสถานะการขายกดครั้งเดียว: ขาย (เขียว) / หมด (ส้ม — ลูกค้ายังเห็นแต่กดสั่งไม่ได้) / ซ่อน (เทา — หายจากหน้าสั่ง) */}
             <div className="flex flex-shrink-0 rounded-full bg-muted p-0.5" role="radiogroup">
               {AVAILABILITY_OPTIONS.map((opt) => {
-                const selected = menuAvailability(item) === opt.value;
+                const selected = setting === opt.value;
                 return (
                   <button
                     key={opt.value}
@@ -324,8 +333,36 @@ function CategoryMenuItemsList({
             >
               <Trash2 size={16} />
             </button>
+            {/* ชิปตัวเลือกเนื้อสัตว์ (แสดงตลอด เฉพาะเมนูที่มี) — แตะครั้งเดียวสลับ ขาย/หมด บันทึกทันที
+                ตัวเลือกที่ถูกซ่อนไว้ไม่แสดง (meatOptions กรองออกแล้ว) */}
+            {meats.length > 0 && (
+              <div className="basis-full flex flex-wrap items-center gap-1.5 pl-7">
+                <span className="text-[11px] text-muted-foreground mr-0.5">{lang === "en" ? "Meat:" : "เนื้อ:"}</span>
+                {meats.map((o) => (
+                  <button
+                    key={o.key}
+                    onClick={() => onToggleMeatSoldOut(item, o)}
+                    aria-pressed={o.soldOut}
+                    className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-colors active:scale-95 ${o.soldOut
+                      ? "bg-primary/10 border-primary/50 text-primary"
+                      : "bg-secondary/10 border-secondary/30 text-secondary"
+                      }`}
+                  >
+                    <span className={o.soldOut ? "line-through" : ""}>{lang === "en" ? o.labelEn : o.labelTh}</span>
+                    {o.soldOut && <span className="ml-1 no-underline">{lang === "en" ? "out" : "หมด"}</span>}
+                  </button>
+                ))}
+                {/* อยู่แถวชิป (เต็มความกว้าง) ไม่ใช่ใต้ชื่อ — คอลัมน์ชื่อแคบมากบนมือถือ */}
+                {meatsOut && (
+                  <span className="text-[11px] font-medium text-primary ml-0.5">
+                    {lang === "en" ? "· all out, shown as sold out" : "· เนื้อหมดทุกตัว ลูกค้าเห็นว่าหมด"}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

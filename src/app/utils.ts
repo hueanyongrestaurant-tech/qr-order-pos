@@ -1,4 +1,4 @@
-import type { CartItem, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion } from "./types";
+import type { CartItem, CustomGroup, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion } from "./types";
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
@@ -7,22 +7,140 @@ import { diagTime } from "./diag"; // TEMP DIAGNOSTICS
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
-// สถานะการขายของเมนู — "hidden" มาก่อนเสมอ (ซ่อนอยู่ก็ไม่ต้องสนว่าหมดหรือไม่)
-export function menuAvailability(item: Pick<MenuItem, "active" | "soldOut">): MenuAvailability {
+// ─── สถานะการขาย (เมนู + ตัวเลือกเนื้อสัตว์) ─────────────────────────────────
+
+export const MEAT_CHOICES: MeatChoice[] = ["pork", "chicken", "beef"];
+
+// กลุ่มตัวเลือกที่สร้างเอง (customGroups) นับเป็น "เนื้อสัตว์" จากชื่อกลุ่ม — ตอนนี้ทุกเมนูตั้งชื่อว่า
+// "เลือกเนื้อสัตว์" ตั้ง "หมด" รายตัวเลือกได้เฉพาะกลุ่มแบบนี้ (ไข่ดาว/ความเผ็ด/ฯลฯ ไม่เกี่ยว)
+export function isMeatGroup(group: CustomGroup): boolean {
+  return (group.nameTh || "").includes("เนื้อสัตว์");
+}
+
+// ตัวเลือกเนื้อสัตว์ที่ "แสดงอยู่" (ไม่นับที่ถูกซ่อน) ของเมนู ทั้งแบบในตัว (hasMeatChoice) และแบบกลุ่มที่สร้างเอง
+// ใช้ทั้งชิปในหน้าจัดการเมนูและการคิดว่าเนื้อหมดทุกตัวหรือยัง
+export interface MeatOption {
+  key: string;                // ไม่ซ้ำในเมนูเดียวกัน ใช้เป็น React key
+  meat?: MeatChoice;          // แบบในตัว
+  groupId?: string;           // แบบกลุ่ม
+  choiceId?: string;
+  required: boolean;          // แบบในตัวนับว่าบังคับเลือกเสมอ
+  labelTh: string;
+  labelEn: string;
+  soldOut: boolean;
+}
+
+export function meatOptions(item: MenuItem): MeatOption[] {
+  const options: MeatOption[] = [];
+  if (item.hasMeatChoice) {
+    MEAT_CHOICES.filter((m) => !item.disabledMeats?.includes(m)).forEach((m) => options.push({
+      key: `meat:${m}`,
+      meat: m,
+      required: true,
+      labelTh: T.th.meats[m],
+      labelEn: T.en.meats[m],
+      soldOut: !!item.soldOutMeats?.includes(m),
+    }));
+  }
+  (item.customGroups || []).filter(isMeatGroup).forEach((g) => {
+    g.choices.filter((c) => c.active !== false).forEach((c) => options.push({
+      key: `${g.id}:${c.id}`,
+      groupId: g.id,
+      choiceId: c.id,
+      required: !!g.required,
+      labelTh: c.labelTh,
+      labelEn: c.labelEn,
+      soldOut: !!c.soldOut,
+    }));
+  });
+  return options;
+}
+
+// true = เมนูนี้สั่งไม่ได้เพราะตัวเลือกเนื้อที่ "บังคับเลือก" หมดทุกตัว (ชุดใดชุดหนึ่ง) — คิดตอนแสดงผล ไม่เขียนลง DB
+// เปิดเนื้อกลับมาขายตัวเดียว เมนูก็กลับมาขายเองทันที
+export function allMeatsSoldOut(item: MenuItem): boolean {
+  const required = meatOptions(item).filter((o) => o.required);
+  const sets = new Map<string, MeatOption[]>(); // แยกตามชุด: ในตัว 1 ชุด + กลุ่มละ 1 ชุด
+  required.forEach((o) => {
+    const setKey = o.groupId ?? "builtin";
+    sets.set(setKey, [...(sets.get(setKey) || []), o]);
+  });
+  return [...sets.values()].some((set) => set.length > 0 && set.every((o) => o.soldOut));
+}
+
+// สถานะที่ "ตั้งไว้" (ปุ่ม ขาย/หมด/ซ่อน ในหน้าจัดการเมนู) — "hidden" มาก่อนเสมอ
+export function menuAvailabilitySetting(item: Pick<MenuItem, "active" | "soldOut">): MenuAvailability {
   if (item.active === false) return "hidden";
   if (item.soldOut) return "soldOut";
   return "available";
 }
 
-// เช็คสถานะล่าสุดจาก server ของเมนูในตะกร้าก่อนส่งออเดอร์ (หน้าเมนูลูกค้า cache ไว้ได้ถึง 3 นาที
-// จึงอาจยังเห็นเมนูที่เพิ่งกด "หมด" ว่าขายอยู่) คืน map id → สถานะ เฉพาะเมนูที่หมด/ถูกซ่อนไปแล้ว
+// สถานะ "ที่ลูกค้าเห็นจริง" — เหมือนที่ตั้งไว้ แต่ถ้าเนื้อสัตว์ที่บังคับเลือกหมดทุกตัว นับเป็นหมดด้วย
+export function menuAvailability(item: MenuItem): MenuAvailability {
+  const setting = menuAvailabilitySetting(item);
+  if (setting === "available" && allMeatsSoldOut(item)) return "soldOut";
+  return setting;
+}
+
+// รายการในตะกร้า 1 รายการ สั่งไม่ได้แล้วหรือยัง เทียบกับข้อมูลเมนูล่าสุด (fresh): เมนูหมด/ซ่อน
+// หรือเลือกเนื้อสัตว์ที่หมด/ถูกซ่อนไปแล้ว (ทั้งแบบในตัวและแบบกลุ่ม)
+export function isCartItemUnavailable(ci: CartItem, fresh: MenuItem): boolean {
+  if (menuAvailability(fresh) !== "available") return true;
+  if (fresh.hasMeatChoice && ci.meat && (fresh.soldOutMeats?.includes(ci.meat) || fresh.disabledMeats?.includes(ci.meat))) {
+    return true;
+  }
+  return (fresh.customGroups || []).filter(isMeatGroup).some((g) => {
+    const selected = ci.customSelections?.[g.id] || [];
+    return g.choices.some((c) => selected.includes(c.id) && (c.soldOut || c.active === false));
+  });
+}
+
+// ข้อมูลที่จะบันทึกจากหน้าแก้เมนู (setDoc เขียนทับทั้ง doc): สถานะการขายทั้งหมดต้องเอาจากค่าล่าสุดใน Firestore
+// (prev) ไม่ใช่จาก form ที่ copy ไว้ตอนเปิดหน้าแก้ — ไม่งั้นแก้ชื่อ/ราคาแล้วเมนูหรือเนื้อที่ "หมด" อยู่จะกลับมาขาย
+// หรือทับสถานะที่เครื่องอื่นเพิ่งเปลี่ยนระหว่างที่เปิดหน้าแก้ค้างไว้
+// • เมนู: active / soldOut / soldOutMeats จาก prev (เมนูใหม่ = ขายปกติ)
+// • ตัวเลือกในกลุ่ม: soldOut จาก prev เทียบด้วย id กลุ่ม+ตัวเลือก (ตัวเลือกที่เพิ่มใหม่ใน form = ขายปกติ)
+//   ส่วน active (ซ่อนตัวเลือก) ยังมาจาก form ตามเดิม เพราะตั้งค่ากันในหน้าแก้เมนูนี้เอง
+export function withLiveAvailability(item: MenuItem, prev: MenuItem | undefined): MenuItem {
+  const liveSoldOutChoices = new Set<string>();
+  prev?.customGroups?.forEach((g) => g.choices.forEach((c) => { if (c.soldOut) liveSoldOutChoices.add(`${g.id}:${c.id}`); }));
+  return {
+    ...item,
+    active: prev ? prev.active ?? true : true,
+    soldOut: prev?.soldOut ?? false,
+    soldOutMeats: prev?.soldOutMeats ?? [],
+    ...(item.customGroups
+      ? {
+        customGroups: item.customGroups.map((g) => ({
+          ...g,
+          choices: g.choices.map(({ soldOut: _staleSoldOut, ...c }) =>
+            liveSoldOutChoices.has(`${g.id}:${c.id}`) ? { ...c, soldOut: true } : c),
+        })),
+      }
+      : {}),
+  };
+}
+
+// ชื่อเนื้อสัตว์ที่เลือกในรายการตะกร้า (ไว้ต่อท้ายชื่อเมนูในข้อความเตือน เช่น "ข้าวผัด (แหนม)") — ไม่มีคืน ""
+export function cartItemMeatLabel(ci: CartItem, lang: Language): string {
+  const labels: string[] = [];
+  if (ci.meat) labels.push(T[lang].meats[ci.meat]);
+  (ci.item.customGroups || []).filter(isMeatGroup).forEach((g) => {
+    const selected = ci.customSelections?.[g.id] || [];
+    g.choices.filter((c) => selected.includes(c.id)).forEach((c) => labels.push(lang === "en" ? c.labelEn : c.labelTh));
+  });
+  return labels.join(", ");
+}
+
+// ดึงข้อมูลล่าสุดจาก server ของเมนูในตะกร้าก่อนส่งออเดอร์ (หน้าเมนูลูกค้า cache ไว้ได้ถึง 3 นาที
+// จึงอาจยังเห็นเมนู/เนื้อที่เพิ่งกด "หมด" ว่าขายอยู่) คืน map id → ข้อมูลเมนูล่าสุด ให้ผู้เรียกตัดสินเองทีละรายการ
 // ห้ามทำให้ลูกค้าติดส่งไม่ได้: offline / error / ช้าเกิน timeoutMs → คืน map ว่าง = ข้ามการเช็คแล้วส่งตามปกติ
-// เมนูที่ไม่มี doc (เช่นรายการ addon-xxx ที่พนักงานพิมพ์เอง หรือเมนูที่ถูกลบ) ไม่นับว่าหมด
-export async function fetchUnavailableMenuItems(
+// เมนูที่ไม่มี doc (เช่นรายการ addon-xxx ที่พนักงานพิมพ์เอง หรือเมนูที่ถูกลบ) ไม่อยู่ใน map = ไม่นับว่าหมด
+export async function fetchFreshMenuItems(
   itemIds: string[],
   timeoutMs: number,
-): Promise<Map<string, MenuAvailability>> {
-  const none = new Map<string, MenuAvailability>();
+): Promise<Map<string, MenuItem>> {
+  const none = new Map<string, MenuItem>();
   const ids = [...new Set(itemIds)];
   if (ids.length === 0) return none;
   const check = async () => {
@@ -31,21 +149,18 @@ export async function fetchUnavailableMenuItems(
     const snaps = await Promise.all(
       chunks.map((chunk) => getDocsFromServer(query(collection(db, "menuItems"), where(documentId(), "in", chunk)))),
     );
-    const result = new Map<string, MenuAvailability>();
-    snaps.flatMap((s) => s.docs).forEach((d) => {
-      const availability = menuAvailability(d.data() as MenuItem);
-      if (availability !== "available") result.set(d.id, availability);
-    });
+    const result = new Map<string, MenuItem>();
+    snaps.flatMap((s) => s.docs).forEach((d) => result.set(d.id, { id: d.id, ...d.data() } as MenuItem));
     return result;
   };
   let timer: number | undefined;
-  const timeout = new Promise<Map<string, MenuAvailability>>((resolve) => {
+  const timeout = new Promise<Map<string, MenuItem>>((resolve) => {
     timer = window.setTimeout(() => resolve(none), timeoutMs);
   });
   try {
     return await Promise.race([check(), timeout]);
   } catch (err) {
-    console.error("fetchUnavailableMenuItems failed — skipping sold-out check", err);
+    console.error("fetchFreshMenuItems failed — skipping sold-out check", err);
     return none;
   } finally {
     window.clearTimeout(timer);

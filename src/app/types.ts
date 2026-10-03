@@ -30,7 +30,8 @@ export interface CustomChoice {
   labelTh: string;
   labelEn: string;
   priceDelta: number;
-  active?: boolean;
+  active?: boolean;   // false = ซ่อนตัวเลือกนี้
+  soldOut?: boolean;  // true = หมด (ใช้เฉพาะกลุ่มเนื้อสัตว์ ดู isMeatGroup) ยังแสดงแต่เลือกไม่ได้
 }
 export interface CustomGroup {
   id: string;
@@ -91,7 +92,8 @@ export interface MenuItem {
   hasPlainAddOns?: boolean; // ปิดตัวเลือกจาน/ช้อนส้อม/แก้วน้ำสำหรับเมนูนี้ได้
   customGroups?: CustomGroup[];
   popular?: boolean;
-  disabledMeats?: MeatChoice[];
+  disabledMeats?: MeatChoice[]; // ซ่อนตัวเลือกเนื้อในตัว (hasMeatChoice) ของเมนูนี้
+  soldOutMeats?: MeatChoice[];  // ตัวเลือกเนื้อในตัวที่หมด — ยังแสดงแต่เลือกไม่ได้
   order?: number;
   // สถานะการขาย 3 แบบ (ดู menuAvailability ใน utils.ts) — ทั้งสองฟิลด์ไม่มีค่า = ขายปกติ ไม่ต้อง migrate เมนูเดิม
   active?: boolean;  // false = ซ่อน หายไปจากหน้าสั่งเลย (เมนูตามฤดูกาล)

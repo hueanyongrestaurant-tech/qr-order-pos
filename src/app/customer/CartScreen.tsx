@@ -2,7 +2,7 @@ import { AlertTriangle, ChevronLeft, Loader2, Minus, Plus, ShoppingCart, X } fro
 import type { CartItem, Language } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
-import { cartItemTotal, cartTotal, resolvePhoto } from "../utils";
+import { cartItemMeatLabel, cartItemTotal, cartTotal, resolvePhoto } from "../utils";
 import { LannaBorder } from "../shared";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
@@ -19,15 +19,20 @@ interface CartProps {
   onLangToggle: () => void;
   isTakeaway?: boolean;
   submitting?: boolean;
-  unavailableIds?: string[]; // เมนูที่เช็คตอนกดยืนยันแล้วพบว่าหมด — ขึ้นป้าย "หมด" + ข้อความเตือน
+  unavailableCartIds?: string[]; // รายการที่เช็คตอนกดยืนยันแล้วพบว่าสั่งไม่ได้ — ขึ้นป้าย "หมด" + ข้อความเตือน
 }
 
-export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableIds = [] }: CartProps) {
+export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [] }: CartProps) {
   const t = T[lang];
   const total = cartTotal(cart);
   // คิดจากตะกร้าปัจจุบัน — ลบรายการที่หมดออกแล้วข้อความเตือนหายเอง ไม่ต้อง reset state
-  const isUnavailable = (ci: CartItem) => unavailableIds.includes(ci.item.id);
-  const unavailableNames = [...new Set(cart.filter(isUnavailable).map((ci) => (lang === "en" ? ci.item.name.en : ci.item.name.th)))];
+  // ชื่อในข้อความต่อท้ายด้วยเนื้อสัตว์ที่เลือก (เช่น "ข้าวผัด (แหนม)") ให้รู้ว่าตัวไหนหมด ถ้าเป็นเนื้อหมด
+  const isUnavailable = (ci: CartItem) => unavailableCartIds.includes(ci.cartId);
+  const unavailableNames = [...new Set(cart.filter(isUnavailable).map((ci) => {
+    const name = lang === "en" ? ci.item.name.en : ci.item.name.th;
+    const meat = cartItemMeatLabel(ci, lang);
+    return meat ? `${name} (${meat})` : name;
+  }))];
 
   function optionSummary(ci: CartItem): string {
     const parts: string[] = [];

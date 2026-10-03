@@ -3,10 +3,13 @@ import { Check, ChevronLeft, Flame, Minus, Plus, ShoppingCart, Star } from "luci
 import type { CartItem, Language, MeatChoice, MenuItem, Portion, SpiceLevel } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
-import { itemPrice, resolvePhoto, uid } from "../utils";
+import { isMeatGroup, itemPrice, MEAT_CHOICES, menuAvailability, resolvePhoto, uid } from "../utils";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 // ─── Item Detail Screen ───────────────────────────────────────────────────────
+
+// ตัวเลือก (เนื้อสัตว์) ที่หมด — สีเทา ขอบประ กดไม่ได้
+const SOLD_OUT_CHOICE_CLASS = "bg-muted border-dashed border-border text-muted-foreground opacity-60 cursor-not-allowed";
 
 interface ItemDetailProps {
   lang: Language;
@@ -18,16 +21,21 @@ interface ItemDetailProps {
   onViewCart: () => void;
   onLangToggle: () => void;
   isTakeaway?: boolean;
-  isStaffMode?: boolean;
-  soldOut?: boolean; // true เฉพาะตอนพนักงานพิมพ์ออเดอร์แทนลูกค้า (manual order) — คุม custom add-on ห้ามให้ลูกค้าเห็น
+  isStaffMode?: boolean; // true เฉพาะตอนพนักงานพิมพ์ออเดอร์แทนลูกค้า (manual order) — คุม custom add-on ห้ามให้ลูกค้าเห็น
 }
 
 export function ItemDetailScreen({
-  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode, soldOut,
+  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode,
 }: ItemDetailProps) {
   const t = T[lang];
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
-  const [meat, setMeat] = useState<MeatChoice>("chicken");
+  // ตัวเลือกเนื้อในตัวที่แสดง (ไม่นับที่ซ่อน) — ตัวที่หมดยังแสดงแต่เลือกไม่ได้
+  const meats: MeatChoice[] = MEAT_CHOICES.filter((m) => !item.disabledMeats?.includes(m));
+  const isMeatSoldOut = (m: MeatChoice) => !!item.soldOutMeats?.includes(m);
+  // ค่าเริ่มต้นยังเป็น "ไก่" เหมือนเดิมถ้าไก่ยังขาย — ถ้าไก่ถูกซ่อน/หมด ใช้ตัวแรกที่ยังขายอยู่แทน
+  // (เดิมเป็นไก่เสมอ ไก่ถูกซ่อนแล้วลูกค้าก็ยังสั่งไก่ได้โดยไม่เห็นตัวเลือก)
+  const [meat, setMeat] = useState<MeatChoice>(() =>
+    (["chicken", ...meats] as MeatChoice[]).find((m) => meats.includes(m) && !isMeatSoldOut(m)) ?? meats[0] ?? "chicken");
   const [portion, setPortion] = useState<Portion>("regular");
   const [spice, setSpice] = useState<SpiceLevel>(1);
   const [addEgg, setAddEgg] = useState(false);
@@ -38,7 +46,6 @@ export function ItemDetailScreen({
   const [customAddOnPrice, setCustomAddOnPrice] = useState(0);
   const [quantity, setQuantity] = useState(1);
 
-  const meats: MeatChoice[] = (["pork", "chicken", "beef"] as MeatChoice[]).filter((m) => !item.disabledMeats?.includes(m));
   const spiceLevels: SpiceLevel[] = [0, 1, 2, 3];
   const effectiveCustomAddOnPrice = isStaffMode ? customAddOnPrice : 0;
   const totalPrice = itemPrice(item, meat, portion, addEgg, selectedAddOns, customSelections, effectiveCustomAddOnPrice) * quantity;
@@ -63,6 +70,12 @@ export function ItemDetailScreen({
   const missingRequired = item.customGroups?.some(
     (g) => g.required && (customSelections[g.id] || []).length === 0
   );
+  // item เป็นข้อมูลสด (App ส่งจาก menuItems) — เมนูหรือเนื้อที่เลือกไว้อาจเพิ่งถูกกด "หมด" ระหว่างเปิดหน้านี้
+  const soldOut = menuAvailability(item) !== "available";
+  const selectedMeatSoldOut =
+    (item.hasMeatChoice && isMeatSoldOut(meat)) ||
+    (item.customGroups || []).filter(isMeatGroup).some((g) =>
+      g.choices.some((c) => c.soldOut && (customSelections[g.id] || []).includes(c.id)));
 
   const handleAdd = () => {
     onAddToCart({
@@ -165,21 +178,29 @@ export function ItemDetailScreen({
           <div className="mb-5">
             <h3 className="font-semibold text-foreground mb-3 text-sm">{t.meatChoice}</h3>
             <div className="flex gap-2">
-              {meats.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMeat(m)}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${meat === m
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card border-border text-foreground hover:border-primary/40"
-                    }`}
-                >
-                  {T[lang].meats[m]}
-                  {item.meatPriceDeltas?.[m] ? (
-                    <span className="block text-[10px] opacity-70">+{t.thb}{item.meatPriceDeltas[m]}</span>
-                  ) : null}
-                </button>
-              ))}
+              {meats.map((m) => {
+                const out = isMeatSoldOut(m);
+                return (
+                  <button
+                    key={m}
+                    onClick={() => setMeat(m)}
+                    disabled={out}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${out
+                      ? SOLD_OUT_CHOICE_CLASS
+                      : meat === m
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-card border-border text-foreground hover:border-primary/40"
+                      }`}
+                  >
+                    {T[lang].meats[m]}
+                    {out ? (
+                      <span className="block text-[10px] font-bold">{t.soldOut}</span>
+                    ) : item.meatPriceDeltas?.[m] ? (
+                      <span className="block text-[10px] opacity-70">+{t.thb}{item.meatPriceDeltas[m]}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -304,17 +325,24 @@ export function ItemDetailScreen({
             <div className="flex flex-wrap gap-2">
               {group.choices.filter((c) => c.active !== false).map((choice) => {
                 const selected = (customSelections[group.id] || []).includes(choice.id);
+                // "หมด" รายตัวเลือกใช้เฉพาะกลุ่มเนื้อสัตว์ — กลุ่มอื่นไม่สนฟิลด์นี้
+                const out = isMeatGroup(group) && !!choice.soldOut;
                 return (
                   <button
                     key={choice.id}
                     onClick={() => toggleCustomChoice(group.id, choice.id, group.type)}
-                    className={`px-3.5 py-2 rounded-xl text-sm font-medium border-2 transition-all ${selected
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card border-border text-foreground hover:border-primary/40"
+                    disabled={out}
+                    className={`px-3.5 py-2 rounded-xl text-sm font-medium border-2 transition-all ${out
+                      ? SOLD_OUT_CHOICE_CLASS
+                      : selected
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-card border-border text-foreground hover:border-primary/40"
                       }`}
                   >
                     {lang === "en" ? choice.labelEn : choice.labelTh}
-                    {choice.priceDelta ? (
+                    {out ? (
+                      <span className="ml-1 text-[10px] font-bold">{t.soldOut}</span>
+                    ) : choice.priceDelta ? (
                       <span className="ml-1 text-[10px] opacity-70">+{t.thb}{choice.priceDelta}</span>
                     ) : null}
                   </button>
@@ -393,7 +421,7 @@ export function ItemDetailScreen({
       <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
         <button
           onClick={handleAdd}
-          disabled={missingRequired || soldOut}
+          disabled={missingRequired || soldOut || selectedMeatSoldOut}
           className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-sm font-bold">{quantity}</span>
