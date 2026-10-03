@@ -18,11 +18,12 @@ interface ItemDetailProps {
   onViewCart: () => void;
   onLangToggle: () => void;
   isTakeaway?: boolean;
-  isStaffMode?: boolean; // true เฉพาะตอนพนักงานพิมพ์ออเดอร์แทนลูกค้า (manual order) — คุม custom add-on ห้ามให้ลูกค้าเห็น
+  isStaffMode?: boolean;
+  soldOut?: boolean; // true เฉพาะตอนพนักงานพิมพ์ออเดอร์แทนลูกค้า (manual order) — คุม custom add-on ห้ามให้ลูกค้าเห็น
 }
 
 export function ItemDetailScreen({
-  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode,
+  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode, soldOut,
 }: ItemDetailProps) {
   const t = T[lang];
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
@@ -392,11 +393,11 @@ export function ItemDetailScreen({
       <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
         <button
           onClick={handleAdd}
-          disabled={missingRequired}
+          disabled={missingRequired || soldOut}
           className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-sm font-bold">{quantity}</span>
-          <span>{t.addToCart}</span>
+          <span>{soldOut ? t.soldOut : t.addToCart}</span>
           <span className="font-bold">{t.thb}{totalPrice}</span>
         </button>
       </div>

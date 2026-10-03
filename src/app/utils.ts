@@ -1,11 +1,56 @@
-import type { CartItem, Language, MeatChoice, MenuItem, Order, Portion } from "./types";
+import type { CartItem, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion } from "./types";
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
-import { collection, getDocs, orderBy, query, where, limit } from "firebase/firestore";
+import { collection, documentId, getDocs, getDocsFromServer, orderBy, query, where, limit } from "firebase/firestore";
 import { diagTime } from "./diag"; // TEMP DIAGNOSTICS
 
 // ─── Utility functions ────────────────────────────────────────────────────────
+
+// สถานะการขายของเมนู — "hidden" มาก่อนเสมอ (ซ่อนอยู่ก็ไม่ต้องสนว่าหมดหรือไม่)
+export function menuAvailability(item: Pick<MenuItem, "active" | "soldOut">): MenuAvailability {
+  if (item.active === false) return "hidden";
+  if (item.soldOut) return "soldOut";
+  return "available";
+}
+
+// เช็คสถานะล่าสุดจาก server ของเมนูในตะกร้าก่อนส่งออเดอร์ (หน้าเมนูลูกค้า cache ไว้ได้ถึง 3 นาที
+// จึงอาจยังเห็นเมนูที่เพิ่งกด "หมด" ว่าขายอยู่) คืน map id → สถานะ เฉพาะเมนูที่หมด/ถูกซ่อนไปแล้ว
+// ห้ามทำให้ลูกค้าติดส่งไม่ได้: offline / error / ช้าเกิน timeoutMs → คืน map ว่าง = ข้ามการเช็คแล้วส่งตามปกติ
+// เมนูที่ไม่มี doc (เช่นรายการ addon-xxx ที่พนักงานพิมพ์เอง หรือเมนูที่ถูกลบ) ไม่นับว่าหมด
+export async function fetchUnavailableMenuItems(
+  itemIds: string[],
+  timeoutMs: number,
+): Promise<Map<string, MenuAvailability>> {
+  const none = new Map<string, MenuAvailability>();
+  const ids = [...new Set(itemIds)];
+  if (ids.length === 0) return none;
+  const check = async () => {
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30)); // "in" รับได้สูงสุด 30 ค่า
+    const snaps = await Promise.all(
+      chunks.map((chunk) => getDocsFromServer(query(collection(db, "menuItems"), where(documentId(), "in", chunk)))),
+    );
+    const result = new Map<string, MenuAvailability>();
+    snaps.flatMap((s) => s.docs).forEach((d) => {
+      const availability = menuAvailability(d.data() as MenuItem);
+      if (availability !== "available") result.set(d.id, availability);
+    });
+    return result;
+  };
+  let timer: number | undefined;
+  const timeout = new Promise<Map<string, MenuAvailability>>((resolve) => {
+    timer = window.setTimeout(() => resolve(none), timeoutMs);
+  });
+  try {
+    return await Promise.race([check(), timeout]);
+  } catch (err) {
+    console.error("fetchUnavailableMenuItems failed — skipping sold-out check", err);
+    return none;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 export function resolvePhoto(photo: string, w = 400, h = 300): string {
   if (!photo) return "";

@@ -122,12 +122,26 @@ export function MenuScreen({
         {/* Menu grid */}
         <div className="flex-1 px-4 py-4 pb-32">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {filtered.map((item) => (
+            {filtered.map((item) => {
+              // หมด = ยังแสดงตำแหน่งเดิม แต่เป็นสีเทา + ป้าย "หมด" กดไม่ได้ (เมนูที่ซ่อนถูกกรองออกตั้งแต่ App แล้ว)
+              const soldOut = item.soldOut === true;
+              return (
               <button
                 key={item.id}
                 onClick={() => onItemClick(item)}
-                className="bg-card rounded-2xl overflow-hidden text-left border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-150 active:scale-95 group"
+                disabled={soldOut}
+                aria-disabled={soldOut}
+                className={`relative bg-card rounded-2xl overflow-hidden text-left border border-border transition-all duration-150 group ${soldOut
+                  ? "cursor-not-allowed"
+                  : "hover:border-primary/30 hover:shadow-lg active:scale-95"
+                  }`}
               >
+                {soldOut && (
+                  <div className="absolute top-2 right-2 z-10 bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
+                    {t.soldOut}
+                  </div>
+                )}
+                <div className={soldOut ? "grayscale opacity-50" : ""}>
                 {item.photo && (
                   <div className="aspect-[4/3] relative bg-muted overflow-hidden">
                     <ImageWithFallback
@@ -161,8 +175,10 @@ export function MenuScreen({
                     {t.thb}{item.price}
                   </div>
                 </div>
+                </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 

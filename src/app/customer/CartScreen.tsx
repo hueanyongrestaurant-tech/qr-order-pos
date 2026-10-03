@@ -1,4 +1,4 @@
-import { ChevronLeft, Minus, Plus, ShoppingCart, X } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Loader2, Minus, Plus, ShoppingCart, X } from "lucide-react";
 import type { CartItem, Language } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
@@ -19,11 +19,15 @@ interface CartProps {
   onLangToggle: () => void;
   isTakeaway?: boolean;
   submitting?: boolean;
+  unavailableIds?: string[]; // เมนูที่เช็คตอนกดยืนยันแล้วพบว่าหมด — ขึ้นป้าย "หมด" + ข้อความเตือน
 }
 
-export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting }: CartProps) {
+export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableIds = [] }: CartProps) {
   const t = T[lang];
   const total = cartTotal(cart);
+  // คิดจากตะกร้าปัจจุบัน — ลบรายการที่หมดออกแล้วข้อความเตือนหายเอง ไม่ต้อง reset state
+  const isUnavailable = (ci: CartItem) => unavailableIds.includes(ci.item.id);
+  const unavailableNames = [...new Set(cart.filter(isUnavailable).map((ci) => (lang === "en" ? ci.item.name.en : ci.item.name.th)))];
 
   function optionSummary(ci: CartItem): string {
     const parts: string[] = [];
@@ -90,7 +94,7 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
         ) : (
           <div className="space-y-3">
             {cart.map((ci) => (
-              <div key={ci.cartId} className="bg-card rounded-2xl p-4 border border-border">
+              <div key={ci.cartId} className={`bg-card rounded-2xl p-4 border ${isUnavailable(ci) ? "border-destructive/50" : "border-border"}`}>
                 <div className="flex gap-3">
                   {ci.item.photo && (
                     <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted flex-shrink-0">
@@ -105,6 +109,11 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-semibold text-foreground text-sm leading-snug">
                         {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                        {isUnavailable(ci) && (
+                          <span className="ml-1.5 align-middle bg-[#3C2414] text-[#FFF8F0] text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            {t.soldOut}
+                          </span>
+                        )}
                       </div>
                       <button
                         onClick={() => onRemove(ci.cartId)}
@@ -154,6 +163,12 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
 
       {cart.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border px-4 pb-4 pt-3">
+          {unavailableNames.length > 0 && (
+            <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium">
+              <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{t.soldOutInCart(unavailableNames.join(", "))}</span>
+            </div>
+          )}
           <div className="flex items-center justify-between mb-3">
             <span className="font-semibold text-foreground text-base">{t.total}</span>
             <span className="font-display font-bold text-2xl text-primary">{t.thb}{total}</span>
@@ -164,7 +179,12 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
             className={`w-full bg-secondary text-secondary-foreground py-4 rounded-2xl font-semibold text-lg shadow-lg transition-all ${submitting ? "opacity-60 cursor-not-allowed" : "hover:bg-secondary/90 active:scale-95"
               }`}
           >
-            {t.confirmOrder}
+            {submitting ? (
+              <span className="inline-flex items-center justify-center gap-2">
+                <Loader2 size={20} className="animate-spin" />
+                {t.sendingOrder}
+              </span>
+            ) : t.confirmOrder}
           </button>
         </div>
       )}

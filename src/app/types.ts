@@ -85,7 +85,12 @@ export interface MenuItem {
   popular?: boolean;
   disabledMeats?: MeatChoice[];
   order?: number;
+  // สถานะการขาย 3 แบบ (ดู menuAvailability ใน utils.ts) — ทั้งสองฟิลด์ไม่มีค่า = ขายปกติ ไม่ต้อง migrate เมนูเดิม
+  active?: boolean;  // false = ซ่อน หายไปจากหน้าสั่งเลย (เมนูตามฤดูกาล)
+  soldOut?: boolean; // true = หมด ยังแสดงแต่เป็นสีเทา กดสั่งไม่ได้ (มีผลเฉพาะตอน active ไม่ใช่ false)
 }
+
+export type MenuAvailability = "available" | "soldOut" | "hidden";
 
 export interface CartItem {
   cartId: string;

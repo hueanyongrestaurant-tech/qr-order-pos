@@ -59,6 +59,7 @@ import type {
   ActivityAction,
   ActivityLog,
   MenuItem,
+  MenuAvailability,
   CartItem,
   Order,
   ExpenseLineItem,
@@ -91,6 +92,7 @@ import {
   uid,
   getTodayKey,
   compressImage,
+  fetchUnavailableMenuItems,
 } from "./utils";
 import { LannaBorder, RestaurantLogo } from "./shared";
 // เฉพาะ printerStore เพราะเป็น localStorage ล้วน ไม่มี Capacitor — ส่วน nativePrinter.ts
@@ -302,6 +304,8 @@ const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-
 const MENU_CACHE_TTL_MS = 3 * 60 * 1000;
 // เวลารอ Firebase Auth กู้ session ก่อนยอมแสดงฟอร์มรหัสพนักงาน (ปกติเสร็จในไม่กี่ร้อย ms)
 const AUTH_CHECK_TIMEOUT_MS = 8000;
+// เวลารอเช็คสถานะ "หมด" ล่าสุดของเมนูในตะกร้าก่อนส่งออเดอร์ — เกินนี้ข้ามการเช็คแล้วส่งเลย (ร้านเน็ตช้า)
+const SOLD_OUT_CHECK_TIMEOUT_MS = 3000;
 
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
@@ -772,6 +776,28 @@ export default function App() {
 
   const isSubmittingOrderRef = useRef(false);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  // id เมนูในตะกร้าที่เช็คตอนกดยืนยันแล้วพบว่าหมด/ถูกซ่อน — CartScreen ใช้ขึ้นป้าย "หมด" + ข้อความเตือน
+  // ใช้ร่วมกันทั้งตะกร้าลูกค้าและตะกร้าพนักงานสั่งแทน (คนละเครื่องกันอยู่แล้ว) เขียนทับทุกครั้งที่กดยืนยัน
+  const [cartUnavailableIds, setCartUnavailableIds] = useState<string[]>([]);
+
+  // true = มีเมนูหมดในตะกร้า ห้ามส่ง | false = ส่งได้ (รวมกรณีเช็คไม่สำเร็จ/ช้าเกิน — ไม่ให้ลูกค้าติดส่งไม่ได้)
+  // เจอเมนูหมดแล้วอัปเดตเมนูในเครื่อง + cache ฝั่งลูกค้าให้ตรงด้วย ไม่ต้องรอ cache 3 นาทีหมดอายุ
+  const cartHasUnavailableItems = async (items: CartItem[]): Promise<boolean> => {
+    const unavailable = await fetchUnavailableMenuItems(items.map((ci) => ci.item.id), SOLD_OUT_CHECK_TIMEOUT_MS);
+    setCartUnavailableIds([...unavailable.keys()]);
+    if (unavailable.size === 0) return false;
+    const patch = <M extends MenuItem>(m: M): M => {
+      const a = unavailable.get(m.id);
+      if (a === "hidden") return { ...m, active: false };
+      if (a === "soldOut") return { ...m, soldOut: true };
+      return m;
+    };
+    setAllMenuItems((prev) => prev.map(patch));
+    setMenuItems((prev) => prev.map(patch).filter((m) => m.active !== false));
+    const cached = readSession<{ categories: Category[]; menuItems: MenuItem[]; timestamp: number }>("customerMenuCache");
+    if (cached) writeSession("customerMenuCache", { ...cached, menuItems: cached.menuItems.map(patch) });
+    return true;
+  };
 
   const handleConfirmOrder = async () => {
     // กันกดปุ่ม/แตะจอซ้ำเร็ว ๆ (พบบ่อยทั้ง iOS และ Android) ที่ทำให้ยิง addDoc สองครั้ง
@@ -781,6 +807,7 @@ export default function App() {
     isSubmittingOrderRef.current = true;
     setIsSubmittingOrder(true);
     try {
+      if (await cartHasUnavailableItems(cart)) return;
       // JSON round-trip: ตัดฟิลด์ undefined ให้ Firestore | .map(stripItemPhoto): ตัดรูป base64 ที่ทำ doc บวม
       const cleanItems = (JSON.parse(JSON.stringify(cart)) as CartItem[]).map(stripItemPhoto);
       await addDoc(collection(db, "orders"), {
@@ -790,6 +817,7 @@ export default function App() {
         createdAt: serverTimestamp(),
       });
       setCart([]);
+      setCartUnavailableIds([]);
       setView("order-sent");
     } finally {
       isSubmittingOrderRef.current = false;
@@ -882,6 +910,7 @@ export default function App() {
     isSubmittingManualOrderRef.current = true;
     setIsSubmittingManualOrder(true);
     try {
+      if (await cartHasUnavailableItems(manualCart)) return;
       const cleanItems = (JSON.parse(JSON.stringify(manualCart)) as CartItem[]).map(stripItemPhoto);
       if (manualIsTakeaway) {
         const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
@@ -909,6 +938,7 @@ export default function App() {
         });
       }
       setManualCart([]);
+      setCartUnavailableIds([]);
       setManualTable(null);
       setManualIsTakeaway(false);
       setView("staff-orders");
@@ -1226,7 +1256,15 @@ export default function App() {
     }
     // กรณีอื่น (photo ไม่เปลี่ยน / ยังเป็น Unsplash ID เดิม) ไม่ต้องแตะ Storage เลย
 
-    await setDoc(doc(db, "menuItems", item.id), { ...item, photo, active: (item as any).active ?? true });
+    // setDoc เขียนทับทั้ง doc — สถานะการขาย (active/soldOut) ต้องเอาจากค่าล่าสุดใน Firestore (prev) ไม่ใช่จาก
+    // form ที่ copy ไว้ตอนเปิดหน้าแก้ ไม่งั้นแก้ชื่อ/ราคาเมนูที่ "หมด" อยู่แล้วเมนูจะกลับมาขาย หรือทับสถานะที่
+    // เครื่องอื่นเพิ่งเปลี่ยนระหว่างที่เปิดหน้าแก้ค้างไว้ เมนูใหม่เริ่มที่ขายปกติ
+    await setDoc(doc(db, "menuItems", item.id), {
+      ...item,
+      photo,
+      active: prev ? prev.active ?? true : true,
+      soldOut: prev?.soldOut ?? false,
+    });
     if (!prev) {
       await logActivity({ action: "menu_item_added", itemName: item.name.th, details: { price: item.price } });
     } else if (prev.price !== item.price) {
@@ -1240,8 +1278,12 @@ export default function App() {
     setView("staff-menu");
   };
 
-  const handleToggleActive = async (item: MenuItem, active: boolean) => {
-    await updateDoc(doc(db, "menuItems", item.id), { active });
+  // เขียนทั้งสองฟิลด์ทุกครั้ง สถานะจะได้ไม่ค้างข้ามกัน (เช่นซ่อนเมนูที่หมดอยู่ แล้วเปิดกลับมากลายเป็นหมดเอง)
+  const handleSetAvailability = async (item: MenuItem, availability: MenuAvailability) => {
+    await updateDoc(doc(db, "menuItems", item.id), {
+      active: availability !== "hidden",
+      soldOut: availability === "soldOut",
+    });
   };
 
   // รับ id ที่เรียงลำดับใหม่แล้ว (จากการลาก) แล้วเขียนค่า order ทับทั้งหมวด
@@ -1446,6 +1488,8 @@ export default function App() {
           onLangToggle={toggleLang}
           isTakeaway={isManualFlow && manualIsTakeaway}
           isStaffMode={isManualFlow}
+          // อ่านสถานะสดจาก menuItems ไม่ใช่จาก activeItem ที่ copy ไว้ตอนกดเข้ามา — กด "หมด" ระหว่างเปิดหน้านี้ค้างไว้ก็เห็นทันที
+          soldOut={menuItems.find((m) => m.id === activeItem.id)?.soldOut === true}
         />
       ) : null;
       break;
@@ -1463,6 +1507,7 @@ export default function App() {
           onConfirm={handleConfirmOrder}
           onLangToggle={toggleLang}
           submitting={isSubmittingOrder}
+          unavailableIds={cartUnavailableIds}
         />
       );
       break;
@@ -1558,7 +1603,7 @@ export default function App() {
             categories={allCategories}
             onAdd={handleAddNewItem}
             onEdit={handleEditItem}
-            onToggleActive={handleToggleActive}
+            onSetAvailability={handleSetAvailability}
             onDelete={handleDeleteItem}
             onAddCategory={handleAddCategory}
             onDeleteCategory={handleDeleteCategory}
@@ -1714,6 +1759,7 @@ export default function App() {
             onLangToggle={toggleLang}
             isTakeaway={manualIsTakeaway}
             submitting={isSubmittingManualOrder}
+            unavailableIds={cartUnavailableIds}
           />
         </Suspense>
       );

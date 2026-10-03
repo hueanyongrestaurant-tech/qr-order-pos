@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { GripVertical, Plus, Trash2, Utensils } from "lucide-react";
-import type { Category, Language, MenuItem, StaffTab } from "../types";
+import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from "../types";
+import { menuAvailability } from "../utils";
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
 
@@ -91,7 +92,7 @@ interface StaffMenuProps {
   items: (MenuItem & { active?: boolean })[];
   onAdd: () => void;
   onEdit: (item: MenuItem) => void;
-  onToggleActive: (item: MenuItem, active: boolean) => void;
+  onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
   onDelete: (itemId: string) => void;
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
@@ -107,7 +108,7 @@ interface StaffMenuProps {
 }
 
 export function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onToggleActive, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
+  lang, items, onAdd, onEdit, onSetAvailability, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
   scrollTopRef,
 }: StaffMenuProps) {
   const t = T[lang];
@@ -233,7 +234,7 @@ export function StaffMenuScreen({
               cat={cat}
               catItems={catItems}
               onReorderMenuItems={onReorderMenuItems}
-              onToggleActive={onToggleActive}
+              onSetAvailability={onSetAvailability}
               onEdit={onEdit}
               onDelete={onDelete}
               onAskConfirm={onAskConfirm}
@@ -245,17 +246,23 @@ export function StaffMenuScreen({
   );
 }
 
+const AVAILABILITY_OPTIONS: { value: MenuAvailability; th: string; en: string; selectedClass: string }[] = [
+  { value: "available", th: "ขาย", en: "On", selectedClass: "bg-secondary text-secondary-foreground shadow-sm" },
+  { value: "soldOut", th: "หมด", en: "Sold out", selectedClass: "bg-primary text-primary-foreground shadow-sm" },
+  { value: "hidden", th: "ซ่อน", en: "Hidden", selectedClass: "bg-[#3C2414]/70 text-[#FFF8F0] shadow-sm" },
+];
+
 // รายการเมนูภายในหมวดหมู่เดียว แยกเป็นคอมโพเนนต์ต่างหาก
 // เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
 function CategoryMenuItemsList({
-  lang, t, cat, catItems, onReorderMenuItems, onToggleActive, onEdit, onDelete, onAskConfirm,
+  lang, t, cat, catItems, onReorderMenuItems, onSetAvailability, onEdit, onDelete, onAskConfirm,
 }: {
   lang: Language;
   t: (typeof T)["en"];
   cat: Category;
   catItems: (MenuItem & { active?: boolean })[];
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
-  onToggleActive: (item: MenuItem, active: boolean) => void;
+  onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
   onEdit: (item: MenuItem) => void;
   onDelete: (itemId: string) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
@@ -289,15 +296,23 @@ function CategoryMenuItemsList({
               </div>
               <div className="text-muted-foreground text-xs">{t.thb}{item.price}</div>
             </div>
-            <button
-              onClick={() => onToggleActive(item, item.active === false)}
-              className={`text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0 ${item.active === false
-                ? "bg-muted text-muted-foreground"
-                : "bg-secondary/15 text-secondary"
-                }`}
-            >
-              {item.active === false ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
-            </button>
+            {/* สลับสถานะการขายกดครั้งเดียว: ขาย (เขียว) / หมด (ส้ม — ลูกค้ายังเห็นแต่กดสั่งไม่ได้) / ซ่อน (เทา — หายจากหน้าสั่ง) */}
+            <div className="flex flex-shrink-0 rounded-full bg-muted p-0.5" role="radiogroup">
+              {AVAILABILITY_OPTIONS.map((opt) => {
+                const selected = menuAvailability(item) === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => { if (!selected) onSetAvailability(item, opt.value); }}
+                    className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${selected ? opt.selectedClass : "text-muted-foreground"}`}
+                  >
+                    {lang === "en" ? opt.en : opt.th}
+                  </button>
+                );
+              })}
+            </div>
             <button onClick={() => onEdit(item)} className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0">
               <Utensils size={16} />
             </button>
