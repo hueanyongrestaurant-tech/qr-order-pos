@@ -37,9 +37,13 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
           >
             <Printer size={17} />
           </button>
-          <button onClick={onLogout} className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5">
-            <LogOut size={17} />
-          </button>
+          {/* แอป Android ไม่มีปุ่ม logout — ล็อกอินครั้งแรกครั้งเดียวแล้ว session อยู่ตลอด กันเผลอกดแล้วต้องใส่รหัสใหม่
+              (ถ้าจำเป็นต้องออกจริง ให้ล้างข้อมูลแอปใน Android Settings) เว็บยังมีปุ่มเหมือนเดิม */}
+          {import.meta.env.MODE !== "capacitor" && (
+            <button onClick={onLogout} className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5">
+              <LogOut size={17} />
+            </button>
+          )}
         </div>
       </div>
       {showPrinterSettings && (

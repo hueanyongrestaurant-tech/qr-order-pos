@@ -300,6 +300,8 @@ const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-
 
 // อายุ cache เมนู (categories+menuItems) ฝั่งลูกค้าใน sessionStorage — ดู effect ที่ใช้ค่านี้
 const MENU_CACHE_TTL_MS = 3 * 60 * 1000;
+// เวลารอ Firebase Auth กู้ session ก่อนยอมแสดงฟอร์มรหัสพนักงาน (ปกติเสร็จในไม่กี่ร้อย ms)
+const AUTH_CHECK_TIMEOUT_MS = 8000;
 
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
@@ -363,6 +365,10 @@ export default function App() {
   // (เช่นตอน Auth IndexedDB สะดุดเพราะเปิดหลายแท็บ) ใช้เป็น gate ของ Firestore listener ฝั่งพนักงาน
   // เพื่อไม่ให้ listener ถูก unsubscribe ทิ้งกลางคันแล้วข้อมูลหายทั้งที่ยัง login อยู่
   const [everAuthed, setEverAuthed] = useState(false);
+  // false = Firebase Auth ยังกู้ session ที่ค้างไว้ไม่เสร็จ (onAuthStateChanged ยังไม่ fire ครั้งแรก)
+  // ระหว่างนี้หน้า "staff-login" แสดงหน้าโหลด (โลโก้) แทนฟอร์มรหัส — ไม่ให้พนักงานเห็นฟอร์มแล้วพิมพ์รหัสซ้ำ
+  // ทั้งที่ session ยังอยู่ ฝั่งลูกค้าไม่ใช้ค่านี้
+  const [authChecked, setAuthChecked] = useState(false);
 
   // ฝั่งพนักงาน (ไม่มี ?table=): realtime listener เดิม — เห็นการแก้ไขเมนูทันทีเสมอ
   useEffect(() => {
@@ -728,8 +734,12 @@ export default function App() {
       }
       setStaffLoggedIn(!!user);
       if (user) setEverAuthed(true); // latch — ไม่มีการ set false ตรงนี้ (ทำเฉพาะตอนกด logout)
+      setAuthChecked(true);
     });
-    return () => unsubscribe();
+    // กันค้างหน้าโหลดตลอดไปถ้า Auth init ไม่ตอบเลย (เช่น IndexedDB สะดุด) — ครบเวลาแล้วโชว์ฟอร์มรหัสไปเลย
+    // ถ้า session กลับมาทีหลัง onAuthStateChanged ข้างบนก็ยังพาเข้าหน้าพนักงานเองตามปกติ
+    const fallback = window.setTimeout(() => setAuthChecked(true), AUTH_CHECK_TIMEOUT_MS);
+    return () => { unsubscribe(); window.clearTimeout(fallback); };
   }, []);
 
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
@@ -1468,7 +1478,12 @@ export default function App() {
       break;
 
     case "staff-login":
-      content = (
+      content = !authChecked ? (
+        <div className="min-h-screen bg-[#3C2414] flex flex-col items-center justify-center gap-5">
+          <img src={logo} alt="Hueanyong Kitchen" className="w-28 h-28 object-contain" />
+          <Loader2 size={22} className="animate-spin text-[#E6D5BA]/60" />
+        </div>
+      ) : (
         <Suspense fallback={staffLoadingFallback}>
           <StaffLoginScreen
             lang={lang}
