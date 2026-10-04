@@ -42,11 +42,12 @@
 
 import { Capacitor } from "@capacitor/core";
 import { CapacitorThermalPrinter } from "capacitor-thermal-printer";
-import type { CartItem, Language, Order } from "../types";
+import type { Category, Language, Order } from "../types";
 import { T } from "../translations";
-import { liveItems, cartItemTotal, formatOptionDetails } from "../utils";
-import { kitchenOptionSummary, type ReceiptData } from "./ticket";
-import { getSelectedPrinter } from "./printerStore";
+import { cartItemTotal, formatOptionDetails } from "../utils";
+import type { ReceiptData } from "./ticket";
+import { getSelectedPrinter, type PrintRole } from "./printerStore";
+import { layoutTicket, planTickets, type TicketLine } from "./stationTickets";
 
 // characters per printed line at Font A, normal (1x) width, on 58mm paper.
 // Reduced from an initial guess of 32 after real hardware testing showed both
@@ -313,91 +314,58 @@ async function ensurePrinterConnected(): Promise<void> {
   }
 }
 
-export async function printKitchenTicketNative(order: Order, lang: Language): Promise<void> {
-  const t = T[lang];
+// พิมพ์ใบของจุดที่เครื่องนี้รับผิดชอบ (role) — แยกรายการ/จัดหน้าที่ stationTickets.ts ที่นี่แค่แปลง
+// TicketLine เป็น ESC/POS คืนจำนวนใบที่พิมพ์ (0 = ออเดอร์นี้ไม่มีอะไรของจุดนี้ ไม่ได้ต่อเครื่องพิมพ์เลย)
+// หลายใบ (โหมด "all": เคาน์เตอร์ + ครัว) ส่งเป็นงานพิมพ์เดียว ตัด/feed กระดาษระหว่างใบ
+export async function printStationTicketsNative(
+  order: Order,
+  role: PrintRole,
+  categories: Category[],
+  lang: Language,
+): Promise<number> {
+  const plans = planTickets(order, role, categories);
+  if (plans.length === 0) return 0;
   await ensurePrinterConnected();
 
-  // เลิกพิมพ์คำว่า "โต๊ะ" นำหน้าแล้ว (เคยพยายามแก้ปัญหาบรรทัดนี้แตก/จัดวางไม่สวยหลายรอบ
-  // ไม่คุ้ม) เหลือแค่เลขโต๊ะเดี่ยวๆ ที่ SIZE_WIDE เหมือนเดิม — ออเดอร์ takeaway ไม่กระทบ
-  // เพราะ takeawayLabel (เช่น "T-3") ไม่มีคำว่า "โต๊ะ" นำหน้าอยู่แล้วตั้งแต่ต้น
-  const label = order.isTakeaway
-    ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")
-    : order.tableNumber;
-
-  // ตั๋วครัวทั้งใบขยาย GS! 0x10 (กว้าง x2 อย่างเดียว ไม่ขยายความสูง) เท่ากันหมด ไม่มีบรรทัดไหน
-  // ใหญ่กว่ากัน — ยืนยันจาก printSizeCommandSweep() ว่า GS! ใช้ได้จริงบนเครื่องนี้ ตัวหนา/ไม่หนา
-  // ยังคงตามต้นฉบับ (bold เฉพาะ label/ชื่อรายการ/customNote — ตรงกับ fontWeight:700 ใน
-  // KitchenTicket JSX เดิม) ไม่พิมพ์ชื่อร้านที่หัวใบแล้ว เนื้อหา/ลำดับ/ข้อความส่วนที่เหลือ
-  // ให้ตรงกับ JSX เดิมเป๊ะ — เส้นคั่นใช้ KITCHEN_LINE_WIDTH (ครึ่งหนึ่งของ LINE_WIDTH) เพราะ
-  // ตัวอักษรกว้างเป็น 2 เท่า ถ้าใช้ LINE_WIDTH เต็มจะยาวเกินกระดาษจริงแล้ว wrap ไปอีกบรรทัด
-  // ดูเหมือนมีเส้นคั่นซ้ำสองบรรทัด
   const builder = CapacitorThermalPrinter.begin().raw(selectCodepageCmd(THAI_CODEPAGE_N));
-  // ขอบบนก่อนเนื้อหาบรรทัดแรก — ต้นฉบับ KitchenTicket JSX เดิม (ลบไปแล้ว) เว้นไว้
-  // <div style={{ height: "30mm" }} /> ก่อนเริ่มเนื้อหา ไม่มีสูตรแปลง mm เป็นจำนวนบรรทัด
-  // กระดาษความร้อนตรงเป๊ะ (ขึ้นกับ DPI/font ของเครื่องพิมพ์) — ปรับเพิ่มเป็น 5 บรรทัดว่าง
-  // ตามที่แจ้งว่า 2 บรรทัดยังน้อยเกินไป — เว้นตอนขนาดปกติ (ก่อนสั่ง SIZE_WIDE)
-  thaiText(builder, "\n\n\n\n\n");
-  builder.raw(SIZE_WIDE).align("center").raw(boldCmd(true));
-  thaiText(builder, `${label}\n`);
-  builder.raw(boldCmd(false));
-  // วันที่/เวลา (เช่น "22/9/2569 22:28:42" ~19 ตัวอักษร) ยาวเกิน KITCHEN_LINE_WIDTH (~15
-  // ตัว) ที่ SIZE_WIDE — wrapLine() ตัดคำแบบไทยไม่เหมาะกับตัวเลข/เครื่องหมาย "/" เลย ตัด
-  // กระจัดกระจาย เปลี่ยนไปพิมพ์ที่ SIZE_NORMAL แทน สั้นพออยู่บรรทัดเดียวได้สบาย ไม่ต้องผ่าน
-  // wrapLine() เลย
-  //
-  // สำคัญ: รวมคำสั่งเปลี่ยนขนาด (GS!) กับ byte ข้อความที่ตามมาเป็น .raw() ครั้งเดียวเสมอ
-  // แทนที่จะแยกเรียก .raw(SIZE_X) แล้วค่อย .raw(ข้อความ) เป็นคนละ call — แต่ละ .raw() ถูก
-  // คิวแบบ async แยกกันฝั่ง native (ดู plugin.js: callQueue) การเรียกติดกันหลายครั้งตรงจุด
-  // เปลี่ยนขนาดพอดีเป็นจุดที่เจอเส้นคั่นกระจัดกระจายจริง — รวมเป็น byte array เดียวส่งทีเดียว
-  // ตัดความเป็นไปได้ที่จะมีอะไรมาแทรกกลางระหว่างคำสั่งเปลี่ยนขนาดกับเนื้อหาที่ต้องใช้ขนาดนั้น
-  builder.raw([...SIZE_NORMAL, ...thaiRaw(`${order.timestamp.toLocaleString(lang === "th" ? "th-TH" : "en-US")}\n`)]);
-  builder.align("left");
-  builder.raw([...SIZE_WIDE, ...thaiRaw("-".repeat(KITCHEN_LINE_WIDTH) + "\n")]);
-
-  const items = liveItems(order.items);
-  items.forEach((ci: CartItem, idx: number) => {
-    const name = lang === "en" ? ci.item.name.en : ci.item.name.th;
-    // ระดับ 1 — item.name (รวม "(หมู/ไก่/แหนม)" ถ้ามีในชื่อเมนู เป็น string เดียวแยกไม่ได้
-    // ตามที่ยืนยันโครงสร้างข้อมูลแล้ว): ตัวหนา เด่นสุด
-    builder.raw(boldCmd(true));
-    wrapLine(`${ci.quantity}x ${name}`, KITCHEN_LINE_WIDTH).forEach((line) => {
-      thaiText(builder, `${line}\n`);
-    });
-    builder.raw(boldCmd(false));
-
-    // ระดับ 2 — kitchenOptionSummary() (ตัวเลือกที่ต้องกด: meat/portion/spiceLevel/
-    // addEgg/customSelections) กับ ci.customNote (custom add-on ที่ผูกกับเมนูนี้โดยเฉพาะ —
-    // คนละอันกับจุดสั่ง Add-on แยกที่ไม่ผูกกับเมนูไหนเลย) จัดเป็นกลุ่มเดียวกัน ครอบด้วย
-    // inverse video เท่ากันทั้งคู่
-    const opt = kitchenOptionSummary(ci, lang);
-    if (opt) {
-      builder.raw(groupEmphasisOnCmd());
-      wrapLine(`  ${opt}`, KITCHEN_LINE_WIDTH).forEach((line) => thaiText(builder, `${line}\n`));
-      builder.raw(groupEmphasisOffCmd());
-    }
-
-    // ระดับ 3 — ci.note (หมายเหตุจากลูกค้า): ขีดเส้นใต้แยกเป็นของตัวเอง ไม่ใช้ inverse
-    if (ci.note) {
-      builder.raw(underlineCmd(true));
-      wrapLine(`"${ci.note}"`, KITCHEN_LINE_WIDTH).forEach((line) => thaiText(builder, `${line}\n`));
-      builder.raw(underlineCmd(false));
-    }
-
-    if (ci.customNote) {
-      builder.raw(groupEmphasisOnCmd());
-      wrapLine(`+ ${ci.customNote} (+${t.thb}${ci.customAddOnPrice || 0})`, KITCHEN_LINE_WIDTH).forEach((line) => thaiText(builder, `${line}\n`));
-      builder.raw(groupEmphasisOffCmd());
-    }
-
-    // เว้นบรรทัดว่างระหว่างรายการ กันสับสนว่ารายการไหนจบ/เริ่มใหม่ — ไม่เว้นหลังรายการ
-    // สุดท้ายเพราะมีเส้นคั่นปิดท้ายอยู่แล้ว
-    if (idx < items.length - 1) thaiText(builder, "\n");
-  });
-
-  thaiText(builder, "-".repeat(KITCHEN_LINE_WIDTH) + "\n");
-  builder.feedCutPaper();
-
+  plans.forEach((plan) => emitTicketLines(builder, layoutTicket(order, plan, lang)));
   await builder.write();
+  return plans.length;
+}
+
+// ทั้งใบพิมพ์ที่ SIZE_WIDE (GS! 0x10 กว้าง x2) ยกเว้นขอบบนกับเวลาที่ SIZE_NORMAL — เวลา (เช่น
+// "22/9/2569 22:28:42" ~19 ตัว) ยาวเกิน KITCHEN_LINE_WIDTH และ wrapLine() ตัดตัวเลข/"/" กระจัด
+// กระจาย เส้นคั่นใช้ KITCHEN_LINE_WIDTH (ครึ่งหนึ่งของ LINE_WIDTH) เพราะตัวอักษรกว้าง 2 เท่า
+//
+// สำคัญ: ทุกบรรทัดส่งเป็น .raw() ครั้งเดียว รวมคำสั่งขนาด (GS!) + ตัวหนา/inverse/ขีดเส้นใต้ + ข้อความ
+// + คำสั่งปิด — แต่ละ .raw() ถูกคิวแบบ async แยกกันฝั่ง native (plugin.js: callQueue) การแยกคำสั่ง
+// เปลี่ยนขนาดกับข้อความเป็นคนละ call เคยทำให้เส้นคั่นพิมพ์กระจัดกระจายจริงบนเครื่อง
+function emitTicketLines(builder: typeof CapacitorThermalPrinter, lines: TicketLine[]) {
+  let align: "left" | "center" = "left";
+  builder.align("left");
+  for (const line of lines) {
+    if (line.kind === "cut") {
+      builder.feedCutPaper();
+      continue;
+    }
+    if (line.kind === "rule") {
+      if (align !== "left") builder.align((align = "left"));
+      builder.raw([...SIZE_WIDE, ...thaiRaw("-".repeat(KITCHEN_LINE_WIDTH) + "\n")]);
+      continue;
+    }
+    if (line.align !== align) builder.align((align = line.align));
+    const size = line.size === "wide" ? SIZE_WIDE : SIZE_NORMAL;
+    const on = [
+      ...(line.bold ? boldCmd(true) : []),
+      ...(line.emphasis === "group" ? groupEmphasisOnCmd() : line.emphasis === "underline" ? underlineCmd(true) : []),
+    ];
+    const off = [
+      ...(line.emphasis === "group" ? groupEmphasisOffCmd() : line.emphasis === "underline" ? underlineCmd(false) : []),
+      ...(line.bold ? boldCmd(false) : []),
+    ];
+    const texts = line.wrap ? wrapLine(line.text, line.size === "wide" ? KITCHEN_LINE_WIDTH : LINE_WIDTH) : [line.text];
+    texts.forEach((text) => builder.raw([...size, ...on, ...thaiRaw(`${text}\n`), ...off]));
+  }
 }
 
 export async function printReceiptNative(data: ReceiptData, lang: Language): Promise<void> {

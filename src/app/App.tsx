@@ -67,7 +67,7 @@ import type {
   ExpenseCatalogEntry,
   Category,
 } from "./types";
-import { ADD_ONS, AUDIT_UI_ENABLED } from "./constants";
+import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED } from "./constants";
 import { T } from "./translations";
 import {
   resolvePhoto,
@@ -102,7 +102,7 @@ import { LannaBorder, RestaurantLogo } from "./shared";
 // เฉพาะ printerStore เพราะเป็น localStorage ล้วน ไม่มี Capacitor — ส่วน nativePrinter.ts
 // (import capacitor-thermal-printer) โหลดแบบ dynamic import เฉพาะตอนจะใช้จริงเท่านั้น ไม่งั้น
 // ลูกค้าที่สแกน QR จะโดนดึง plugin ของฝั่งพนักงานไปรวมกับ chunk หลักด้วย
-import { getSelectedPrinterAddress } from "./staff/printerStore";
+import { getPrintRole, getSelectedPrinterAddress } from "./staff/printerStore";
 import { isSoundMuted } from "./staff/soundStore";
 import { MenuScreen } from "./customer/MenuScreen";
 import { ItemDetailScreen } from "./customer/ItemDetailScreen";
@@ -367,6 +367,9 @@ export default function App() {
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
+  // auto-print ใน orders listener (subscribe ครั้งเดียว) ต้องเห็นหมวดล่าสุดเสมอ — ใช้ ref แทน state
+  const allCategoriesRef = useRef<Category[]>([]);
+  allCategoriesRef.current = allCategories;
   const [staffLoggedIn, setStaffLoggedIn] = useState(false);
   // ต่างจาก staffLoggedIn: latch เป็น true เมื่อ login สำเร็จครั้งแรก แล้วค้าง true จนกว่าจะ
   // กดปุ่ม logout จริงๆ — ไม่กลับเป็น false เวลา onAuthStateChanged fire null ชั่วคราว
@@ -562,11 +565,13 @@ export default function App() {
       }
 
       if (addedDocs.length > 0 && getSelectedPrinterAddress()) {
-        import("./staff/nativePrinter").then(({ isNativePrintAvailable, printKitchenTicketNative }) => {
+        import("./staff/nativePrinter").then(({ isNativePrintAvailable, printStationTicketsNative }) => {
           if (!isNativePrintAvailable()) return;
           addedDocs.forEach((change) => {
             const order = mapOrderDoc(change.doc.id, change.doc.data());
-            printKitchenTicketNative(order, langRef.current).catch((err) => {
+            // พิมพ์เฉพาะส่วนของจุดที่เครื่องนี้รับผิดชอบ (หน้าที่ตั้งใน PrinterSettingsModal) — ออเดอร์ที่
+            // ไม่มีอะไรของจุดนี้ไม่พิมพ์ ยังโหลดหมวดไม่เสร็จ (ref ว่าง) พิมพ์ใบ "ทุกรายการ" แทน
+            printStationTicketsNative(order, getPrintRole(), allCategoriesRef.current, langRef.current).catch((err) => {
               console.error("Auto-print kitchen ticket failed:", err);
             });
           });
@@ -865,7 +870,7 @@ export default function App() {
   const handleManualAddOn = (name: string, price: number) => {
     const syntheticItem: MenuItem = {
       id: `addon-${uid()}`,
-      categoryId: "__addon__",
+      categoryId: ADDON_CATEGORY_ID,
       name: { en: name, th: name },
       description: { en: "", th: "" },
       price,
@@ -1594,6 +1599,7 @@ export default function App() {
             onLangToggle={toggleLang}
             onAskConfirm={askConfirm}
             onStartManualOrder={handleStartManualOrder}
+            categories={allCategories}
           />
         </Suspense>
       );

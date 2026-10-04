@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Clock, Plus, Printer, Trash2, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
-import type { CartItem, Language, Order, StaffTab } from "../types";
+import type { CartItem, Category, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { compareTables, formatClock, liveItems, orderTotal, timeAgo } from "../utils";
 
 const UNDO_MS = 5000;
 import { StaffHeader } from "./StaffHeader";
 import { kitchenOptionSummary } from "./ticket";
-import { useSelectedPrinterAddress } from "./printerStore";
+import { usePrintRole, useSelectedPrinterAddress } from "./printerStore";
+import { noItemsForRoleMessage } from "./stationTickets";
 
 // ─── Staff Orders Screen ──────────────────────────────────────────────────────
 
@@ -26,9 +27,10 @@ interface StaffOrdersProps {
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
   onStartManualOrder: () => void;
+  categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder, categories }: StaffOrdersProps) {
   const t = T[lang];
 
   // กดเสิร์ฟแล้วย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลาหลายวิ
@@ -135,6 +137,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
   // ใช้ hook แทนอ่าน localStorage ตรงๆ เพราะเลือกเครื่องพิมพ์ใหม่ใน PrinterSettingsModal
   // (ซึ่งอยู่ลึกใน StaffHeader) ไม่ทำให้หน้านี้ re-render เอง ต้องมี event subscription
   const selectedPrinterAddress = useSelectedPrinterAddress();
+  const printRole = usePrintRole();
   const canPrint = Capacitor.isNativePlatform() && !!selectedPrinterAddress;
 
   // ปุ่มพิมพ์เอง — ใช้ตอนสร้างออเดอร์ใหม่ (ที่ auto-print ไปแล้ว แต่พิมพ์ซ้ำได้ถ้ากระดาษติด/พลาด)
@@ -143,8 +146,10 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     if (isPrinting) return;
     setIsPrinting(true);
     try {
-      const { printKitchenTicketNative } = await import("./nativePrinter");
-      await printKitchenTicketNative(order, lang);
+      // พิมพ์เฉพาะส่วนของจุดที่เครื่องนี้รับผิดชอบ — ไม่มีอะไรของจุดนี้ให้แจ้ง ไม่เงียบไปเฉยๆ
+      const { printStationTicketsNative } = await import("./nativePrinter");
+      const printed = await printStationTicketsNative(order, printRole, categories, lang);
+      if (printed === 0) alert(noItemsForRoleMessage(printRole, lang));
     } catch (err: any) {
       alert((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
     } finally {

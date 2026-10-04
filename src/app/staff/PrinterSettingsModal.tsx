@@ -4,9 +4,12 @@ import type { Language } from "../types";
 import {
   addSavedPrinter,
   getSavedPrinters,
+  getPrintRole,
   getSelectedPrinterAddress,
   removeSavedPrinter,
+  setPrintRole,
   setSelectedPrinterAddress,
+  type PrintRole,
   type SavedPrinter,
 } from "./printerStore";
 import { isSoundMuted, setSoundMuted } from "./soundStore";
@@ -31,6 +34,12 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [soundOn, setSoundOn] = useState(() => !isSoundMuted());
+  const [role, setRole] = useState<PrintRole>(getPrintRole());
+
+  const handleRole = (next: PrintRole) => {
+    setRole(next);
+    setPrintRole(next);
+  };
 
   const toggleSound = () => {
     const next = !soundOn;
@@ -117,8 +126,8 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
 
         <p className="text-xs text-muted-foreground mb-3">
           {lang === "en"
-            ? "Pick a printer if this device should print kitchen tickets automatically. Devices that only view orders can skip this."
-            : "ถ้าอยากให้เครื่องนี้พิมพ์ตั๋วครัวอัตโนมัติ ให้เลือกเครื่องพิมพ์ ถ้าใช้ดูออเดอร์อย่างเดียวไม่ต้องเลือก"}
+            ? "Pick a printer if this device should print order tickets automatically. Devices that only view orders can skip this."
+            : "ถ้าอยากให้เครื่องนี้พิมพ์ตั๋วออเดอร์อัตโนมัติ ให้เลือกเครื่องพิมพ์ ถ้าใช้ดูออเดอร์อย่างเดียวไม่ต้องเลือก"}
         </p>
 
         <div className="space-y-2 mb-3">
@@ -187,6 +196,39 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
             <Plus size={14} />
             {lang === "en" ? "Add another printer" : "เพิ่มเครื่องพิมพ์"}
           </button>
+        )}
+
+        {/* หน้าที่ของเครื่องนี้ — ร้านมี 2 จุด (เคาน์เตอร์/ครัว) แต่ละจุดพิมพ์เฉพาะรายการของตัวเอง
+            จำไว้ในเครื่องนี้ (printerStore) ค่าเริ่มต้น "ทั้งหมด" สำหรับวันที่ใช้เครื่องเดียว */}
+        {selected && (
+          <div className="mb-4">
+            <div className="text-xs font-medium text-foreground mb-1.5">
+              {lang === "en" ? "This device prints" : "เครื่องนี้พิมพ์"}
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {([
+                ["all", lang === "en" ? "Everything" : "ทั้งหมด"],
+                ["counter", lang === "en" ? "Counter" : "เคาน์เตอร์"],
+                ["kitchen", lang === "en" ? "Kitchen" : "ครัว"],
+              ] as [PrintRole, string][]).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => handleRole(value)}
+                  className={`py-2 rounded-xl border text-sm transition-all ${role === value ? "border-primary bg-primary/10 text-foreground font-semibold" : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              {role === "counter"
+                ? (lang === "en" ? "Drinks and souvenirs only." : "เฉพาะเครื่องดื่มและของฝาก")
+                : role === "kitchen"
+                  ? (lang === "en" ? "Food only — inner kitchen on top, khao soi / khanom jeen nam ngiao at the bottom to tear off." : "เฉพาะอาหาร — ครัวในอยู่บน ข้าวซอย/ขนมจีนน้ำเงี้ยว (ครัวนอก) อยู่ล่างให้ฉีกแยก")
+                  : (lang === "en" ? "Counter ticket followed by kitchen ticket (single-device setup)." : "ใบเคาน์เตอร์ต่อด้วยใบครัว (ใช้เครื่องเดียว)")}
+            </p>
+          </div>
         )}
 
         {selected && (

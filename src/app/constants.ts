@@ -7,6 +7,16 @@
 // เปิดกลับ: เปลี่ยนเป็น true ที่นี่ที่เดียว แล้ว build/deploy ใหม่ — โค้ดเดิมยังอยู่ครบ
 export const AUDIT_UI_ENABLED = false;
 
+// ─── แยกพิมพ์ตั๋วตามจุด (ดู staff/stationTickets.ts) ──────────────────────────
+// เทียบแบบ "ขึ้นต้นด้วย" กับชื่อภาษาไทยเสมอ (ไม่ขึ้นกับภาษาที่จอใช้อยู่)
+// เปลี่ยนชื่อหมวด/เมนูจนไม่ขึ้นต้นด้วยคำเหล่านี้แล้ว รายการจะไปผิดใบ — ต้องแก้ที่นี่แล้ว build ใหม่
+// หมวดที่ชื่อขึ้นต้นด้วยคำเหล่านี้ → ใบเคาน์เตอร์ หมวดอื่นทั้งหมด (รวมหมวดที่หาไม่เจอ) → ใบครัว
+export const COUNTER_CATEGORY_PREFIXES = ["เครื่องดื่ม", "ของฝาก"];
+// เมนูครัวที่ชื่อขึ้นต้นด้วยคำเหล่านี้ → ส่วน "ครัวนอก" ท้ายใบครัว ที่เหลือ → "ครัวใน"
+export const OUTER_KITCHEN_ITEM_PREFIXES = ["ข้าวซอย", "ขนมจีนน้ำเงี้ยว"];
+// categoryId ของรายการ Add-on แยกที่พนักงานพิมพ์เอง (handleManualAddOn ใน App.tsx) — พิมพ์ทั้งสองจุด
+export const ADDON_CATEGORY_ID = "__addon__";
+
 export const ADD_ONS = [
   { id: "extra-plate", label: { en: "Extra Plate", th: "จานเปล่าเพิ่ม" }, price: 10 },
   { id: "cutlery", label: { en: "Cutlery Set", th: "ช้อนส้อมชุด" }, price: 0 },

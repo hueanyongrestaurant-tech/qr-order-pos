@@ -85,6 +85,37 @@ export function getSelectedPrinter(): SavedPrinter | null {
   return getSavedPrinters().find((p) => p.address === address) || null;
 }
 
+// ─── Print role (which station THIS device prints tickets for) ───────────────
+// "all" = ใบเคาน์เตอร์ + ใบครัวในงานพิมพ์เดียว (แบบเครื่องเดียว) เป็นค่าเริ่มต้น — เครื่องที่อัปเดต
+// แอปแล้วยังไม่ได้ตั้งค่าจึงพิมพ์ครบเหมือนเดิม การแยกรายการดู stationTickets.ts
+export type PrintRole = "all" | "counter" | "kitchen";
+
+const PRINT_ROLE_KEY = "hueanyong.printers.role";
+
+export function getPrintRole(): PrintRole {
+  const raw = localStorage.getItem(PRINT_ROLE_KEY);
+  return raw === "counter" || raw === "kitchen" ? raw : "all";
+}
+
+export function setPrintRole(role: PrintRole) {
+  if (role === "all") {
+    localStorage.removeItem(PRINT_ROLE_KEY);
+  } else {
+    localStorage.setItem(PRINT_ROLE_KEY, role);
+  }
+  notifyChange();
+}
+
+export function usePrintRole(): PrintRole {
+  const [role, setRole] = useState<PrintRole>(() => getPrintRole());
+  useEffect(() => {
+    const sync = () => setRole(getPrintRole());
+    window.addEventListener(CHANGE_EVENT, sync);
+    return () => window.removeEventListener(CHANGE_EVENT, sync);
+  }, []);
+  return role;
+}
+
 // Reactive read for components (StaffOrdersScreen's/StaffPaymentScreen's print-button
 // disabled state) that must update the instant the selection changes anywhere in the
 // app, not just whenever they next happen to re-render for an unrelated reason.
