@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, Plus, Trash2, X } from "lucide-react";
+import { ChevronLeft, Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import type { Category, Language, MeatChoice, MenuItem } from "../types";
 import { T } from "../translations";
 import { compressImage, resolvePhoto, uid } from "../utils";
@@ -12,6 +12,17 @@ interface StaffMenuEditProps {
   onCancel: () => void;
   onLangToggle: () => void;
   categories: Category[];
+}
+
+// ปุ่มแสดง/ซ่อนตัวเลือกในหน้านี้ = ซ่อนจากลูกค้า ไม่ใช่ "หมด" (หมดชั่วคราวให้กดที่หน้าจัดการเมนู)
+function HiddenOptionHint({ lang }: { lang: Language }) {
+  return (
+    <p className="text-[11px] text-muted-foreground -mt-1 mb-2">
+      {lang === "en"
+        ? "Hidden = not shown to customers. If it's only sold out for now, mark it on the Menu screen."
+        : "ซ่อน = ไม่แสดงให้ลูกค้า ถ้าแค่หมดชั่วคราว ให้กดที่หน้าจัดการเมนู"}
+    </p>
+  );
 }
 
 export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categories, }: StaffMenuEditProps) {
@@ -180,13 +191,14 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
             <label className="text-sm font-semibold text-foreground block mb-2">
               {lang === "en" ? "Extra charge by meat (enter 0 if same price)" : "บวกราคาตามเนื้อ (ใส่ 0 ถ้าราคาเท่ากัน)"}
             </label>
+            <HiddenOptionHint lang={lang} />
             <div className="grid grid-cols-3 gap-2">
               {(["pork", "chicken", "beef"] as MeatChoice[]).map((m) => {
                 const isDisabled = form.disabledMeats?.includes(m);
                 return (
                   <div key={m}>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-muted-foreground">{T[lang].meats[m]}</span>
+                      <span className={`text-xs text-muted-foreground ${isDisabled ? "line-through opacity-60" : ""}`}>{T[lang].meats[m]}</span>
                       <button
                         onClick={() => {
                           const current = form.disabledMeats || [];
@@ -194,9 +206,10 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                             disabledMeats: isDisabled ? current.filter((x) => x !== m) : [...current, m],
                           });
                         }}
-                        className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${isDisabled ? "bg-muted text-muted-foreground" : "bg-secondary/15 text-secondary"}`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 ${isDisabled ? "bg-[#3C2414]/70 text-[#FFF8F0]" : "bg-secondary/15 text-secondary"}`}
                       >
-                        {isDisabled ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
+                        {isDisabled ? <EyeOff size={10} /> : <Eye size={10} />}
+                        {isDisabled ? (lang === "en" ? "Hidden" : "ซ่อน") : (lang === "en" ? "Shown" : "แสดง")}
                       </button>
                     </div>
                     <input
@@ -256,6 +269,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
               <Plus size={14} /> {lang === "en" ? "Add Group" : "เพิ่มกลุ่ม"}
             </button>
           </div>
+          {(form.customGroups || []).some((g) => g.choices.length > 0) && <HiddenOptionHint lang={lang} />}
 
           {(form.customGroups || []).map((group, gIdx) => (
             <div key={group.id} className="bg-card border border-border rounded-xl p-3 mb-2.5">
@@ -321,7 +335,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
 
               <div className="space-y-1.5 mb-2">
                 {group.choices.map((choice, cIdx) => (
-                  <div key={choice.id} className="flex items-center gap-1.5">
+                  <div key={choice.id} className={`flex items-center gap-1.5 ${choice.active === false ? "[&>input]:opacity-50 [&>input]:line-through" : ""}`}>
                     <button
                       onClick={() => {
                         const groups = [...(form.customGroups || [])];
@@ -330,9 +344,10 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                         groups[gIdx] = { ...group, choices };
                         update({ customGroups: groups });
                       }}
-                      className={`text-[9px] px-1.5 py-1.5 rounded-md font-medium flex-shrink-0 ${choice.active === false ? "bg-muted text-muted-foreground" : "bg-secondary/15 text-secondary"}`}
+                      className={`text-[9px] px-1.5 py-1.5 rounded-md font-medium flex-shrink-0 flex items-center gap-0.5 ${choice.active === false ? "bg-[#3C2414]/70 text-[#FFF8F0]" : "bg-secondary/15 text-secondary"}`}
                     >
-                      {choice.active === false ? (lang === "en" ? "Off" : "ปิด") : (lang === "en" ? "On" : "เปิด")}
+                      {choice.active === false ? <EyeOff size={10} /> : <Eye size={10} />}
+                      {choice.active === false ? (lang === "en" ? "Hidden" : "ซ่อน") : (lang === "en" ? "Shown" : "แสดง")}
                     </button>
                     <input
                       value={choice.labelEn}
