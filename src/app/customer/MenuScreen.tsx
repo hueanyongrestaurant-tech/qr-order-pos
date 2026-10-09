@@ -23,11 +23,12 @@ interface MenuProps {
   isBusy?: boolean;
   onExit?: () => void;
   onAddOn?: () => void; // จุดเข้าไปหน้า "Add-on" (staff-only) — ส่งมาเฉพาะตอน staff ลงออเดอร์แทนลูกค้าเท่านั้น ห้ามส่งให้ฝั่งลูกค้าเด็ดขาด
+  notice?: string; // แถบข้อความใต้หัวจอ (staff-only) — ใช้บอกว่ากำลังลงบิลย้อนหลังของวัน/เวลาไหน
 }
 
 export function MenuScreen({
   lang, tableNumber, cart, menuItems, categories, activeCategory,
-  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit, onAddOn
+  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit, onAddOn, notice
 }: MenuProps) {
   const t = T[lang];
   const [busyDismissed, setBusyDismissed] = useState(false);
@@ -108,6 +109,12 @@ export function MenuScreen({
             )}
           </div>
         </header>
+
+        {notice && (
+          <div className="mx-4 mt-3 bg-primary/10 border border-primary/30 rounded-xl px-4 py-2.5 text-sm font-medium text-foreground">
+            {notice}
+          </div>
+        )}
 
         {isBusy && !busyDismissed && (
           <div className="mx-4 mt-3 bg-primary/10 border border-primary/30 rounded-xl px-4 py-3 flex items-start gap-2.5">

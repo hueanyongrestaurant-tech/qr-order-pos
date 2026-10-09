@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, History, Loader2 } from "lucide-react";
 import type { Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import {
@@ -22,6 +22,10 @@ interface StaffHistoryProps {
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
+  initialDate?: string;                                  // เปิดหน้ามาที่วันนี้แทน "วันนี้" (หลังบันทึกบิลย้อนหลัง)
+  onAddBackfill: () => void;                             // ไปหน้าเพิ่มบิลย้อนหลัง
+  onCancelBackfill: (orders: Order[]) => Promise<void>;  // ยกเลิกบิลย้อนหลัง (ถามยืนยันแล้ว)
+  onAskConfirm: (message: string, onConfirm: () => void) => void;
 }
 
 // วิธีชำระของทั้งบิล — รวมทุกออเดอร์ในบิล ไม่ดูแค่ใบแรก เพราะบิลจ่ายแยกแบ่งยอดโอนไว้คนละใบ
@@ -44,12 +48,15 @@ interface HistoryEntry {
   orders: Order[];
   total: number;
   itemCount: number;
+  backfilled: boolean;
 }
 
-export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffHistoryProps) {
+export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, initialDate, onAddBackfill, onCancelBackfill, onAskConfirm }: StaffHistoryProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
-  const [date, setDate] = useState(today);
+  const [date, setDate] = useState(initialDate ?? today);
+  const [reloadKey, setReloadKey] = useState(0); // เพิ่มทีละ 1 = ดึงข้อมูลวันเดิมใหม่ (หลังยกเลิกบิลย้อนหลัง)
+  const [cancellingKey, setCancellingKey] = useState<string | null>(null);
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
 
   // ดึงออเดอร์ที่ชำระแล้วเฉพาะวันที่เลือกไว้ (default วันนี้) — one-time fetch ต่อวันเดียว
@@ -91,7 +98,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, retryCount]);
+  }, [date, retryCount, reloadKey]);
 
   const paidOrders = fetchedOrders
     .filter((o) => o.status === "paid")
@@ -114,6 +121,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
       existing.total += orderTotal(o);
       existing.itemCount += liveItemCount(o.items);
       if (o.timestamp < existing.timestamp) existing.timestamp = o.timestamp;
+      if (o.backfilled) existing.backfilled = true;
     } else {
       entryMap.set(key, {
         tableNumber: o.tableNumber,
@@ -123,6 +131,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
         orders: [o],
         total: orderTotal(o),
         itemCount: liveItemCount(o.items),
+        backfilled: !!o.backfilled,
       });
     }
   });
@@ -149,6 +158,14 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
         </div>
+
+        <button
+          onClick={onAddBackfill}
+          className="w-full mb-4 py-2.5 rounded-xl text-sm font-medium bg-card border-2 border-dashed border-primary/50 text-primary hover:bg-primary/5 transition-all active:scale-95 flex items-center justify-center gap-2"
+        >
+          <History size={15} />
+          {lang === "en" ? "Add a past bill (yesterday)" : "เพิ่มบิลย้อนหลัง (เมื่อวาน)"}
+        </button>
 
         <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs mb-4">
           <div className="flex items-center gap-2 min-w-0">
@@ -198,8 +215,13 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
                     className="w-full p-3 flex items-center justify-between"
                   >
                     <div className="text-left">
-                      <div className="text-sm font-medium text-foreground">
+                      <div className="text-sm font-medium text-foreground flex items-center gap-1.5 flex-wrap">
                         {e.isTakeaway ? e.takeawayLabel : `${t.tableLabel} ${e.tableNumber}`}
+                        {e.backfilled && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
+                            {lang === "en" ? "Added later" : "เพิ่มย้อนหลัง"}
+                          </span>
+                        )}
                       </div>
                       <div className="text-muted-foreground text-xs">
                         {formatClock(e.timestamp)} · {e.itemCount} {t.items}
@@ -234,6 +256,35 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle }
                       {e.orders[0]?.paymentMethod && (
                         <div className="text-muted-foreground text-xs pt-1">
                           {paymentSummary(e.orders, lang, t.thb)}
+                        </div>
+                      )}
+                      {e.backfilled && (
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                          <span className="text-muted-foreground text-xs">
+                            {e.orders[0]?.backfilledAt
+                              ? `${lang === "en" ? "Entered" : "บันทึกเมื่อ"} ${e.orders[0].backfilledAt.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { day: "numeric", month: "short" })} ${formatClock(e.orders[0].backfilledAt)}`
+                              : ""}
+                          </span>
+                          <button
+                            disabled={cancellingKey === entryKey}
+                            onClick={() =>
+                              onAskConfirm(
+                                lang === "en"
+                                  ? `Cancel this past bill (${t.thb}${e.total})? It will be removed from sales and stats.`
+                                  : `ยกเลิกบิลย้อนหลังนี้ (${t.thb}${e.total})? ยอดจะถูกหักออกจากยอดขายและสถิติ`,
+                                () => {
+                                  setCancellingKey(entryKey);
+                                  onCancelBackfill(e.orders)
+                                    .then(() => { setExpandedEntry(null); setReloadKey((k) => k + 1); })
+                                    .catch((err) => console.error("cancel backfill failed", err))
+                                    .finally(() => setCancellingKey(null));
+                                },
+                              )
+                            }
+                            className="text-destructive/80 hover:text-destructive text-xs font-medium flex-shrink-0 disabled:opacity-40"
+                          >
+                            {lang === "en" ? "Cancel this bill" : "ยกเลิกบิลนี้"}
+                          </button>
                         </div>
                       )}
                     </div>

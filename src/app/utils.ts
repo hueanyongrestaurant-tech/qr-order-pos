@@ -360,6 +360,8 @@ export function mapOrderDoc(id: string, raw: any): Order {
     paymentBatchId: raw.paymentBatchId,
     cancelReason: raw.cancelReason,
     cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
+    backfilled: raw.backfilled === true ? true : undefined,
+    backfilledAt: raw.backfilledAt?.toDate ? raw.backfilledAt.toDate() : undefined,
   } as Order;
 }
 
@@ -381,6 +383,27 @@ export function getTodayKey(): string {
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+
+// "YYYY-MM-DD" ของเมื่อวาน (เวลาเครื่อง) — วันเดียวที่เพิ่มบิลย้อนหลังได้
+export function getYesterdayKey(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return formatDateInput(d);
+}
+
+// บิลย้อนหลัง: สิ่งที่ "หมด" ตอนนี้อาจยังมีขายในวันนั้น — ล้างสถานะหมดทุกชั้น (เมนู, เนื้อในตัว, ตัวเลือกกลุ่ม)
+// ให้หน้าเลือกเมนูเดิมกดได้ตามปกติ ส่วนที่ "ซ่อน" (active: false) ไม่แตะ ถูกกรองออกจาก menuItems ตั้งแต่ App แล้ว
+export function ignoreSoldOut<M extends MenuItem>(item: M): M {
+  return {
+    ...item,
+    soldOut: false,
+    soldOutMeats: [],
+    customGroups: item.customGroups?.map((g) => ({
+      ...g,
+      choices: g.choices.map((c) => ({ ...c, soldOut: false })),
+    })),
+  };
 }
 
 export function compressImage(file: File, maxWidth = 600, quality = 0.7): Promise<string> {

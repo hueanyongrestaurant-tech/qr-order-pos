@@ -27,12 +27,12 @@ interface StaffPaymentProps {
 
 // จ่ายแยก: ช่องที่พนักงานพิมพ์เองล่าสุด (side) + ค่าที่พิมพ์ — อีกช่องคิดจากยอดบิลเสมอ
 // เก็บค่าเดียวแบบนี้แทน 2 ช่องแยกกัน ทั้งสองช่องจึงรวมกันเท่ายอดบิลพอดีเสมอ ไม่มีทางขัดกันเอง
-type SplitSide = "transfer" | "cash";
-interface SplitEntry {
+export type SplitSide = "transfer" | "cash";
+export interface SplitEntry {
   side: SplitSide;
   value: string;
 }
-const EMPTY_SPLIT: SplitEntry = { side: "transfer", value: "" };
+export const EMPTY_SPLIT: SplitEntry = { side: "transfer", value: "" };
 
 interface PaymentCardProps {
   keyId: string;
@@ -62,7 +62,7 @@ interface PaymentCardProps {
 // ช่องยอดของการจ่ายแยก 1 ช่อง — ช่องที่พนักงานพิมพ์เองดูเป็นช่องกรอกปกติ ส่วนช่องที่ระบบคิดให้
 // พื้นจาง ขอบประ มีป้าย "คิดให้" แต่ยังแตะแก้ได้: แตะแล้วเลือกตัวเลขทั้งหมดไว้ พิมพ์ทับได้ทันที
 // แล้วช่องนั้นกลายเป็นช่องที่กรอกเอง อีกช่องกลับไปเป็นช่องคิดให้แทน
-function SplitAmountField({
+export function SplitAmountField({
   label, autoLabel, thb, entry, side, computed, onChange,
 }: {
   label: string;

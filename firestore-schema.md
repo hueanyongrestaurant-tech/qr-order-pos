@@ -14,12 +14,15 @@
 | `takeawayLabel` | string? | `"T-1"`, `"T-2"` … (รีเซ็ตรายวันผ่าน `counters/`) |
 | `status` | `"in-progress" \| "awaiting-payment" \| "paid" \| "cancelled"` | `"cancelled"` = ยกเลิกทั้งใบ (เอกสารยังอยู่เสมอ ไม่เคยถูกลบ) |
 | `items` | `CartItem[]` | ดูด้านล่าง |
-| `paymentMethod` | `"cash" \| "transfer"` ? | |
+| `paymentMethod` | `"cash" \| "transfer" \| "split"` ? | |
+| `transferAmount` | number? | split เท่านั้น: ส่วนโอนของออเดอร์ใบนี้ |
 | `cashReceived` | number? | เฉพาะจ่ายเงินสด |
 | `paymentBatchId` | string? | ออเดอร์ที่ปิดบิลพร้อมกันใช้ id เดียวกัน |
 | `cancelReason` | string? | เหตุผลตอนยกเลิกทั้งใบ (บังคับกรอก) |
 | `cancelledAt` | Timestamp? | |
-| `createdAt` | Timestamp | `serverTimestamp()` |
+| `createdAt` | Timestamp | `serverTimestamp()` — **History/Stats จัดบิลเข้าวันจาก field นี้** (บิลย้อนหลัง = เวลาขายจริงที่กรอก) |
+| `backfilled` | boolean? | true = บิลขายย้อนหลัง (ลืมลงระบบ เพิ่มทีหลังจากหน้าประวัติ) สร้างเป็น `"paid"` ตรงๆ ไม่ผ่าน in-progress |
+| `backfilledAt` | Timestamp? | `serverTimestamp()` เวลาที่กรอกบิลย้อนหลังจริง (ไว้ตรวจสอบ) |
 
 ### `CartItem` (embedded ใน `items[]`)
 
@@ -44,7 +47,7 @@
 
 | field | type | หมายเหตุ |
 |---|---|---|
-| `action` | enum | `void_item \| cancel_order \| menu_item_added \| menu_item_edited \| menu_item_deleted \| category_deleted \| expense_deleted` |
+| `action` | enum | `void_item \| cancel_order \| adjust_item_qty \| backfill_order \| menu_item_added \| menu_item_edited \| menu_item_deleted \| category_deleted \| expense_deleted` |
 | `createdAt` | Timestamp | `serverTimestamp()` |
 | `orderId` | string? | |
 | `tableNumber` | string? | โต๊ะ หรือ `takeawayLabel` |
@@ -70,6 +73,6 @@
 - `menuItems/{id}` — เมนู (`name`, `description`, `price`, `photo` base64, option groups, `active`, `order`)
 - `categories/{id}` — หมวดหมู่ (`nameEn`, `nameTh`, `order`, `active`, `signature`)
 - `status/live` — `{ busyTables, busyItems }` แบนเนอร์ "ร้านยุ่ง"
-- `counters/takeaway-YYYY-MM-DD` — `{ count }` ตัวนับคิวกลับบ้าน
+- `counters/takeaway-YYYY-MM-DD` — `{ count }` ตัวนับคิวกลับบ้าน (บิลย้อนหลังไม่ใช้ — label คงที่ `"กลับบ้าน"`)
 - `expenses/YYYY-MM-DD` — บัญชีรายจ่ายรายวัน `{ date, items: ExpenseLineItem[], totalAmount, updatedAt }`
 - `expenseItems/{sanitizedName}` — catalog ของที่เคยซื้อ ใช้ทำ autocomplete

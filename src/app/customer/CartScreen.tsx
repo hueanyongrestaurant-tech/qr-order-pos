@@ -20,9 +20,11 @@ interface CartProps {
   isTakeaway?: boolean;
   submitting?: boolean;
   unavailableCartIds?: string[]; // รายการที่เช็คตอนกดยืนยันแล้วพบว่าสั่งไม่ได้ — ขึ้นป้าย "หมด" + ข้อความเตือน
+  confirmLabel?: string; // staff-only: ข้อความปุ่มยืนยันแทน "ยืนยันสั่ง" (บิลย้อนหลังไปขั้นเลือกวิธีจ่ายต่อ)
+  notice?: string;       // staff-only: แถบข้อความเหนือรายการ (บอกว่าเป็นบิลย้อนหลัง)
 }
 
-export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [] }: CartProps) {
+export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [], confirmLabel, notice }: CartProps) {
   const t = T[lang];
   const total = cartTotal(cart);
   // คิดจากตะกร้าปัจจุบัน — ลบรายการที่หมดออกแล้วข้อความเตือนหายเอง ไม่ต้อง reset state
@@ -82,6 +84,11 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
         className="flex-1 px-4 py-4 pb-36 overflow-y-auto"
         style={{ scrollbarWidth: "none" }}
       >
+        {notice && (
+          <div className="mb-3 bg-primary/10 border border-primary/30 rounded-xl px-4 py-2.5 text-sm font-medium text-foreground">
+            {notice}
+          </div>
+        )}
         {cart.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-4">
@@ -189,7 +196,7 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
                 <Loader2 size={20} className="animate-spin" />
                 {t.sendingOrder}
               </span>
-            ) : t.confirmOrder}
+            ) : confirmLabel ?? t.confirmOrder}
           </button>
         </div>
       )}

@@ -1,11 +1,22 @@
+import type { ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { LannaBorder } from "../shared";
 
+// ใช้ร่วมกับหน้าตั้งค่าบิลย้อนหลัง: title/topSlot (ช่องเวลา) แทรกด้านบน และ disabled ปิดปุ่มโต๊ะจนกว่าจะกรอกครบ
 export function StaffManualTableScreen({
-  lang, onSelect, onSelectTakeaway, onCancel, onLangToggle,
-}: { lang: Language; onSelect: (tn: string) => void; onSelectTakeaway: () => void; onCancel: () => void; onLangToggle: () => void }) {
+  lang, onSelect, onSelectTakeaway, onCancel, onLangToggle, title, topSlot, disabled,
+}: {
+  lang: Language;
+  onSelect: (tn: string) => void;
+  onSelectTakeaway: () => void;
+  onCancel: () => void;
+  onLangToggle: () => void;
+  title?: string;
+  topSlot?: ReactNode;
+  disabled?: boolean;
+}) {
   const t = T[lang];
   const floors: { floor: number; tables: number }[] = [
     { floor: 1, tables: 5 },
@@ -21,16 +32,18 @@ export function StaffManualTableScreen({
             <ChevronLeft size={24} />
           </button>
           <div className="font-display font-semibold text-[#FFF8F0]">
-            {lang === "en" ? "Select Table" : "เลือกโต๊ะ"}
+            {title ?? (lang === "en" ? "Select Table" : "เลือกโต๊ะ")}
           </div>
           <button onClick={onLangToggle} className="text-[#D07E35] text-xs font-semibold">{t.langSwitch}</button>
         </div>
       </div>
 
       <div className="flex-1 px-5 py-6 max-w-md mx-auto w-full">
+        {topSlot}
         <button
           onClick={onSelectTakeaway}
-          className="w-full mb-6 py-4 rounded-2xl bg-accent/15 border-2 border-accent text-accent font-semibold text-base hover:bg-accent/25 transition-all active:scale-95"
+          disabled={disabled}
+          className="w-full mb-6 py-4 rounded-2xl bg-accent/15 border-2 border-accent text-accent font-semibold text-base hover:bg-accent/25 transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
         >
           {lang === "en" ? "Takeaway" : "กลับบ้าน"}
         </button>
@@ -45,7 +58,8 @@ export function StaffManualTableScreen({
                 <button
                   key={n}
                   onClick={() => onSelect(`${f.floor}-${n}`)}
-                  className="aspect-square rounded-2xl text-lg font-semibold bg-card text-foreground border border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95 transition-all"
+                  disabled={disabled}
+                  className="aspect-square rounded-2xl text-lg font-semibold bg-card text-foreground border border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
                 >
                   {n}
                 </button>

@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { diagImport, diagWatch, diagLog, DiagSpinnerSpy } from "./diag"; // TEMP DIAGNOSTICS
 
@@ -91,6 +91,9 @@ import {
   expenseCatalogId,
   uid,
   getTodayKey,
+  getYesterdayKey,
+  ignoreSoldOut,
+  formatDateInput,
   compressImage,
   fetchFreshMenuItems,
   isCartItemUnavailable,
@@ -123,6 +126,8 @@ const StaffMenuEditScreen = lazy(diagImport("StaffMenuEditScreen", () => import(
 const StaffHistoryScreen = lazy(diagImport("StaffHistoryScreen", () => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen }))));
 const StaffExpensesScreen = lazy(diagImport("StaffExpensesScreen", () => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen }))));
 const StaffStatsScreen = lazy(diagImport("StaffStatsScreen", () => import("./staff/StaffStatsScreen").then((m) => ({ default: m.StaffStatsScreen }))));
+const StaffBackfillSetupScreen = lazy(diagImport("StaffBackfillSetupScreen", () => import("./staff/StaffBackfillSetupScreen").then((m) => ({ default: m.StaffBackfillSetupScreen }))));
+const StaffBackfillPaymentScreen = lazy(diagImport("StaffBackfillPaymentScreen", () => import("./staff/StaffBackfillPaymentScreen").then((m) => ({ default: m.StaffBackfillPaymentScreen }))));
 const StaffActivityScreen = lazy(diagImport("StaffActivityScreen", () => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen }))));
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
@@ -729,6 +734,12 @@ export default function App() {
   const [manualCategory, setManualCategory] = useState<string>("");
   const [manualSelectedItem, setManualSelectedItem] = useState<MenuItem | null>(null);
   const [manualIsTakeaway, setManualIsTakeaway] = useState(false);
+  // ไม่ใช่ null = กำลังลง "บิลขายย้อนหลัง" ผ่าน flow สั่งแทนเดิม (manualCart/manualTable ฯลฯ ใช้ร่วมกัน)
+  // date ล็อกเป็นเมื่อวาน ณ ตอนกดเข้า flow, time = เวลาที่ขายจริงที่พนักงานกรอก ("HH:MM")
+  const [backfill, setBackfill] = useState<{ date: string; time: string } | null>(null);
+  const [backfillError, setBackfillError] = useState<string | null>(null);
+  // วันที่ให้หน้าประวัติเปิดมา (หลังบันทึกบิลย้อนหลัง) — undefined = วันนี้ตามปกติ
+  const [historyInitialDate, setHistoryInitialDate] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (getTableFromUrl()) return; // ฝั่งลูกค้าไม่เกี่ยวกับ auth เลย ไม่ต้อง subscribe แม้แต่เพื่อเช็ค session
@@ -903,7 +914,9 @@ export default function App() {
       setManualCart([]);
       setManualTable(null);
       setManualIsTakeaway(false);
-      setView("staff-orders");
+      // บิลย้อนหลังเข้ามาจากหน้าประวัติ — ออกแล้วกลับไปที่เดิม
+      setView(backfill ? "staff-history" : "staff-orders");
+      setBackfill(null);
     };
     if (manualCart.length > 0) {
       askConfirm(lang === "en" ? "Discard the selected items?" : "ทิ้งรายการที่เลือกไว้?", reset);
@@ -959,6 +972,35 @@ export default function App() {
       setIsSubmittingManualOrder(false);
     }
   };
+
+  // ─── บิลขายย้อนหลัง ─────────────────────────────────────────────────────────
+  // เข้าจากหน้าประวัติ: ตั้งค่า (เวลา + โต๊ะ) → เลือกเมนูด้วยหน้าจอสั่งแทนเดิม → สรุป+วิธีจ่าย → บันทึก
+  const handleStartBackfill = () => {
+    setManualTable(null);
+    setManualIsTakeaway(false);
+    setManualCart([]);
+    setManualCategory(categories[0]?.id || "");
+    setBackfill({ date: getYesterdayKey(), time: "" });
+    setBackfillError(null);
+    setView("staff-backfill-setup");
+  };
+
+  const handlePickBackfillTable = (time: string, tn: string) => {
+    setBackfill((b) => (b ? { ...b, time } : b));
+    setManualTable(tn);
+    setManualIsTakeaway(false);
+    setView("staff-manual-menu");
+  };
+
+  const handlePickBackfillTakeaway = (time: string) => {
+    setBackfill((b) => (b ? { ...b, time } : b));
+    setManualTable(null);
+    setManualIsTakeaway(true);
+    setView("staff-manual-menu");
+  };
+
+  const isSubmittingBackfillRef = useRef(false);
+  const [isSubmittingBackfill, setIsSubmittingBackfill] = useState(false);
 
   const takeawayCounterRef = { current: 0 };
 
@@ -1114,6 +1156,95 @@ export default function App() {
     ...(payment.method === "split" && orderTransferAmount !== undefined ? { transferAmount: orderTransferAmount } : {}),
   });
 
+  // สร้างบิลเป็น "paid" ในการเขียนครั้งเดียว (ต้องมี rules ทางที่ 2 ของ /orders) — ไม่เคยเป็น in-progress
+  // จึงไม่เข้า listener ออเดอร์ active → ไม่ auto-print / ไม่มีเสียง / ไม่กระทบตัวนับร้านยุ่ง / ไม่ใช้ counter คิว T-n
+  // createdAt = เวลาที่กรอก (ห้ามใช้ serverTimestamp ไม่งั้นบิลไปตกวันนี้) — History/Stats จัดวันจาก field นี้
+  const handleSaveBackfill = async (payment: PaymentInput) => {
+    if (isSubmittingBackfillRef.current) return;
+    if (!backfill || manualCart.length === 0) return;
+    if (!manualIsTakeaway && !manualTable) return;
+    const soldAt = new Date(`${backfill.date}T${backfill.time}:00`);
+    if (Number.isNaN(soldAt.getTime()) || soldAt > new Date()) {
+      setBackfillError(lang === "en" ? "Invalid date/time" : "วันที่/เวลาไม่ถูกต้อง");
+      return;
+    }
+    isSubmittingBackfillRef.current = true;
+    setIsSubmittingBackfill(true);
+    setBackfillError(null);
+    try {
+      const cleanItems = (JSON.parse(JSON.stringify(manualCart)) as CartItem[]).map(stripItemPhoto);
+      const takeawayLabel = "กลับบ้าน";
+      const ref = await addDoc(collection(db, "orders"), {
+        tableNumber: manualIsTakeaway ? "0" : manualTable,
+        ...(manualIsTakeaway ? { isTakeaway: true, takeawayLabel } : {}),
+        items: cleanItems,
+        status: "paid",
+        ...paymentFields(payment, payment.transferAmount),
+        paymentBatchId: uid(),
+        createdAt: Timestamp.fromDate(soldAt),
+        backfilled: true,
+        backfilledAt: serverTimestamp(),
+      });
+      await logActivity({
+        action: "backfill_order",
+        orderId: ref.id,
+        tableNumber: manualIsTakeaway ? takeawayLabel : manualTable!,
+        amount: cartTotal(cleanItems),
+        details: {
+          billDate: backfill.date,
+          billTime: backfill.time,
+          paymentMethod: payment.method,
+          ...(payment.method === "split" ? { transferAmount: payment.transferAmount } : {}),
+          itemCount: liveItemCount(cleanItems),
+        },
+      });
+      setHistoryInitialDate(backfill.date);
+      setManualCart([]);
+      setManualTable(null);
+      setManualIsTakeaway(false);
+      setBackfill(null);
+      setStaffTab("history");
+      writeSession("staffTab", "history");
+      setView("staff-history");
+    } catch (err) {
+      console.error("save backfill failed", err);
+      setBackfillError(
+        lang === "en"
+          ? "Couldn't save. Check the internet and try again."
+          : "บันทึกไม่สำเร็จ เช็คอินเทอร์เน็ตแล้วลองใหม่ (ถ้ายังไม่ได้ แจ้งเจ้าของร้านเช็คสิทธิ์ใน Firebase)",
+      );
+    } finally {
+      isSubmittingBackfillRef.current = false;
+      setIsSubmittingBackfill(false);
+    }
+  };
+
+  // ยกเลิกบิลย้อนหลัง (จากหน้าประวัติ ถามยืนยันแล้ว) — ห้ามลบ doc ตาม rules จึงเปลี่ยนเป็น "cancelled" แทน
+  // แตะเฉพาะบิลที่ backfilled เท่านั้น บิลปกติไม่มีทางถูกยกเลิกจากหน้านี้
+  const handleCancelBackfill = async (toCancel: Order[]) => {
+    for (const o of toCancel) {
+      if (!o.backfilled || o.status !== "paid") continue;
+      await logActivity({
+        action: "cancel_order",
+        orderId: o.id,
+        tableNumber: o.isTakeaway ? o.takeawayLabel ?? o.tableNumber : o.tableNumber,
+        amount: orderTotal(o),
+        details: {
+          backfilled: true,
+          billDate: formatDateInput(o.timestamp),
+          billTime: formatClock(o.timestamp),
+          items: o.items.map((ci) => ({
+            name: ci.item.name.th,
+            quantity: ci.quantity,
+            unitPrice: cartItemUnitPrice(ci),
+            voided: !!ci.voided,
+          })),
+        },
+      });
+      await updateDoc(doc(db, "orders", o.id), { status: "cancelled", cancelledAt: new Date() });
+    }
+  };
+
   const handleCloseTable = async (tableNum: string, payment: PaymentInput) => {
     // orders เรียงเก่า→ใหม่อยู่แล้ว (listener sort ตาม timestamp) — ยอดโอนของ split จึงถูกเติมลงรอบแรกๆ ก่อน
     const toClose = orders.filter(
@@ -1218,6 +1349,7 @@ export default function App() {
 
   const handleStaffTabChange = (tab: StaffTab) => {
     diagLog(`TAB → ${tab}`); // TEMP DIAGNOSTICS
+    setHistoryInitialDate(undefined);
     setStaffTab(tab);
     writeSession("staffTab", tab);
     setView(STAFF_TAB_VIEW[tab]);
@@ -1359,6 +1491,12 @@ export default function App() {
   };
 
   let content: React.ReactNode = null;
+
+  // หน้าเลือกเมนูของ flow สั่งแทน: บิลย้อนหลังเลือกเมนูที่ "หมด" ตอนนี้ได้ (ที่ซ่อนไม่แสดงเหมือนเดิม)
+  const manualMenuItems = backfill ? menuItems.map(ignoreSoldOut) : menuItems;
+  const backfillNotice = backfill
+    ? `${lang === "en" ? "Past bill" : "บิลย้อนหลัง"} · ${new Date(`${backfill.date}T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { day: "numeric", month: "short" })} ${backfill.time}`
+    : undefined;
 
   const handleAddCategory = async (nameEn: string, nameTh: string) => {
     const newOrder = allCategories.length > 0 ? Math.max(...allCategories.map((c) => c.order)) + 1 : 0;
@@ -1513,7 +1651,7 @@ export default function App() {
           tableNumber={isManualFlow ? (manualIsTakeaway ? "0" : manualTable!) : tableNumber!}
           // ส่งข้อมูลสดจาก menuItems ไม่ใช่ activeItem ที่ copy ไว้ตอนกดเข้ามา — กด "หมด" (ทั้งเมนูหรือเนื้อสัตว์)
           // ระหว่างเปิดหน้านี้ค้างไว้ก็เห็นทันที (ฝั่งพนักงาน realtime; ฝั่งลูกค้าตาม cache)
-          item={menuItems.find((m) => m.id === activeItem.id) ?? activeItem}
+          item={(isManualFlow ? manualMenuItems : menuItems).find((m) => m.id === activeItem.id) ?? activeItem}
           cart={isManualFlow ? manualCart : cart}
           onBack={() => {
             if (isManualFlow) { setManualSelectedItem(null); setView("staff-manual-menu"); }
@@ -1679,6 +1817,10 @@ export default function App() {
         <Suspense fallback={staffLoadingFallback}>
           <StaffHistoryScreen
             lang={lang}
+            initialDate={historyInitialDate}
+            onAddBackfill={handleStartBackfill}
+            onCancelBackfill={handleCancelBackfill}
+            onAskConfirm={askConfirm}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}
@@ -1756,7 +1898,7 @@ export default function App() {
             lang={lang}
             tableNumber={manualIsTakeaway ? "0" : (manualTable || "")}
             cart={manualCart}
-            menuItems={menuItems}
+            menuItems={manualMenuItems}
             categories={categories}
             activeCategory={manualCategory}
             onCategoryChange={setManualCategory}
@@ -1766,6 +1908,7 @@ export default function App() {
             isTakeaway={manualIsTakeaway}
             onExit={handleExitManualOrder}
             onAddOn={() => setView("staff-manual-addon")}
+            notice={backfillNotice}
           />
         </Suspense>
       );
@@ -1794,14 +1937,52 @@ export default function App() {
             onBack={() => setView("staff-manual-menu")}
             onUpdateQty={handleManualUpdateQty}
             onRemove={handleManualRemove}
-            onConfirm={handleConfirmManualOrder}
+            onConfirm={backfill ? () => { setBackfillError(null); setView("staff-backfill-payment"); } : handleConfirmManualOrder}
             onLangToggle={toggleLang}
             isTakeaway={manualIsTakeaway}
             submitting={isSubmittingManualOrder}
-            unavailableCartIds={cartUnavailableCartIds}
+            unavailableCartIds={backfill ? [] : cartUnavailableCartIds}
+            confirmLabel={backfill ? (lang === "en" ? "Next: payment" : "ถัดไป: วิธีจ่าย") : undefined}
+            notice={backfillNotice}
           />
         </Suspense>
       );
+      break;
+
+    case "staff-backfill-setup":
+      content = backfill ? (
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffBackfillSetupScreen
+            lang={lang}
+            date={backfill.date}
+            initialTime={backfill.time}
+            onPickTable={handlePickBackfillTable}
+            onPickTakeaway={handlePickBackfillTakeaway}
+            onCancel={() => { setBackfill(null); setView("staff-history"); }}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
+      ) : null;
+      break;
+
+    case "staff-backfill-payment":
+      content = backfill ? (
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffBackfillPaymentScreen
+            lang={lang}
+            date={backfill.date}
+            time={backfill.time}
+            tableNumber={manualTable}
+            isTakeaway={manualIsTakeaway}
+            cart={manualCart}
+            submitting={isSubmittingBackfill}
+            error={backfillError}
+            onBack={() => setView("staff-manual-cart")}
+            onSave={handleSaveBackfill}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
+      ) : null;
       break;
 
     default:

@@ -96,7 +96,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
     "all", "void_item", "cancel_order", "adjust_item_qty",
-    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted",
+    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted", "backfill_order",
   ];
 
   return (
@@ -194,6 +194,12 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   </div>
                 )}
 
+                {l.action === "backfill_order" && l.details?.billDate && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {lang === "en" ? "Sold" : "ขายเมื่อ"} {l.details.billDate} {l.details.billTime}
+                  </div>
+                )}
+
                 {l.action === "adjust_item_qty" && l.details && (
                   <div className="mt-1 text-xs text-muted-foreground">
                     {l.details.oldQty} → {l.details.newQty} {lang === "en" ? "pcs" : "ชิ้น"}
@@ -212,7 +218,9 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   <div className="mt-1 text-xs text-muted-foreground">
                     {l.details.paymentMethod === "cash"
                       ? (lang === "en" ? "Cash" : "เงินสด")
-                      : (lang === "en" ? "Transfer" : "เงินโอน")}
+                      : l.details.paymentMethod === "split"
+                        ? `${lang === "en" ? "Cash + Transfer" : "สด + โอน"}${typeof l.details.transferAmount === "number" ? ` (${lang === "en" ? "transfer" : "โอน"} ${t.thb}${l.details.transferAmount})` : ""}`
+                        : (lang === "en" ? "Transfer" : "เงินโอน")}
                     {typeof l.details.cashReceived === "number"
                       ? ` · ${lang === "en" ? "received" : "รับ"} ${t.thb}${l.details.cashReceived}`
                       : ""}

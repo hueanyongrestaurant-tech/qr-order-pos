@@ -19,7 +19,9 @@ export type View =
   | "staff-manual-table"
   | "staff-manual-menu"
   | "staff-manual-cart"
-  | "staff-manual-addon";
+  | "staff-manual-addon"
+  | "staff-backfill-setup"
+  | "staff-backfill-payment";
 
 export type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses" | "activity";
 export type MeatChoice = "pork" | "chicken" | "beef";
@@ -62,7 +64,8 @@ export type ActivityAction =
   | "menu_item_deleted"
   | "category_deleted"
   | "expense_edited"
-  | "expense_deleted";
+  | "expense_deleted"
+  | "backfill_order";
 
 export interface ActivityLog {
   id: string;
@@ -139,6 +142,10 @@ export interface Order {
   paymentBatchId?: string;
   cancelReason?: string;
   cancelledAt?: Date;
+  // บิลขายย้อนหลัง (ลืมลงระบบ เพิ่มทีหลัง) — สร้างเป็น "paid" ตรงๆ createdAt = เวลาที่กรอก (จัดเข้าวันขายจริง)
+  // ส่วน backfilledAt = เวลาที่กรอกจริงบน server ไว้ตรวจสอบ
+  backfilled?: boolean;
+  backfilledAt?: Date;
 }
 
 // ─── บัญชีรายจ่าย (Expenses) ───────────────────────────────────────────────────
