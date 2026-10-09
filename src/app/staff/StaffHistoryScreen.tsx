@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, History, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Plus } from "lucide-react";
 import type { Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import {
@@ -11,6 +11,7 @@ import {
   formatClock,
   formatDateInput,
   formatOptionDetails,
+  getYesterdayKey,
   liveItemCount,
   orderTotal,
   orderPaymentBreakdown,
@@ -138,6 +139,18 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
   const entries = Array.from(entryMap.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
   const dayTotal = entries.reduce((s, e) => s + e.total, 0);
 
+  // เพิ่มบิลย้อนหลังได้เฉพาะวันที่ของเมื่อวาน — ปุ่มจึงโชว์เฉพาะตอนกำลังดูวันนั้น (เพิ่มเข้าวันที่ที่ดูอยู่)
+  const canBackfill = date === getYesterdayKey();
+  const addBillLink = (
+    <button
+      onClick={onAddBackfill}
+      className="inline-flex items-center gap-0.5 text-xs font-semibold text-primary hover:underline"
+    >
+      <Plus size={13} />
+      {lang === "en" ? "Add bill" : "เพิ่มบิล"}
+    </button>
+  );
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <StaffHeader lang={lang} activeTab="history" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
@@ -159,14 +172,6 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
           </button>
         </div>
 
-        <button
-          onClick={onAddBackfill}
-          className="w-full mb-4 py-2.5 rounded-xl text-sm font-medium bg-card border-2 border-dashed border-primary/50 text-primary hover:bg-primary/5 transition-all active:scale-95 flex items-center justify-center gap-2"
-        >
-          <History size={15} />
-          {lang === "en" ? "Add a past bill (yesterday)" : "เพิ่มบิลย้อนหลัง (เมื่อวาน)"}
-        </button>
-
         <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs mb-4">
           <div className="flex items-center gap-2 min-w-0">
             {(loading || retrying) && <Loader2 size={14} className="animate-spin" />}
@@ -177,7 +182,10 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
             </span>
           </div>
           {!loading && !retrying && entries.length > 0 && (
-            <span className="flex-shrink-0">{entries.length} {entries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{dayTotal}</span>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span>{entries.length} {entries.length === 1 ? t.bills : t.billsPlural} · {t.thb}{dayTotal}</span>
+              {canBackfill && addBillLink}
+            </div>
           )}
         </div>
 
@@ -202,6 +210,9 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
               : loadFailed
                 ? (lang === "en" ? "Couldn't load data" : "โหลดข้อมูลไม่สำเร็จ")
                 : (lang === "en" ? "No paid bills on this day" : "ไม่มีบิลที่จ่ายแล้วในวันที่เลือก")}
+            {canBackfill && !loading && !retrying && !loadFailed && (
+              <div className="mt-3 flex justify-center">{addBillLink}</div>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
