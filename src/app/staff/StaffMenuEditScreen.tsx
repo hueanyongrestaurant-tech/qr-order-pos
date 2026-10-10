@@ -8,7 +8,7 @@ import { LannaBorder } from "../shared";
 interface StaffMenuEditProps {
   lang: Language;
   item: MenuItem;
-  onSave: (item: MenuItem) => void;
+  onSave: (item: MenuItem) => Promise<void>;
   onCancel: () => void;
   onLangToggle: () => void;
   categories: Category[];
@@ -30,6 +30,22 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
   const [form, setForm] = useState<MenuItem>(item);
 
   const update = (patch: Partial<MenuItem>) => setForm((prev) => ({ ...prev, ...patch }));
+  // บันทึกไม่สำเร็จ (เช่น session หลุด/เน็ตหลุด/rules ปฏิเสธ) เดิมเงียบหายไปเลย — ตอนนี้แสดงข้อความค้างไว้ให้เห็น
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave(form);
+    } catch (err) {
+      console.error("save menu item failed", err);
+      const code = (err as { code?: string })?.code ?? (err as Error)?.message ?? String(err);
+      setSaveError(`${lang === "en" ? "Save failed" : "บันทึกไม่สำเร็จ"} (${code})`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -453,12 +469,17 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
+        {saveError && (
+          <div className="mb-2 px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium text-center">
+            {saveError}
+          </div>
+        )}
         <button
-          onClick={() => onSave(form)}
-          disabled={!form.name.en || !form.name.th}
+          onClick={handleSave}
+          disabled={saving || !form.name.en || !form.name.th}
           className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base disabled:opacity-40 hover:bg-primary/90 transition-all active:scale-95 shadow-lg"
         >
-          {lang === "en" ? "Save" : "บันทึก"}
+          {saving ? (lang === "en" ? "Saving…" : "กำลังบันทึก…") : (lang === "en" ? "Save" : "บันทึก")}
         </button>
       </div>
     </div>
