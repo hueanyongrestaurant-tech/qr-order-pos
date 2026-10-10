@@ -166,7 +166,7 @@ async function addVoidReason(reason: string): Promise<void> {
   }
 }
 
-function ConfirmModal({ message, onConfirm, onCancel, lang }: { message: string; onConfirm: () => void; onCancel: () => void; lang: Language }) {
+function ConfirmModal({ message, onConfirm, onCancel, lang, confirmLabel, cancelLabel }: { message: string; onConfirm: () => void; onCancel: () => void; lang: Language; confirmLabel?: string; cancelLabel?: string }) {
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onCancel}>
       <div
@@ -179,13 +179,13 @@ function ConfirmModal({ message, onConfirm, onCancel, lang }: { message: string;
             onClick={onCancel}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
           >
-            {lang === "en" ? "Cancel" : "ยกเลิก"}
+            {cancelLabel ?? (lang === "en" ? "Cancel" : "ยกเลิก")}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-all"
           >
-            {lang === "en" ? "Confirm" : "ยืนยัน"}
+            {confirmLabel ?? (lang === "en" ? "Confirm" : "ยืนยัน")}
           </button>
         </div>
       </div>
@@ -661,8 +661,10 @@ export default function App() {
   const [staffTab, setStaffTab] = useState<StaffTab>("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const menuScrollTopRef = useRef(0);
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm });
+  type ConfirmLabels = { confirmLabel?: string; cancelLabel?: string };
+  const [confirmDialog, setConfirmDialog] = useState<({ message: string; onConfirm: () => void } & ConfirmLabels) | null>(null);
+  const askConfirm = (message: string, onConfirm: () => void, labels?: ConfirmLabels) =>
+    setConfirmDialog({ message, onConfirm, ...labels });
   const [reasonPrompt, setReasonPrompt] = useState<{ title: string; onConfirm: (reason: string) => void } | null>(null);
   // AUDIT_UI_ENABLED = false (ปิดชั่วคราว ดู constants.ts) → ข้ามหน้าต่างถามเหตุผล ทำงานทันทีด้วย reason ว่าง
   // (log ยังถูกเขียนตามเดิม เพียงไม่มี field reason) — เปิด flag กลับแล้วหน้าต่างเดิมจะกลับมาเอง
@@ -674,6 +676,16 @@ export default function App() {
   const askCancelOrder = (onConfirm: (reason: string) => void) => {
     if (!AUDIT_UI_ENABLED) { askConfirm(T[lang].cancelOrderConfirm, () => onConfirm("")); return; }
     askReason(T[lang].cancelOrderReasonTitle, onConfirm);
+  };
+  // ยกเลิกรายการเดียว (ปุ่ม ✕ หรือกด – จนเหลือ 0) — ตอน flag ปิดถามยืนยันกันกดพลาด
+  // ตอน flag เปิด หน้าต่างถามเหตุผลมีปุ่มยืนยันอยู่แล้ว จึงไม่ถามซ้ำอีกชั้น
+  const askVoidItem = (item: CartItem, onConfirm: (reason: string) => void) => {
+    if (AUDIT_UI_ENABLED) { askReason(T[lang].voidItemReasonTitle, onConfirm); return; }
+    const name = lang === "en" ? item.item.name.en || item.item.name.th : item.item.name.th;
+    askConfirm(T[lang].voidItemConfirm(name), () => onConfirm(""), {
+      cancelLabel: T[lang].voidItemConfirmNo,
+      confirmLabel: T[lang].voidItemConfirmYes,
+    });
   };
   const [busyTables, setBusyTables] = useState(0);
   const [busyItems, setBusyItems] = useState(0);
@@ -1305,7 +1317,7 @@ export default function App() {
           })();
         });
       } else {
-        askReason(T[lang].voidItemReasonTitle, (reason) => {
+        askVoidItem(target, (reason) => {
           void voidOrderItem(order, target.cartId, reason, billTotalBefore);
         });
       }
@@ -1341,7 +1353,7 @@ export default function App() {
         })();
       });
     } else {
-      askReason(T[lang].voidItemReasonTitle, (reason) => {
+      askVoidItem(target, (reason) => {
         void voidOrderItem(order, target.cartId, reason, billTotalBefore);
       });
     }
@@ -1726,9 +1738,10 @@ export default function App() {
             onUnmarkServed={handleUnmarkServed}
             onServeItem={handleServeItem}
             onUnserveItem={handleUnserveItem}
-            onRemoveItem={(orderId, cartId) =>
-              askReason(T[lang].voidItemReasonTitle, (reason) => handleRemoveOrderItem(orderId, cartId, reason))
-            }
+            onRemoveItem={(orderId, cartId) => {
+              const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
+              if (target) askVoidItem(target, (reason) => handleRemoveOrderItem(orderId, cartId, reason));
+            }}
             onCancelOrder={(orderId) =>
               askCancelOrder((reason) => handleCancelOrder(orderId, reason))
             }
@@ -1995,6 +2008,8 @@ export default function App() {
       {confirmDialog && (
         <ConfirmModal
           message={confirmDialog.message}
+          confirmLabel={confirmDialog.confirmLabel}
+          cancelLabel={confirmDialog.cancelLabel}
           lang={lang}
           onConfirm={() => {
             confirmDialog.onConfirm();

@@ -17,6 +17,19 @@ export function isMeatGroup(group: CustomGroup): boolean {
   return (group.nameTh || "").includes("เนื้อสัตว์");
 }
 
+// ค่าเริ่มต้นของ customSelections ตอนเปิดหน้าเมนู — เลือก defaultChoiceId ไว้ให้เฉพาะกลุ่ม single
+// ที่ตัวเลือกนั้นยังมีอยู่ ไม่ถูกซ่อน และไม่หมด (หมดนับเฉพาะกลุ่มเนื้อสัตว์ เหมือนหน้าสั่ง) ไม่งั้นปล่อยว่างเหมือนเดิม
+export function defaultCustomSelections(item: MenuItem): Record<string, string[]> {
+  const selections: Record<string, string[]> = {};
+  for (const g of item.customGroups || []) {
+    if (g.type !== "single" || !g.defaultChoiceId) continue;
+    const choice = g.choices.find((c) => c.id === g.defaultChoiceId);
+    if (!choice || choice.active === false || (isMeatGroup(g) && choice.soldOut)) continue;
+    selections[g.id] = [choice.id];
+  }
+  return selections;
+}
+
 // ตัวเลือกเนื้อสัตว์ที่ "แสดงอยู่" (ไม่นับที่ถูกซ่อน) ของเมนู ทั้งแบบในตัว (hasMeatChoice) และแบบกลุ่มที่สร้างเอง
 // ใช้ทั้งชิปในหน้าจัดการเมนูและการคิดว่าเนื้อหมดทุกตัวหรือยัง
 export interface MeatOption {

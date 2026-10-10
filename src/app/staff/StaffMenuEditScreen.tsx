@@ -313,7 +313,10 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                   value={group.type}
                   onChange={(e) => {
                     const groups = [...(form.customGroups || [])];
-                    groups[gIdx] = { ...group, type: e.target.value as "single" | "multi" };
+                    // ตัวเลือกเริ่มต้นใช้ได้เฉพาะ "1 อย่าง" — เปลี่ยนเป็นหลายอย่างแล้วล้างทิ้ง
+                    const { defaultChoiceId: _drop, ...rest } = group;
+                    const type = e.target.value as "single" | "multi";
+                    groups[gIdx] = type === "single" ? { ...group, type } : { ...rest, type };
                     update({ customGroups: groups });
                   }}
                   className="bg-background border border-border rounded-lg px-2 py-1 text-xs outline-none"
@@ -332,6 +335,33 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                   {lang === "en" ? "Required" : "ต้องเลือก"}
                 </button>
               </div>
+
+              {group.type === "single" && group.choices.length > 0 && (
+                <div className="flex items-center gap-2 mb-2.5">
+                  <span className="text-xs text-muted-foreground">
+                    {lang === "en" ? "Pre-selected:" : "ตัวเลือกเริ่มต้น:"}
+                  </span>
+                  <select
+                    value={group.choices.some((c) => c.id === group.defaultChoiceId) ? group.defaultChoiceId : ""}
+                    onChange={(e) => {
+                      const groups = [...(form.customGroups || [])];
+                      // "ไม่มี" = ลบ field ทิ้ง (Firestore ไม่รับค่า undefined)
+                      const { defaultChoiceId: _drop, ...rest } = group;
+                      groups[gIdx] = e.target.value ? { ...rest, defaultChoiceId: e.target.value } : rest;
+                      update({ customGroups: groups });
+                    }}
+                    className="bg-background border border-border rounded-lg px-2 py-1 text-xs outline-none min-w-0 max-w-[60%]"
+                  >
+                    <option value="">{lang === "en" ? "None" : "ไม่มี (ลูกค้าเลือกเอง)"}</option>
+                    {group.choices.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {(lang === "en" ? c.labelEn || c.labelTh : c.labelTh || c.labelEn) || "—"}
+                        {c.active === false ? (lang === "en" ? " (hidden)" : " (ซ่อนอยู่)") : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="space-y-1.5 mb-2">
                 {group.choices.map((choice, cIdx) => (
@@ -390,7 +420,10 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
                     <button
                       onClick={() => {
                         const groups = [...(form.customGroups || [])];
-                        groups[gIdx] = { ...group, choices: group.choices.filter((_, i) => i !== cIdx) };
+                        const choices = group.choices.filter((_, i) => i !== cIdx);
+                        // ลบตัวเลือกที่เป็นค่าเริ่มต้นอยู่ → ล้างค่าเริ่มต้นด้วย ไม่ให้ชี้ไปตัวที่ไม่มีแล้ว
+                        const { defaultChoiceId: _drop, ...rest } = group;
+                        groups[gIdx] = choice.id === group.defaultChoiceId ? { ...rest, choices } : { ...group, choices };
                         update({ customGroups: groups });
                       }}
                       className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"

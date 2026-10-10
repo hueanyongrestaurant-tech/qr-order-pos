@@ -3,7 +3,7 @@ import { Check, ChevronLeft, Flame, Minus, Plus, ShoppingCart, Star } from "luci
 import type { CartItem, Language, MeatChoice, MenuItem, Portion, SpiceLevel } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
-import { isMeatGroup, itemPrice, MEAT_CHOICES, menuAvailability, resolvePhoto, uid } from "../utils";
+import { defaultCustomSelections, isMeatGroup, itemPrice, MEAT_CHOICES, menuAvailability, resolvePhoto, uid } from "../utils";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 // ─── Item Detail Screen ───────────────────────────────────────────────────────
@@ -40,7 +40,8 @@ export function ItemDetailScreen({
   const [spice, setSpice] = useState<SpiceLevel>(1);
   const [addEgg, setAddEgg] = useState(false);
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
-  const [customSelections, setCustomSelections] = useState<Record<string, string[]>>({});
+  // เปิดมาเลือก "ตัวเลือกเริ่มต้น" ของแต่ละกลุ่มไว้ให้ (ตั้งในหน้าแก้ไขเมนู) — ไม่มี/ใช้ไม่ได้ = ว่างเหมือนเดิม
+  const [customSelections, setCustomSelections] = useState<Record<string, string[]>>(() => defaultCustomSelections(item));
   const [note, setNote] = useState("");
   const [customNote, setCustomNote] = useState("");
   const [customAddOnPrice, setCustomAddOnPrice] = useState(0);

@@ -42,6 +42,9 @@ export interface CustomGroup {
   type: "single" | "multi"; // single = เลือกได้ 1, multi = เลือกได้หลายอย่าง
   choices: CustomChoice[];
   required?: boolean;
+  // ตัวเลือกที่ถูกเลือกไว้ให้ตอนเปิดหน้าเมนู (เฉพาะ type single) — ไม่มี = ไม่เลือกอะไรไว้
+  // ถ้าตัวเลือกนี้ถูกลบ/ซ่อน/หมด จะกลับไปเป็นไม่เลือก (ดู defaultCustomSelections ใน utils.ts)
+  defaultChoiceId?: string;
 }
 export type OrderStatus = "in-progress" | "awaiting-payment" | "paid" | "cancelled";
 // "split" = บิลเดียวจ่ายเงินสดส่วนหนึ่ง + โอนอีกส่วนหนึ่ง (ดู Order.transferAmount)
