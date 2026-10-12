@@ -77,20 +77,24 @@ export async function readMenuSnapshotHash(): Promise<string | null> {
 }
 
 // ใหญ่เกิน → เขียนเป็น disabled (ไม่มี data) ลูกค้าจะ fallback ไปอ่าน menuItems แบบเดิม ไม่ใช่เห็นเมนูค้าง
+// merge: true — ไม่แตะฟิลด์ killSwitch ที่เจ้าของร้านตั้งเองใน Firebase Console (ดู readMenuSnapshot)
 export async function writeMenuSnapshot(built: BuiltMenuSnapshot): Promise<void> {
+  const base = { version: SNAPSHOT_VERSION, hash: built.hash, bytes: built.bytes, updatedAt: serverTimestamp() };
   if (built.bytes > MAX_SNAPSHOT_BYTES) {
     console.error(`menuSnapshot too large (${built.bytes} bytes) — disabled, customers fall back to menuItems`);
-    await setDoc(SNAPSHOT_REF(), { version: SNAPSHOT_VERSION, disabled: true, hash: built.hash, bytes: built.bytes, updatedAt: serverTimestamp() });
+    await setDoc(SNAPSHOT_REF(), { ...base, disabled: true, data: "" }, { merge: true });
     return;
   }
-  await setDoc(SNAPSHOT_REF(), { version: SNAPSHOT_VERSION, data: built.json, hash: built.hash, bytes: built.bytes, updatedAt: serverTimestamp() });
+  await setDoc(SNAPSHOT_REF(), { ...base, disabled: false, data: built.json }, { merge: true });
 }
 
 // ฝั่งลูกค้า: null = ไม่มี/ปิดอยู่/ข้อมูลเสีย → ผู้เรียกต้อง fallback ไปอ่าน menuItems/categories เอง
+// สวิตช์ฉุกเฉินไม่ต้องแก้โค้ด: ใน Firebase Console เพิ่มฟิลด์ killSwitch (boolean) = true ใน status/menuSnapshot
+// → ลูกค้าทุกคนกลับไปอ่านแบบเดิมทันที และค้างอยู่อย่างนั้น (แอปไม่เคยเขียนทับฟิลด์นี้) ลบฟิลด์ทิ้ง = เปิดกลับ
 export async function readMenuSnapshot(): Promise<MenuSnapshotData | null> {
   const snap = await getDoc(SNAPSHOT_REF());
   const raw = snap.data();
-  if (!raw || raw.disabled || raw.version !== SNAPSHOT_VERSION || typeof raw.data !== "string") return null;
+  if (!raw || raw.killSwitch === true || raw.disabled || raw.version !== SNAPSHOT_VERSION || typeof raw.data !== "string") return null;
   try {
     const parsed = JSON.parse(raw.data) as Partial<MenuSnapshotData>;
     if (!Array.isArray(parsed.categories) || !Array.isArray(parsed.menuItems)) return null;
