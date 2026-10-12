@@ -43,6 +43,7 @@ import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
 import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 
 import type {
   Language,
@@ -334,6 +335,8 @@ const MENU_CACHE_TTL_MS = 15 * 60 * 1000;
 const AUTH_CHECK_TIMEOUT_MS = 8000;
 // เวลารอเช็คสถานะ "หมด" ล่าสุดของเมนูในตะกร้าก่อนส่งออเดอร์ — เกินนี้ข้ามการเช็คแล้วส่งเลย (ร้านเน็ตช้า)
 const SOLD_OUT_CHECK_TIMEOUT_MS = 3000;
+// รอให้การแก้เมนูหลายจุดติดกัน (เช่นลากเรียงลำดับ = เขียนหลาย doc) นิ่งก่อนค่อยเขียน menu snapshot ครั้งเดียว
+const MENU_SNAPSHOT_DEBOUNCE_MS = 2000;
 
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
@@ -405,6 +408,11 @@ export default function App() {
   // ทั้งที่ session ยังอยู่ ฝั่งลูกค้าไม่ใช้ค่านี้
   const [authChecked, setAuthChecked] = useState(false);
 
+  // true = listener ได้ข้อมูลจาก server แล้ว (ไม่ใช่ค่าว่างตอนเริ่ม) — gate การเขียน menu snapshot
+  // กันเขียน snapshot ว่าง/ครึ่งๆ กลางๆ ทับของดีบน server
+  const [staffMenuSynced, setStaffMenuSynced] = useState(false);
+  const [staffCategoriesSynced, setStaffCategoriesSynced] = useState(false);
+
   // ฝั่งพนักงาน (ไม่มี ?table=): realtime listener เดิม — เห็นการแก้ไขเมนูทันทีเสมอ
   useEffect(() => {
     if (getTableFromUrl() !== null) return; // ลูกค้า: ใช้ effect แยกด้านล่างที่มี cache แทน
@@ -412,6 +420,7 @@ export default function App() {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
       setAllCategories(data);
       setCategories(data.filter((c) => c.active !== false));
+      if (!snapshot.metadata.fromCache) setStaffCategoriesSynced(true);
     });
     return unsubscribe;
   }, []);
@@ -422,6 +431,7 @@ export default function App() {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem & { active?: boolean }));
       setAllMenuItems(data);
       setMenuItems(data.filter((m) => m.active !== false));
+      if (!snapshot.metadata.fromCache) setStaffMenuSynced(true);
     });
     return unsubscribe;
   }, []);
@@ -449,13 +459,26 @@ export default function App() {
     }
 
     (async () => {
-      const [categorySnap, menuSnap] = await Promise.all([
-        getDocs(query(collection(db, "categories"), orderBy("order", "asc"))),
-        getDocs(collection(db, "menuItems")),
-      ]);
+      // อ่าน menu snapshot doc เดียวก่อน (1 read) — ไม่มี/ปิดอยู่/อ่านไม่ได้ ค่อย fallback อ่านทั้ง collection แบบเดิม
+      const fromSnapshot = await readMenuSnapshot().catch((err) => {
+        console.error("read menuSnapshot failed — falling back to menuItems", err);
+        return null;
+      });
       if (cancelled) return;
-      const categoryData = categorySnap.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
-      const menuData = menuSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem & { active?: boolean }));
+      let categoryData: Category[];
+      let menuData: (MenuItem & { active?: boolean })[];
+      if (fromSnapshot) {
+        categoryData = fromSnapshot.categories;
+        menuData = fromSnapshot.menuItems;
+      } else {
+        const [categorySnap, menuSnap] = await Promise.all([
+          getDocs(query(collection(db, "categories"), orderBy("order", "asc"))),
+          getDocs(collection(db, "menuItems")),
+        ]);
+        if (cancelled) return;
+        categoryData = categorySnap.docs.map((d) => ({ id: d.id, ...d.data() } as Category));
+        menuData = menuSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem & { active?: boolean }));
+      }
       setAllCategories(categoryData);
       setCategories(categoryData.filter((c) => c.active !== false));
       setAllMenuItems(menuData);
@@ -467,6 +490,42 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  // ─── เขียน menu snapshot (ฝั่งพนักงานที่ล็อกอินแล้ว) — ดู menuSnapshot.ts ───
+  // ทุกเครื่องพนักงานคำนวณ snapshot จากข้อมูล realtime ในหน่วยความจำ แล้วเขียนเมื่อ hash ต่างจากที่รู้ล่าสุด
+  // ครอบคลุมทุกทางที่เมนูเปลี่ยน (แก้/เพิ่ม/ลบเมนู, หมด/ซ่อน, เนื้อหมด, หมวด, ลากเรียง) และการแก้จากเครื่อง
+  // ที่ยังเป็นโค้ดเก่า (เครื่องโค้ดใหม่ที่เปิดอยู่จะเห็นการเปลี่ยนแล้วเขียนแทนให้) — ไม่มี read เพิ่มนอกจาก
+  // อ่าน hash บน server 1 ครั้งต่อการเปิดแอป (สร้าง snapshot ครั้งแรก/ซ่อมของเก่าให้อัตโนมัติ)
+  // undefined = ยังไม่ได้อ่าน hash บน server | null = ไม่มี snapshot บน server
+  const [serverMenuSnapshotHash, setServerMenuSnapshotHash] = useState<string | null | undefined>(undefined);
+  const lastWrittenMenuSnapshotHashRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !staffLoggedIn) return;
+    if (serverMenuSnapshotHash !== undefined) return; // อ่านครั้งเดียวพอ
+    let cancelled = false;
+    readMenuSnapshotHash()
+      .then((h) => { if (!cancelled) setServerMenuSnapshotHash(h); })
+      .catch((err) => {
+        console.error("read menuSnapshot hash failed", err);
+        if (!cancelled) setServerMenuSnapshotHash(null); // ไม่รู้ = ถือว่าไม่มี → เขียนทับให้ถูกต้อง
+      });
+    return () => { cancelled = true; };
+  }, [staffLoggedIn, serverMenuSnapshotHash]);
+
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !staffLoggedIn) return;
+    if (!staffMenuSynced || !staffCategoriesSynced || serverMenuSnapshotHash === undefined) return;
+    if (allMenuItems.length === 0 || allCategories.length === 0) return; // กันเขียนเมนูว่างทับ
+    const timer = window.setTimeout(() => {
+      const built = buildMenuSnapshot(allCategories, allMenuItems);
+      const known = lastWrittenMenuSnapshotHashRef.current ?? serverMenuSnapshotHash;
+      if (built.hash === known) return;
+      writeMenuSnapshot(built)
+        .then(() => { lastWrittenMenuSnapshotHashRef.current = built.hash; })
+        .catch((err) => console.error("write menuSnapshot failed", err));
+    }, MENU_SNAPSHOT_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [staffLoggedIn, staffMenuSynced, staffCategoriesSynced, serverMenuSnapshotHash, allMenuItems, allCategories]);
 
   // รีเฟรชตอนอยู่หน้ารายละเอียดเมนู: menuItems ยังโหลดไม่มา ต้องรอแล้วค่อยหา item ที่จำไว้กลับมาใส่
   useEffect(() => {
