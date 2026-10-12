@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, Loader2, Plus } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ChevronDown, ChevronRight, Loader2, Plus, RefreshCw } from "lucide-react";
 import type { Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import {
   cartItemTotal,
-  dayAfter,
-  fetchPaidOrders,
+  fetchPaidOrdersCached,
   FETCH_MAX_AUTO_RETRIES,
   FETCH_RETRY_DELAY_MS,
   formatClock,
@@ -56,12 +55,14 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
   const t = T[lang];
   const today = formatDateInput(new Date());
   const [date, setDate] = useState(initialDate ?? today);
-  const [reloadKey, setReloadKey] = useState(0); // เพิ่มทีละ 1 = ดึงข้อมูลวันเดิมใหม่ (หลังยกเลิกบิลย้อนหลัง)
+  const [reloadKey, setReloadKey] = useState(0); // เพิ่มทีละ 1 = ดึงข้อมูลวันเดิมใหม่ (หลังยกเลิกบิลย้อนหลัง / กดรีเฟรช)
+  const forceRefreshRef = useRef(false); // true = รอบถัดไปข้าม cache (ปุ่มรีเฟรช)
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [cancellingKey, setCancellingKey] = useState<string | null>(null);
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
 
   // ดึงออเดอร์ที่ชำระแล้วเฉพาะวันที่เลือกไว้ (default วันนี้) — one-time fetch ต่อวันเดียว
-  // (ไม่ใช่ rolling window หลายวันเหมือนเดิม) เร็วขึ้นเพราะ query แคบลงมาก
+  // ผ่าน cache รายวันใน utils (วันที่ผ่านมาแล้วไม่ดึงซ้ำ วันนี้ดึงใหม่เมื่อ cache เกิน 5 นาที หรือกดรีเฟรช)
   const [fetchedOrders, setFetchedOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
@@ -74,10 +75,13 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
     let retryTimer: number | undefined;
     setLoading(true);
 
-    fetchPaidOrders(new Date(`${date}T00:00:00`), dayAfter(date))
-      .then((rows) => {
+    const force = forceRefreshRef.current;
+    forceRefreshRef.current = false;
+    fetchPaidOrdersCached(date, date, force)
+      .then(({ orders: rows, fetchedAt: at }) => {
         if (cancelled) return;
         setFetchedOrders(rows);
+        setFetchedAt(at);
         setLoadFailed(false);
       })
       .catch((err) => {
@@ -170,6 +174,14 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
           >
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
+          <button
+            onClick={() => { forceRefreshRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
+            disabled={loading || retrying}
+            aria-label={lang === "en" ? "Refresh" : "รีเฟรช"}
+            className="h-11 w-11 rounded-xl bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+          >
+            <RefreshCw size={16} />
+          </button>
         </div>
 
         <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs mb-4">
@@ -178,7 +190,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
             <span className="truncate">
               {retrying || (loading && retryCount > 0)
                 ? (lang === "en" ? "Couldn't load — retrying…" : "โหลดข้อมูลไม่สำเร็จ กำลังลองใหม่…")
-                : dateLabel(new Date(`${date}T00:00:00`))}
+                : `${dateLabel(new Date(`${date}T00:00:00`))}${fetchedAt !== null && !loading ? ` · ${lang === "en" ? "as of" : "ข้อมูล ณ"} ${formatClock(new Date(fetchedAt))}` : ""}`}
             </span>
           </div>
           {!loading && !retrying && entries.length > 0 && (

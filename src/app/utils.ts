@@ -3,7 +3,6 @@ import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
 import { collection, documentId, getDocs, getDocsFromServer, orderBy, query, where, limit } from "firebase/firestore";
-import { diagTime } from "./diag"; // TEMP DIAGNOSTICS
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
@@ -145,7 +144,7 @@ export function cartItemMeatLabel(ci: CartItem, lang: Language): string {
   return labels.join(", ");
 }
 
-// ดึงข้อมูลล่าสุดจาก server ของเมนูในตะกร้าก่อนส่งออเดอร์ (หน้าเมนูลูกค้า cache ไว้ได้ถึง 3 นาที
+// ดึงข้อมูลล่าสุดจาก server ของเมนูในตะกร้าก่อนส่งออเดอร์ (หน้าเมนูลูกค้า cache ไว้ได้ถึง 15 นาที
 // จึงอาจยังเห็นเมนู/เนื้อที่เพิ่งกด "หมด" ว่าขายอยู่) คืน map id → ข้อมูลเมนูล่าสุด ให้ผู้เรียกตัดสินเองทีละรายการ
 // ห้ามทำให้ลูกค้าติดส่งไม่ได้: offline / error / ช้าเกิน timeoutMs → คืน map ว่าง = ข้ามการเช็คแล้วส่งตามปกติ
 // เมนูที่ไม่มี doc (เช่นรายการ addon-xxx ที่พนักงานพิมพ์เอง หรือเมนูที่ถูกลบ) ไม่อยู่ใน map = ไม่นับว่าหมด
@@ -449,9 +448,7 @@ export function compressImage(file: File, maxWidth = 600, quality = 0.7): Promis
 // limit เป็นแค่กันหลุด (safety cap) ไม่ใช่ pagination จริง
 export const PAID_ORDERS_QUERY_CAP = 8000;
 export async function fetchPaidOrders(startInclusive: Date, endExclusive: Date): Promise<Order[]> {
-  const snap = await diagTime( // TEMP DIAGNOSTICS
-    "GETDOCS paidOrders",
-    () => getDocs(
+  const snap = await getDocs(
       query(
         collection(db, "orders"),
         where("createdAt", ">=", startInclusive),
@@ -459,12 +456,68 @@ export async function fetchPaidOrders(startInclusive: Date, endExclusive: Date):
         orderBy("createdAt", "asc"),
         limit(PAID_ORDERS_QUERY_CAP),
       ),
-    ),
-    (s) => `${s.size} docs, ${formatDateInput(startInclusive)}..${formatDateInput(endExclusive)}`,
-  );
+    );
   return snap.docs
     .map((d) => mapOrderDoc(d.id, d.data()))
     .filter((o) => o.status === "paid");
+}
+
+// ─── cache ออเดอร์ที่ชำระแล้ว แยกรายวัน (ในหน่วยความจำ ใช้ร่วมกันระหว่าง History กับ Stats) ───
+// ประหยัด Firestore reads: เข้าแท็บซ้ำ/สลับช่วงวันที่กลับไปมา ไม่ต้องดึงใหม่ทั้งช่วง
+// - วันที่ผ่านมาแล้ว: ใช้ cache ไปจนกว่าจะรีเฟรชหน้า/ปิดแอป, กดปุ่มรีเฟรช หรือถูกล้างด้วย invalidatePaidOrdersDay
+//   (บันทึก/ยกเลิกบิลย้อนหลังล้างวันนั้นให้เอง)
+// - วันนี้ (ยังขายอยู่): ใช้ cache ได้ TODAY_PAID_CACHE_TTL_MS แล้วค่อยดึงใหม่ — กดรีเฟรชเพื่อดูล่าสุดทันที
+// ดึงเฉพาะวันที่ขาด เป็น query เดียวตั้งแต่วันแรกที่ขาดถึงวันสุดท้ายที่ขาด (เช่น Stats 7 วัน = ดึงแค่วันนี้)
+const TODAY_PAID_CACHE_TTL_MS = 5 * 60 * 1000;
+const paidOrdersByDay = new Map<string, { orders: Order[]; fetchedAt: number }>();
+
+export function invalidatePaidOrdersDay(dateKey: string) {
+  paidOrdersByDay.delete(dateKey);
+}
+
+// "YYYY-MM-DD" ทุกวันตั้งแต่ startKey ถึง endKey (รวมทั้งสองฝั่ง) — ช่วงผิด/ว่าง คืน []
+function dayKeysInRange(startKey: string, endKey: string): string[] {
+  const keys: string[] = [];
+  const cursor = new Date(`${startKey}T00:00:00`);
+  const end = new Date(`${endKey}T00:00:00`);
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime())) return keys;
+  while (cursor <= end && keys.length < 1000) {
+    keys.push(formatDateInput(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
+
+// fetchedAt = เวลาดึงของวันที่เก่าที่สุดในช่วง (ไว้โชว์ "ข้อมูล ณ HH:MM")
+export async function fetchPaidOrdersCached(
+  startKey: string,
+  endKey: string,
+  force = false,
+): Promise<{ orders: Order[]; fetchedAt: number }> {
+  const days = dayKeysInRange(startKey, endKey);
+  const todayKey = formatDateInput(new Date());
+  const now = Date.now();
+  const isFresh = (k: string) => {
+    const hit = paidOrdersByDay.get(k);
+    if (!hit) return false;
+    return k < todayKey || now - hit.fetchedAt < TODAY_PAID_CACHE_TTL_MS;
+  };
+  const missing = force ? days : days.filter((k) => !isFresh(k));
+  if (missing.length > 0) {
+    const first = missing[0];
+    const last = missing[missing.length - 1];
+    const rows = await fetchPaidOrders(new Date(`${first}T00:00:00`), dayAfter(last));
+    const fetchedAt = Date.now();
+    const byDay = new Map<string, Order[]>(dayKeysInRange(first, last).map((k) => [k, []]));
+    // ตัดรูป base64 ของออเดอร์เก่าทิ้งก่อนเก็บ — History/Stats ไม่ได้แสดงรูป ไม่ต้องค้างไว้ในหน่วยความจำ
+    rows.forEach((o) => byDay.get(formatDateInput(o.timestamp))?.push({ ...o, items: (o.items || []).map(stripItemPhoto) }));
+    byDay.forEach((orders, k) => paidOrdersByDay.set(k, { orders, fetchedAt }));
+  }
+  const hits = days.map((k) => paidOrdersByDay.get(k)).filter((h): h is { orders: Order[]; fetchedAt: number } => !!h);
+  return {
+    orders: hits.flatMap((h) => h.orders),
+    fetchedAt: hits.length > 0 ? Math.min(...hits.map((h) => h.fetchedAt)) : now,
+  };
 }
 
 // ตั้งค่า retry ร่วมกันของ History/Stats — ถ้า fetchPaidOrders fail (เช่น เครือข่ายสะดุดตอนแท็บ

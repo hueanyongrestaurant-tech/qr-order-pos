@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
 import type { CartItem, Language, Order, StaffTab } from "../types";
@@ -7,8 +7,8 @@ import { T } from "../translations";
 import { ADD_ONS } from "../constants";
 import {
   cartItemTotal,
-  dayAfter,
-  fetchPaidOrders,
+  fetchPaidOrdersCached,
+  formatClock,
   FETCH_MAX_AUTO_RETRIES,
   FETCH_RETRY_DELAY_MS,
   formatDateInput,
@@ -44,15 +44,22 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
   const [retrying, setRetrying] = useState(false); // true = พึ่ง fail อยู่ระหว่างรอ auto-retry รอบถัดไป
   const [loadFailed, setLoadFailed] = useState(false); // true = auto-retry ครบแล้วยังไม่สำเร็จ รอกดเอง
   const resetRetry = () => { setRetryCount(0); setRetrying(false); setLoadFailed(false); };
+  const [reloadKey, setReloadKey] = useState(0); // เพิ่มทีละ 1 = ปุ่มรีเฟรช
+  const forceRefreshRef = useRef(false); // true = รอบถัดไปข้าม cache
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let retryTimer: number | undefined;
     setLoading(true);
-    fetchPaidOrders(new Date(`${startDate}T00:00:00`), dayAfter(endDate))
-      .then((rows) => {
+    // ผ่าน cache รายวันใน utils — ดึงจริงเฉพาะวันที่ยังไม่มีใน cache (+ วันนี้ถ้า cache เกิน 5 นาที)
+    const force = forceRefreshRef.current;
+    forceRefreshRef.current = false;
+    fetchPaidOrdersCached(startDate, endDate, force)
+      .then(({ orders: rows, fetchedAt: at }) => {
         if (cancelled) return;
         setPaidOrders(rows);
+        setFetchedAt(at);
         setLoadFailed(false);
       })
       .catch((err) => {
@@ -74,7 +81,7 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate, retryCount]);
+  }, [startDate, endDate, retryCount, reloadKey]);
 
   const rangeStart = new Date(`${startDate}T00:00:00`);
   const rangeEnd = new Date(`${endDate}T23:59:59`);
@@ -220,7 +227,20 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
           >
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
+          <button
+            onClick={() => { forceRefreshRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
+            disabled={loading || retrying}
+            aria-label={lang === "en" ? "Refresh" : "รีเฟรช"}
+            className="h-11 w-11 rounded-xl bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+          >
+            <RefreshCw size={16} />
+          </button>
         </div>
+        {fetchedAt !== null && !loading && !retrying && (
+          <div className="text-muted-foreground text-xs -mt-3 mb-4">
+            {lang === "en" ? "As of" : "ข้อมูล ณ"} {formatClock(new Date(fetchedAt))}
+          </div>
+        )}
 
         {loadFailed && (
           <div className="flex items-center justify-between gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5 mb-4">

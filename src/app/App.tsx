@@ -41,9 +41,8 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
-import { diagImport, diagWatch, diagLog, DiagSpinnerSpy } from "./diag"; // TEMP DIAGNOSTICS
 
 import type {
   Language,
@@ -75,6 +74,7 @@ import {
   cartItemUnitPrice,
   cartItemTotal,
   stripItemPhoto,
+  invalidatePaidOrdersDay,
   liveItems,
   liveItemCount,
   unservedItems,
@@ -116,19 +116,19 @@ import { OrderSentScreen } from "./customer/OrderSentScreen";
 // ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
 // แต่ละ Staff*Screen import ตรงจากไฟล์ตัวเอง แยกเป็นคนละ JS chunk ต่อหน้าจอ
 // ลูกค้าที่สแกน QR ไม่โหลด chunk เหล่านี้เลย ส่วนฝั่งพนักงานโหลดเฉพาะแท็บที่กดจริง
-const StaffLoginScreen = lazy(diagImport("StaffLoginScreen", () => import("./staff/StaffLoginScreen").then((m) => ({ default: m.StaffLoginScreen }))));
-const StaffOrdersScreen = lazy(diagImport("StaffOrdersScreen", () => import("./staff/StaffOrdersScreen").then((m) => ({ default: m.StaffOrdersScreen }))));
-const StaffPaymentScreen = lazy(diagImport("StaffPaymentScreen", () => import("./staff/StaffPaymentScreen").then((m) => ({ default: m.StaffPaymentScreen }))));
-const StaffMenuScreen = lazy(diagImport("StaffMenuScreen", () => import("./staff/StaffMenuScreen").then((m) => ({ default: m.StaffMenuScreen }))));
-const StaffManualTableScreen = lazy(diagImport("StaffManualTableScreen", () => import("./staff/StaffManualTableScreen").then((m) => ({ default: m.StaffManualTableScreen }))));
-const StaffAddOnScreen = lazy(diagImport("StaffAddOnScreen", () => import("./staff/StaffAddOnScreen").then((m) => ({ default: m.StaffAddOnScreen }))));
-const StaffMenuEditScreen = lazy(diagImport("StaffMenuEditScreen", () => import("./staff/StaffMenuEditScreen").then((m) => ({ default: m.StaffMenuEditScreen }))));
-const StaffHistoryScreen = lazy(diagImport("StaffHistoryScreen", () => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen }))));
-const StaffExpensesScreen = lazy(diagImport("StaffExpensesScreen", () => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen }))));
-const StaffStatsScreen = lazy(diagImport("StaffStatsScreen", () => import("./staff/StaffStatsScreen").then((m) => ({ default: m.StaffStatsScreen }))));
-const StaffBackfillSetupScreen = lazy(diagImport("StaffBackfillSetupScreen", () => import("./staff/StaffBackfillSetupScreen").then((m) => ({ default: m.StaffBackfillSetupScreen }))));
-const StaffBackfillPaymentScreen = lazy(diagImport("StaffBackfillPaymentScreen", () => import("./staff/StaffBackfillPaymentScreen").then((m) => ({ default: m.StaffBackfillPaymentScreen }))));
-const StaffActivityScreen = lazy(diagImport("StaffActivityScreen", () => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen }))));
+const StaffLoginScreen = lazy(() => import("./staff/StaffLoginScreen").then((m) => ({ default: m.StaffLoginScreen })));
+const StaffOrdersScreen = lazy(() => import("./staff/StaffOrdersScreen").then((m) => ({ default: m.StaffOrdersScreen })));
+const StaffPaymentScreen = lazy(() => import("./staff/StaffPaymentScreen").then((m) => ({ default: m.StaffPaymentScreen })));
+const StaffMenuScreen = lazy(() => import("./staff/StaffMenuScreen").then((m) => ({ default: m.StaffMenuScreen })));
+const StaffManualTableScreen = lazy(() => import("./staff/StaffManualTableScreen").then((m) => ({ default: m.StaffManualTableScreen })));
+const StaffAddOnScreen = lazy(() => import("./staff/StaffAddOnScreen").then((m) => ({ default: m.StaffAddOnScreen })));
+const StaffMenuEditScreen = lazy(() => import("./staff/StaffMenuEditScreen").then((m) => ({ default: m.StaffMenuEditScreen })));
+const StaffHistoryScreen = lazy(() => import("./staff/StaffHistoryScreen").then((m) => ({ default: m.StaffHistoryScreen })));
+const StaffExpensesScreen = lazy(() => import("./staff/StaffExpensesScreen").then((m) => ({ default: m.StaffExpensesScreen })));
+const StaffStatsScreen = lazy(() => import("./staff/StaffStatsScreen").then((m) => ({ default: m.StaffStatsScreen })));
+const StaffBackfillSetupScreen = lazy(() => import("./staff/StaffBackfillSetupScreen").then((m) => ({ default: m.StaffBackfillSetupScreen })));
+const StaffBackfillPaymentScreen = lazy(() => import("./staff/StaffBackfillPaymentScreen").then((m) => ({ default: m.StaffBackfillPaymentScreen })));
+const StaffActivityScreen = lazy(() => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen })));
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
@@ -306,11 +306,30 @@ function writeSession(key: string, value: unknown) {
   }
 }
 
+// cache เมนูฝั่งลูกค้าเก็บใน localStorage (ไม่ใช่ sessionStorage) — สแกน QR ใหม่มักเปิดแท็บใหม่
+// ถ้าเก็บใน sessionStorage จะต้องอ่านเมนูทั้งหมดจาก Firestore ใหม่ทุกครั้งที่สแกน
+const MENU_CACHE_KEY = `${STORAGE_PREFIX}:customerMenuCache`;
+function readMenuCache<T>(): T | null {
+  try {
+    const raw = localStorage.getItem(MENU_CACHE_KEY);
+    return raw === null ? null : (JSON.parse(raw) as T);
+  } catch {
+    return null;
+  }
+}
+function writeMenuCache(value: unknown) {
+  try {
+    localStorage.setItem(MENU_CACHE_KEY, JSON.stringify(value));
+  } catch {
+    // เต็ม/ถูกบล็อก — ไม่มี cache ก็แค่อ่าน Firestore ตามปกติ
+  }
+}
+
 // เฉพาะวิวเหล่านี้ที่ฝั่งลูกค้าจะถูกจำไว้ตอนรีเฟรช (ตัดพวกที่ sub-state เสี่ยงเกินไปออก)
 const CUSTOMER_RESUMABLE_VIEWS: View[] = ["menu", "item-detail", "cart", "order-sent"];
 
-// อายุ cache เมนู (categories+menuItems) ฝั่งลูกค้าใน sessionStorage — ดู effect ที่ใช้ค่านี้
-const MENU_CACHE_TTL_MS = 3 * 60 * 1000;
+// อายุ cache เมนู (categories+menuItems) ฝั่งลูกค้าใน localStorage — ดู effect ที่ใช้ค่านี้
+const MENU_CACHE_TTL_MS = 15 * 60 * 1000;
 // เวลารอ Firebase Auth กู้ session ก่อนยอมแสดงฟอร์มรหัสพนักงาน (ปกติเสร็จในไม่กี่ร้อย ms)
 const AUTH_CHECK_TIMEOUT_MS = 8000;
 // เวลารอเช็คสถานะ "หมด" ล่าสุดของเมนูในตะกร้าก่อนส่งออเดอร์ — เกินนี้ข้ามการเช็คแล้วส่งเลย (ร้านเน็ตช้า)
@@ -394,8 +413,7 @@ export default function App() {
       setAllCategories(data);
       setCategories(data.filter((c) => c.active !== false));
     });
-    const unDiag = diagWatch("categories", query(collection(db, "categories"), orderBy("order", "asc"))); // TEMP DIAGNOSTICS
-    return () => { unsubscribe(); unDiag(); };
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -405,23 +423,23 @@ export default function App() {
       setAllMenuItems(data);
       setMenuItems(data.filter((m) => m.active !== false));
     });
-    const unDiag = diagWatch("menuItems", collection(db, "menuItems")); // TEMP DIAGNOSTICS
-    return () => { unsubscribe(); unDiag(); };
+    return unsubscribe;
   }, []);
 
-  // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน sessionStorage แทน realtime listener
+  // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน localStorage แทน realtime listener
   // ลด Firestore reads ต่อการเปิด/รีเฟรชหน้าเมนู 1 ครั้ง (ก่อนหน้านี้ทุกครั้งที่เปิดหน้า = subscribe
-  // ใหม่ = อ่านทุก document ใหม่หมด) — cache หมดอายุใน 3 นาที ถึงจะยิง Firestore ใหม่ 1 ครั้ง (ไม่ realtime)
-  // แล้วอัปเดต cache ใหม่ ลูกค้าจึงเห็นการแก้ไขเมนูของ staff ช้าสุด 3 นาที ไม่ใช่ค้างตลอดไป
+  // ใหม่ = อ่านทุก document ใหม่หมด) — cache หมดอายุใน 15 นาที ถึงจะยิง Firestore ใหม่ 1 ครั้ง (ไม่ realtime)
+  // แล้วอัปเดต cache ใหม่ ลูกค้าจึงเห็นการแก้ไขเมนูของ staff ช้าสุด 15 นาที (ของหมดมีเช็คซ้ำตอนกดส่งอยู่แล้ว
+  // — fetchFreshMenuItems) ไม่ใช่ค้างตลอดไป
   useEffect(() => {
     if (getTableFromUrl() === null) return; // ฝั่งพนักงานไม่เกี่ยว ใช้ realtime listener ข้างบนแทน
     let cancelled = false;
 
-    const cached = readSession<{
+    const cached = readMenuCache<{
       categories: Category[];
       menuItems: (MenuItem & { active?: boolean })[];
       timestamp: number;
-    }>("customerMenuCache");
+    }>();
     if (cached && Date.now() - cached.timestamp < MENU_CACHE_TTL_MS) {
       setAllCategories(cached.categories);
       setCategories(cached.categories.filter((c) => c.active !== false));
@@ -442,7 +460,7 @@ export default function App() {
       setCategories(categoryData.filter((c) => c.active !== false));
       setAllMenuItems(menuData);
       setMenuItems(menuData.filter((m) => m.active !== false));
-      writeSession("customerMenuCache", { categories: categoryData, menuItems: menuData, timestamp: Date.now() });
+      writeMenuCache({ categories: categoryData, menuItems: menuData, timestamp: Date.now() });
     })();
 
     return () => {
@@ -481,7 +499,9 @@ export default function App() {
   // "แช่แข็ง" ไว้ใน back-forward cache กลับมาแสดงโดยไม่รันโค้ดใหม่เลย ทำให้ Firestore
   // listener ค้าง/ไม่อัปเดต ดูเหมือนสแกนแล้วไม่ขึ้นอะไร ต้องรีเฟรชเองถึงจะเห็น —
   // ตรวจจับเคสนี้แล้วรีโหลดหน้าให้อัตโนมัติ
+  // เฉพาะฝั่งลูกค้า — ฝั่งพนักงาน reload = subscribe ทุกอย่างใหม่หมด (เปลือง Firestore reads มาก)
   useEffect(() => {
+    if (getTableFromUrl() === null) return;
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) window.location.reload();
     };
@@ -583,16 +603,21 @@ export default function App() {
         });
       }
     });
-    const unDiag = diagWatch("orders(active)", q); // TEMP DIAGNOSTICS
-    return () => { unsubscribe(); unDiag(); };
+    return unsubscribe;
   }, [everAuthed]);
 
   // บัญชีรายจ่าย — ดึงเฉพาะช่วงวันที่ที่หน้า Expenses กำลังดู (1 doc ต่อวัน, id = "YYYY-MM-DD")
   // re-subscribe เมื่อช่วงวันที่เปลี่ยน — handler เพิ่ม/แก้/ลบ ทำงานกับวันที่ในช่วงนี้เสมอ
+  // subscribe เฉพาะตอนอยู่หน้ารายจ่าย ออกจากหน้าแล้ว unsubscribe (ประหยัด reads — เครื่องอื่นไม่ต้องฟังทั้งวัน)
+  // handler เพิ่ม/แก้/ลบ ถูกเรียกจากหน้ารายจ่ายเท่านั้น จึงเห็นข้อมูลล่าสุดเสมอ
+  const onExpensesView = view === "staff-expenses";
+  // true = expenseDays ตรงกับ server แล้ว (ได้ snapshot แรกของการ subscribe รอบนี้)
+  const expensesSyncedRef = useRef(false);
   useEffect(() => {
     const isStaff = getTableFromUrl() === null;
     if (!isStaff) return;
     if (!everAuthed) return;
+    if (!onExpensesView) return;
 
     const unsubscribeExpenses = onSnapshot(
       query(
@@ -613,22 +638,24 @@ export default function App() {
           } as ExpenseDay;
         });
         setExpenseDays(data);
+        expensesSyncedRef.current = true;
       },
     );
-    const unDiag = diagWatch("expenses", query( // TEMP DIAGNOSTICS
-      collection(db, "expenses"),
-      where("date", ">=", expenseRangeStart),
-      where("date", "<=", expenseRangeEnd),
-      limit(750),
-    ));
-    return () => { unsubscribeExpenses(); unDiag(); };
-  }, [everAuthed, expenseRangeStart, expenseRangeEnd]);
+    return () => {
+      unsubscribeExpenses();
+      // ไม่โชว์/ไม่ใช้ข้อมูลเก่าตอนกลับเข้ามาใหม่ — รอ snapshot รอบใหม่ก่อน
+      expensesSyncedRef.current = false;
+      setExpenseDays([]);
+    };
+  }, [everAuthed, onExpensesView, expenseRangeStart, expenseRangeEnd]);
 
   // รายชื่อของที่เคยกรอก (autocomplete) — เป็น catalog ที่มีจำนวนจำกัด ดึงทั้งหมดได้ แต่ใส่ limit กันหลุด
+  // เหมือนข้างบน: ฟังเฉพาะตอนอยู่หน้ารายจ่าย
   useEffect(() => {
     const isStaff = getTableFromUrl() === null;
     if (!isStaff) return;
     if (!everAuthed) return;
+    if (!onExpensesView) return;
 
     const unsubscribeCatalog = onSnapshot(
       query(collection(db, "expenseItems"), limit(1000)),
@@ -637,9 +664,8 @@ export default function App() {
         setExpenseCatalog(data);
       },
     );
-    const unDiag = diagWatch("expenseItems", query(collection(db, "expenseItems"), limit(1000))); // TEMP DIAGNOSTICS
-    return () => { unsubscribeCatalog(); unDiag(); };
-  }, [everAuthed]);
+    return unsubscribeCatalog;
+  }, [everAuthed, onExpensesView]);
 
   // รายการเหตุผลที่ใช้ซ้ำได้ (void/cancel) — เฉพาะฝั่งพนักงานเท่านั้น
   // ส่วน activityLogs ย้ายไป query รายวันในหน้า StaffActivityScreen เอง (ไม่ดึงทั้งหมดมาค้าง)
@@ -652,8 +678,7 @@ export default function App() {
       const raw = snap.data();
       setVoidReasons(Array.isArray(raw?.reasons) ? raw!.reasons : []);
     });
-    const unDiag = diagWatch("voidReasons", doc(db, "voidReasons", "list")); // TEMP DIAGNOSTICS
-    return () => { unsubscribeReasons(); unDiag(); };
+    return unsubscribeReasons;
   }, [everAuthed]);
 
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
@@ -697,16 +722,24 @@ export default function App() {
 
   // ฟัง status สรุปที่ฝั่งพนักงาน (client ใครก็ตามที่ login อยู่) คำนวณและอัปเดตไว้ให้
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, "status", "live"), (snap) => {
-      const data = snap.data();
+    const apply = (data: { busyTables?: number; busyItems?: number } | undefined) => {
       const busyTables = data?.busyTables || 0;
       const busyItems = data?.busyItems || 0;
       liveStatusRef.current = { busyTables, busyItems };
       setBusyTables(busyTables);
       setBusyItems(busyItems);
-    });
-    const unDiag = diagWatch("status/live", doc(db, "status", "live")); // TEMP DIAGNOSTICS
-    return () => { unsubscribe(); unDiag(); };
+    };
+    // ลูกค้า: อ่านครั้งเดียวตอนเปิดหน้า (1 read) แทนการฟังตลอด — ไม่งั้นทุกครั้งที่พนักงานอัปเดตสถานะ
+    // ลูกค้าทุกคนที่เปิดหน้าค้างไว้จะโดนนับ read คนละ 1 ครั้ง ป้ายร้านยุ่งไม่จำเป็นต้อง realtime
+    if (getTableFromUrl() !== null) {
+      let cancelled = false;
+      getDoc(doc(db, "status", "live"))
+        .then((snap) => { if (!cancelled) apply(snap.data()); })
+        .catch((err) => console.error("read status/live failed", err));
+      return () => { cancelled = true; };
+    }
+    const unsubscribe = onSnapshot(doc(db, "status", "live"), (snap) => apply(snap.data()));
+    return unsubscribe;
   }, []);
 
   // คำนวณสถานะยุ่งจากออเดอร์ที่เห็น (มีผลจริงเฉพาะฝั่งพนักงานที่ login แล้วเท่านั้น เพราะลูกค้าอ่าน orders ไม่ได้)
@@ -814,7 +847,7 @@ export default function App() {
   const [cartUnavailableCartIds, setCartUnavailableCartIds] = useState<string[]>([]);
 
   // true = มีรายการที่สั่งไม่ได้ในตะกร้า ห้ามส่ง | false = ส่งได้ (รวมกรณีเช็คไม่สำเร็จ/ช้าเกิน — ไม่ให้ลูกค้าติดส่งไม่ได้)
-  // เจอแล้วเอาข้อมูลเมนูล่าสุดทับในเครื่อง + cache ฝั่งลูกค้าด้วย ไม่ต้องรอ cache 3 นาทีหมดอายุ
+  // เจอแล้วเอาข้อมูลเมนูล่าสุดทับในเครื่อง + cache ฝั่งลูกค้าด้วย ไม่ต้องรอ cache 15 นาทีหมดอายุ
   const cartHasUnavailableItems = async (items: CartItem[]): Promise<boolean> => {
     const fresh = await fetchFreshMenuItems(items.map((ci) => ci.item.id), SOLD_OUT_CHECK_TIMEOUT_MS);
     const unavailable = items.filter((ci) => {
@@ -829,8 +862,8 @@ export default function App() {
     };
     setAllMenuItems((prev) => prev.map(patch));
     setMenuItems((prev) => prev.map(patch).filter((m) => m.active !== false));
-    const cached = readSession<{ categories: Category[]; menuItems: MenuItem[]; timestamp: number }>("customerMenuCache");
-    if (cached) writeSession("customerMenuCache", { ...cached, menuItems: cached.menuItems.map(patch) });
+    const cached = readMenuCache<{ categories: Category[]; menuItems: MenuItem[]; timestamp: number }>();
+    if (cached) writeMenuCache({ ...cached, menuItems: cached.menuItems.map(patch) });
     return true;
   };
 
@@ -1210,6 +1243,7 @@ export default function App() {
           itemCount: liveItemCount(cleanItems),
         },
       });
+      invalidatePaidOrdersDay(backfill.date); // ให้หน้าประวัติ/สถิติดึงวันนั้นใหม่ เห็นบิลที่เพิ่งลง
       setHistoryInitialDate(backfill.date);
       setManualCart([]);
       setManualTable(null);
@@ -1254,6 +1288,7 @@ export default function App() {
         },
       });
       await updateDoc(doc(db, "orders", o.id), { status: "cancelled", cancelledAt: new Date() });
+      invalidatePaidOrdersDay(formatDateInput(o.timestamp));
     }
   };
 
@@ -1360,7 +1395,6 @@ export default function App() {
   };
 
   const handleStaffTabChange = (tab: StaffTab) => {
-    diagLog(`TAB → ${tab}`); // TEMP DIAGNOSTICS
     setHistoryInitialDate(undefined);
     setStaffTab(tab);
     writeSession("staffTab", tab);
@@ -1538,7 +1572,12 @@ export default function App() {
   // เพิ่มรายการซื้อของ 1 บรรทัดเข้าไปในวันที่ระบุ (สร้าง doc ของวันนั้นถ้ายังไม่มี)
   // แล้วอัปเดต "รายชื่อของที่เคยกรอก" (expenseItems) ไว้ใช้ทำ autocomplete ต่อ
   const handleAddExpenseItem = async (date: string, item: ExpenseLineItem) => {
-    const existing = expenseDays.find((e) => e.id === date);
+    // listener เพิ่งเริ่ม (เพิ่งเข้าหน้า) ยังไม่ได้ข้อมูล → อ่าน doc วันนั้นตรงๆ กันเขียนทับรายการเดิมหาย
+    let existing: ExpenseDay | undefined = expenseDays.find((e) => e.id === date);
+    if (!expensesSyncedRef.current) {
+      const snap = await getDoc(doc(db, "expenses", date));
+      existing = snap.exists() ? ({ id: snap.id, items: snap.data().items || [] } as ExpenseDay) : undefined;
+    }
     const newItems = [...(existing?.items || []), item];
     const totalAmount = newItems.reduce((s, i) => s + i.amount, 0);
     await setDoc(doc(db, "expenses", date), {
@@ -1626,7 +1665,6 @@ export default function App() {
       <div className="flex items-center gap-2 text-muted-foreground text-sm">
         <Loader2 size={18} className="animate-spin" />
         {lang === "en" ? "Loading..." : "กำลังโหลด..."}
-        <DiagSpinnerSpy where={view} />{/* TEMP DIAGNOSTICS */}
       </div>
     </div>
   );

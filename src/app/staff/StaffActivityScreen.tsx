@@ -6,7 +6,6 @@ import type { ActivityAction, ActivityLog, Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { formatClock, formatDateInput } from "../utils";
 import { StaffHeader } from "./StaffHeader";
-import { diagWatch } from "../diag"; // TEMP DIAGNOSTICS
 
 // ─── Staff Activity Log Screen ────────────────────────────────────────────────
 
@@ -46,7 +45,6 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
       orderBy("createdAt", "desc"),
       limit(500),
     );
-    const unDiag = diagWatch("activityLogs", logsQuery); // TEMP DIAGNOSTICS
     const unsubscribe = onSnapshot(
       logsQuery,
       (snapshot) => {
@@ -79,7 +77,6 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
     );
     return () => {
       unsubscribe();
-      unDiag();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
