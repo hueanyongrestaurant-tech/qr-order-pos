@@ -209,6 +209,29 @@ function ConfirmModal({ message, onConfirm, onCancel, lang, confirmLabel, cancel
   );
 }
 
+// หน้าต่างแจ้งเตือนปุ่มเดียว — หน้าตาเดียวกับ ConfirmModal
+function NoticeModal({ message, onClose, lang }: { message: string; onClose: () => void; lang: Language }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onClose}>
+      <div
+        className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-2.5 mb-5">
+          <AlertTriangle size={18} className="text-destructive flex-shrink-0 mt-0.5" />
+          <p className="text-foreground text-sm leading-relaxed">{message}</p>
+        </div>
+        <button
+          onClick={onClose}
+          className="w-full py-2.5 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+        >
+          {lang === "en" ? "OK" : "ตกลง"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Reason Picker (บังคับกรอก/เลือกเหตุผลก่อน void / cancel) ──────────────────
 
 interface ReasonPickerModalProps {
@@ -784,6 +807,8 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState<({ message: string; onConfirm: () => void } & ConfirmLabels) | null>(null);
   const askConfirm = (message: string, onConfirm: () => void, labels?: ConfirmLabels) =>
     setConfirmDialog({ message, onConfirm, ...labels });
+  // ข้อความแจ้งเตือนในแอป (ปุ่มเดียว) — ใช้แทน alert() ของเบราว์เซอร์ที่ขึ้นชื่อโดเมน ("localhost says")
+  const [notice, setNotice] = useState<string | null>(null);
   const [reasonPrompt, setReasonPrompt] = useState<{ title: string; onConfirm: (reason: string) => void } | null>(null);
   // AUDIT_UI_ENABLED = false (ปิดชั่วคราว ดู constants.ts) → ข้ามหน้าต่างถามเหตุผล ทำงานทันทีด้วย reason ว่าง
   // (log ยังถูกเขียนตามเดิม เพียงไม่มี field reason) — เปิด flag กลับแล้วหน้าต่างเดิมจะกลับมาเอง
@@ -1457,8 +1482,8 @@ export default function App() {
     const n = activeDineInOrders(orders, from).length;
     askConfirm(t.moveTableConfirm(n, from, to), () => {
       handleMoveTable(from, to).catch((err) => {
-        if (err instanceof MoveTableError) alert(err.code === "occupied" ? t.moveTableOccupied(to) : t.moveTableNothing(from));
-        else alert(t.moveTableFailed + (err?.message || String(err)));
+        if (err instanceof MoveTableError) setNotice(err.code === "occupied" ? t.moveTableOccupied(to) : t.moveTableNothing(from));
+        else setNotice(t.moveTableFailed + (err?.message || String(err)));
       });
     }, { confirmLabel: t.moveTableConfirmYes });
   };
@@ -2207,6 +2232,7 @@ export default function App() {
           onCancel={() => setConfirmDialog(null)}
         />
       )}
+      {notice && <NoticeModal message={notice} lang={lang} onClose={() => setNotice(null)} />}
       {moveFromTable && (
         <Suspense fallback={null}>
           <MoveTableModal
