@@ -18,7 +18,7 @@ interface StaffExpensesProps {
   onAddItem: (date: string, item: ExpenseLineItem) => void;
   onEditItem: (date: string, index: number, item: ExpenseLineItem) => void;
   onDeleteItem: (date: string, index: number) => void;
-  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
   onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
@@ -327,8 +327,9 @@ export function StaffExpensesScreen({
                           <button
                             onClick={() =>
                               onAskConfirm(
-                                lang === "en" ? "Delete this item?" : "ลบรายการนี้?",
-                                () => onDeleteItem(day.date, idx)
+                                lang === "en" ? `Delete expense ${it.name} (${t.thb}${it.amount}, ${day.date})?` : `ลบรายจ่าย ${it.name} (${t.thb}${it.amount} วันที่ ${day.date}) ใช่ไหม?`,
+                                () => onDeleteItem(day.date, idx),
+                                { confirmLabel: lang === "en" ? "Delete" : "ลบ", cancelLabel: lang === "en" ? "No" : "ไม่" }
                               )
                             }
                             className="text-muted-foreground hover:text-destructive transition-colors"

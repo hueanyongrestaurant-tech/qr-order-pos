@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRightLeft, Check, Clock, Plus, Printer, Trash2, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { compareTables, formatClock, liveItems, orderTotal, timeAgo } from "../utils";
 
-const UNDO_MS = 5000;
 import { StaffHeader } from "./StaffHeader";
 import { kitchenOptionSummary } from "./ticket";
 import { usePrintRole, useSelectedPrinterAddress } from "./printerStore";
@@ -17,29 +16,25 @@ interface StaffOrdersProps {
   lang: Language;
   orders: Order[];
   onMarkServed: (orderId: string) => Promise<void>;
-  onUnmarkServed: (orderId: string) => Promise<void>;
   onServeItem: (orderId: string, cartId: string) => Promise<void>;
-  onUnserveItem: (orderId: string, cartId: string) => Promise<void>;
   onRemoveItem: (orderId: string, cartId: string) => void;
   onCancelOrder: (orderId: string) => void;
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
-  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
   onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onStartManualOrder: () => void;
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onServeItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
   const t = T[lang];
 
   // กดเสิร์ฟแล้วย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลาหลายวิ
   // ระหว่างนั้นพนักงานจะกดซ้ำ) — key = "orderId:cartId" ต่อรายการ หรือ "orderId:*" เมื่อกดเสิร์ฟทั้งหมด
   const [pendingServed, setPendingServed] = useState<Set<string>>(new Set());
-  const [toast, setToast] = useState<{ id: number; label: string; undo: () => void } | null>(null);
-  const toastTimerRef = useRef<number | null>(null);
 
   const addPending = (key: string) => setPendingServed((prev) => new Set(prev).add(key));
   const dropPending = (key: string) =>
@@ -65,65 +60,55 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     });
   }, [orders]);
 
-  useEffect(() => () => {
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-  }, []);
-
-  const showToast = (label: string, undo: () => void) => {
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-    const id = Date.now();
-    setToast({ id, label, undo });
-    toastTimerRef.current = window.setTimeout(() => {
-      toastTimerRef.current = null;
-      setToast((cur) => (cur?.id === id ? null : cur));
-    }, UNDO_MS);
-  };
-
-  const dismissToast = () => {
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = null;
-    setToast(null);
-  };
-
   const failAlert = (err: any) =>
     onNotice((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err)));
 
-  const handleServeItem = (order: Order, ci: CartItem) => {
+  const tableText = (o: Order) => (o.isTakeaway ? o.takeawayLabel || "T" : `${t.tableLabel} ${o.tableNumber}`);
+  const confirmLabels = { cancelLabel: lang === "en" ? "No" : "ไม่" };
+
+  // ทุกปุ่มเสิร์ฟ/พร้อมรับถามยืนยันก่อน (แทนแถบเลิกทำเดิม) — ข้อความบอกชัดว่ากำลังเสิร์ฟอะไรให้โต๊ะไหน
+  const serveItem = (order: Order, ci: CartItem) => {
     const key = `${order.id}:${ci.cartId}`;
     addPending(key);
-    // resolve เป็น true/false เสมอ (ไม่ reject) — กัน unhandled rejection ตอนไม่มีใครกดเลิกทำ
-    const serving = onServeItem(order.id, ci.cartId).then(
-      () => true,
-      (err) => {
-        dropPending(key);
-        failAlert(err);
-        return false;
-      },
-    );
-    const name = lang === "en" ? ci.item.name.en : ci.item.name.th;
-    // เลิกทำต้องรอให้การเสิร์ฟเขียนเสร็จก่อน ไม่งั้น unserve อาจวิ่งถึง server ก่อน แล้ว serve มาทับทีหลัง
-    showToast(`${t.servedToast} · ${name}`, () => {
+    onServeItem(order.id, ci.cartId).catch((err) => {
       dropPending(key);
-      serving.then((ok) => (ok ? onUnserveItem(order.id, ci.cartId) : undefined)).catch(failAlert);
+      failAlert(err);
     });
   };
 
-  const handleServeAll = (order: Order) => {
+  const serveAll = (order: Order) => {
     const key = `${order.id}:*`;
     addPending(key);
-    const serving = onMarkServed(order.id).then(
-      () => true,
-      (err) => {
-        dropPending(key);
-        failAlert(err);
-        return false;
-      },
-    );
-    const label = order.isTakeaway ? order.takeawayLabel : `${t.tableLabel} ${order.tableNumber}`;
-    showToast(`${order.isTakeaway ? (lang === "en" ? "Ready" : "พร้อมรับแล้ว") : t.markServed} · ${label}`, () => {
+    onMarkServed(order.id).catch((err) => {
       dropPending(key);
-      serving.then((ok) => (ok ? onUnmarkServed(order.id) : undefined)).catch(failAlert);
+      failAlert(err);
     });
+  };
+
+  const handleServeItem = (order: Order, ci: CartItem) => {
+    const name = (lang === "en" ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
+    onAskConfirm(
+      lang === "en" ? `Serve ${name} (${tableText(order)})?` : `เสิร์ฟ ${name} (${tableText(order)}) ใช่ไหม?`,
+      () => serveItem(order, ci),
+      { ...confirmLabels, confirmLabel: t.serveItem },
+    );
+  };
+
+  const handleServeAll = (order: Order) => {
+    if (order.isTakeaway) {
+      onAskConfirm(
+        lang === "en" ? `${tableText(order)} ready for pickup?` : `${tableText(order)} พร้อมรับแล้ว ใช่ไหม?`,
+        () => serveAll(order),
+        { ...confirmLabels, confirmLabel: lang === "en" ? "Ready" : "พร้อมรับ" },
+      );
+      return;
+    }
+    const n = unserved(order).length;
+    onAskConfirm(
+      lang === "en" ? `Serve all ${n} remaining items (${tableText(order)})?` : `เสิร์ฟทั้งหมด ${n} รายการที่เหลือ (${tableText(order)}) ใช่ไหม?`,
+      () => serveAll(order),
+      { ...confirmLabels, confirmLabel: t.markServed },
+    );
   };
 
   // รายการนี้ถือว่าเสิร์ฟแล้วหรือยัง (รวมที่เพิ่งกดบนเครื่องนี้แต่ server ยังไม่ตอบ) — ใช้แบ่งโซนเท่านั้น ไม่เกี่ยวกับเงิน
@@ -186,6 +171,12 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
   const awaitingTables = Object.entries(awaitingByTable)
     .filter(([, g]) => g.served.length > 0)
     .sort(([a], [b]) => compareTables(a, b));
+  // กลับบ้านที่กด "พร้อมรับ" แล้ว (หรือเพิ่งกดบนเครื่องนี้แต่ server ยังไม่ตอบ) — แยกการ์ดต่อออเดอร์ (T-n)
+  // เพราะไม่ได้รวมตามโต๊ะ ตรงกับหน้าจ่ายเงินที่แสดงกลับบ้านทีละใบ
+  const awaitingTakeaways = orders
+    .filter((o) => o.isTakeaway && (o.status === "awaiting-payment" || (o.status === "in-progress" && pendingServed.has(`${o.id}:*`))))
+    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  const awaitingCount = awaitingTables.length + awaitingTakeaways.length;
 
   // รายละเอียดของ 1 รายการ (ชื่อ/ตัวเลือก/หมายเหตุ/custom add-on/ป้าย void) — ใช้ร่วมกันทั้งการ์ดโต๊ะในร้าน
   // และการ์ดกลับบ้าน ให้พนักงานเห็นข้อมูลครบเท่ากันเสมอ ตัวเลือกใช้ kitchenOptionSummary() ตัวเดียวกับตั๋วครัว
@@ -424,11 +415,11 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
               <div className="w-2.5 h-2.5 rounded-full bg-secondary" />
               <h2 className="font-semibold text-foreground">{t.awaitingPayment}</h2>
               <span className="ml-auto text-xs text-muted-foreground bg-muted px-2.5 py-0.5 rounded-full font-medium">
-                {awaitingTables.length}
+                {awaitingCount}
               </span>
             </div>
 
-            {awaitingTables.length === 0 ? (
+            {awaitingCount === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
                 {t.noTablesWaiting}
               </div>
@@ -485,29 +476,45 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                     </div>
                   </div>
                 ))}
+                {awaitingTakeaways.map((order) => (
+                  <div
+                    key={order.id}
+                    className="bg-card rounded-2xl border-2 overflow-hidden opacity-80"
+                    style={{ borderColor: "rgba(74, 103, 65, 0.3)" }}
+                  >
+                    <div
+                      className="px-4 py-3 flex items-center justify-between border-b"
+                      style={{ background: "rgba(74, 103, 65, 0.06)", borderColor: "rgba(74, 103, 65, 0.15)" }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-secondary text-secondary-foreground font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
+                          {order.takeawayLabel || "T"}
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{lang === "en" ? "Takeaway" : "กลับบ้าน"}</div>
+                          <div className="text-muted-foreground text-sm">{formatClock(order.timestamp)}</div>
+                        </div>
+                      </div>
+                      <div className="font-display font-bold text-xl text-foreground">
+                        {t.thb}{orderTotal(order)}
+                      </div>
+                    </div>
+                    <div className="px-4 py-2.5 space-y-1">
+                      {liveItems(order.items).map((ci) => (
+                        <div key={ci.cartId} className="flex items-start gap-2 text-sm">
+                          <span className="font-semibold text-secondary w-5 flex-shrink-0">{ci.quantity}</span>
+                          <span className="text-foreground leading-tight">{lang === "en" ? ci.item.name.en : ci.item.name.th}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* แถบเลิกทำ 5 วิ หลังกดเสิร์ฟ — กันแตะพลาดบนแท็บเล็ต */}
-      {toast && (
-        <div className="fixed inset-x-0 bottom-4 z-50 flex justify-center px-4 pointer-events-none">
-          <div className="pointer-events-auto flex items-center gap-3 bg-[#3C2414] text-[#FFF8F0] rounded-xl shadow-lg pl-4 pr-1.5 py-1.5 max-w-md w-full">
-            <span className="flex-1 min-w-0 truncate text-sm">{toast.label}</span>
-            <button
-              onClick={() => {
-                toast.undo();
-                dismissToast();
-              }}
-              className="min-h-[44px] px-4 rounded-lg font-semibold text-sm text-amber-300 hover:bg-white/10 active:scale-95 transition-all"
-            >
-              {t.undo}
-            </button>
-          </div>
-        </div>
-      )}
     </>
   );
 }

@@ -19,7 +19,7 @@ interface StaffPaymentProps {
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
   onCancelOrders: (orderIds: string[]) => void;
-  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
   onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   onTabChange: (tab: StaffTab) => void;
@@ -46,6 +46,8 @@ interface PaymentCardProps {
   onAdjust: (key: string, delta: number) => void;
   total2: number;
   closeAction: (payment: PaymentInput) => void;
+  billName: string; // ชื่อบิลในหน้าต่างยืนยันรับเงิน เช่น "โต๊ะ 5" / "T-3"
+  onAskConfirm: StaffPaymentProps["onAskConfirm"];
   cancelAction?: () => void;
   moveAction?: () => void;
   printReceiptAction?: (payment: PaymentInput) => void;
@@ -107,7 +109,7 @@ export function SplitAmountField({
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, moveAction, printReceiptAction, printDisabled,
+  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, billName, onAskConfirm, cancelAction, moveAction, printReceiptAction, printDisabled,
   expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
@@ -129,6 +131,25 @@ function PaymentCard({
     method: paymentMethod,
     ...(paymentMethod !== "transfer" ? { cashReceived: Number(cashInput || 0) } : {}),
     ...(paymentMethod === "split" ? { transferAmount: transferNum } : {}),
+  };
+  // ถามยืนยันก่อนปิดบิลทุกวิธีจ่าย — สรุปยอด วิธีจ่าย และเงินทอน ให้ตรวจก่อนบันทึก
+  const confirmClose = () => {
+    const thb = t.thb;
+    const change = cashNum - cashDue;
+    const en = lang === "en";
+    const lines = [
+      en ? `Close bill ${billName} — total ${thb}${total2}` : `ปิดบิล ${billName} — ยอด ${thb}${total2}`,
+      paymentMethod === "transfer"
+        ? `${transferLabel} ${thb}${total2}`
+        : paymentMethod === "cash"
+          ? `${cashLabel}: ${en ? "received" : "รับมา"} ${thb}${cashNum} · ${en ? "change" : "ทอน"} ${thb}${change}`
+          : `${transferLabel} ${thb}${transferNum} + ${cashLabel} ${thb}${cashDue}\n${en ? "Cash received" : "รับเงินสดมา"} ${thb}${cashNum} · ${en ? "change" : "ทอน"} ${thb}${change}`,
+      en ? "Confirm payment?" : "ยืนยันรับเงิน ใช่ไหม?",
+    ];
+    onAskConfirm(lines.join("\n"), () => closeAction(payment), {
+      confirmLabel: t.closeTable,
+      cancelLabel: en ? "No" : "ไม่",
+    });
   };
   return (
     <div className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(60,36,20,0.15)" }}>
@@ -292,7 +313,7 @@ function PaymentCard({
               </button>
             )}
             <button
-              onClick={() => closeAction(payment)}
+              onClick={confirmClose}
               disabled={!canClose}
               className="flex-1 bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
@@ -404,6 +425,8 @@ export function StaffPaymentScreen({
                         voidedItems={g.voidedItems}
                         onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
                         closeAction={(payment) => onCloseTable(g.tableNumber, payment)}
+                        billName={`${t.tableLabel} ${g.tableNumber}`}
+                        onAskConfirm={onAskConfirm}
                         printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: `${t.tableLabel} ${g.tableNumber}`,
@@ -454,6 +477,8 @@ export function StaffPaymentScreen({
                         voidedItems={order.items.filter((ci) => ci.voided)}
                         onAdjust={(key, delta) => onAdjustTakeawayItem(order.id, key, delta)}
                         closeAction={(payment) => onCloseTakeaway(order.id, payment)}
+                        billName={order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")}
+                        onAskConfirm={onAskConfirm}
                         printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"),

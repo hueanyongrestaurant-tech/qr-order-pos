@@ -98,7 +98,7 @@ interface StaffMenuProps {
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
-  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
   categories: Category[];
   onAddCategory: (nameEn: string, nameTh: string) => void;
   onDeleteCategory: (categoryId: string) => void;
@@ -268,7 +268,7 @@ function CategoryMenuItemsList({
   onToggleMeatSoldOut: (item: MenuItem, option: MeatOption) => void;
   onEdit: (item: MenuItem) => void;
   onDelete: (itemId: string) => void;
-  onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
 }) {
   const itemDrag = useDragReorder(catItems, (orderedIds) => onReorderMenuItems(cat.id, orderedIds));
 
@@ -327,7 +327,11 @@ function CategoryMenuItemsList({
             </button>
             <button
               onClick={() =>
-                onAskConfirm(lang === "en" ? "Delete this item?" : "ลบเมนูนี้?", () => onDelete(item.id))
+                onAskConfirm(
+                  lang === "en" ? `Delete menu item ${item.name.en || item.name.th}?` : `ลบเมนู ${item.name.th} ใช่ไหม?`,
+                  () => onDelete(item.id),
+                  { confirmLabel: lang === "en" ? "Delete" : "ลบ", cancelLabel: lang === "en" ? "No" : "ไม่" },
+                )
               }
               className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
             >

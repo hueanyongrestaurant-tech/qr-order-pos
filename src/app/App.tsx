@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 
@@ -189,7 +189,7 @@ function ConfirmModal({ message, onConfirm, onCancel, lang, confirmLabel, cancel
         className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="text-foreground text-sm mb-5 leading-relaxed">{message}</p>
+        <p className="text-foreground text-sm mb-5 leading-relaxed whitespace-pre-line">{message}</p>
         <div className="flex gap-2.5">
           <button
             onClick={onCancel}
@@ -1187,16 +1187,6 @@ export default function App() {
     await updateDoc(doc(db, "orders", orderId), { status: "awaiting-payment" });
   };
 
-  // เลิกทำ "เสิร์ฟทั้งหมด" — ย้อนได้เฉพาะตอนยังรอชำระอยู่ (จ่ายไปแล้ว/ยกเลิกแล้ว ไม่แตะ)
-  const handleUnmarkServed = async (orderId: string) => {
-    const ref = doc(db, "orders", orderId);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists() || snap.data().status !== "awaiting-payment") return;
-      tx.update(ref, { status: "in-progress" });
-    });
-  };
-
   // เสิร์ฟทีละรายการ — เขียนแค่ key เดียวใน servedAt (ไม่แตะ items[] ที่ใช้คิดเงิน) และถ้ารายการที่ไม่ถูก void
   // เสิร์ฟครบทุกตัวแล้ว เปลี่ยน status เป็น awaiting-payment ในจังหวะเดียวกัน ทำใน transaction เพื่อเช็คจากข้อมูล
   // ล่าสุดบน server — กันเคสแท็บเล็ต 2 เครื่องกดเสิร์ฟคนละรายการพร้อมกันแล้วไม่มีใครเปลี่ยน status ให้
@@ -1216,22 +1206,6 @@ export default function App() {
         tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp(), "status", "awaiting-payment");
       } else {
         tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp());
-      }
-    });
-  };
-
-  // เลิกทำการเสิร์ฟ 1 รายการ — ถ้าออเดอร์ถูกเปลี่ยนเป็นรอชำระไปแล้ว (แต่ยังไม่จ่าย) ย้อนกลับเป็น in-progress ด้วย
-  const handleUnserveItem = async (orderId: string, cartId: string) => {
-    const ref = doc(db, "orders", orderId);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists()) return;
-      const status = snap.data().status;
-      if (status !== "in-progress" && status !== "awaiting-payment") return;
-      if (status === "awaiting-payment") {
-        tx.update(ref, new FieldPath("servedAt", cartId), deleteField(), "status", "in-progress");
-      } else {
-        tx.update(ref, new FieldPath("servedAt", cartId), deleteField());
       }
     });
   };
@@ -1947,9 +1921,7 @@ export default function App() {
             lang={lang}
             orders={orders}
             onMarkServed={handleMarkServed}
-            onUnmarkServed={handleUnmarkServed}
             onServeItem={handleServeItem}
-            onUnserveItem={handleUnserveItem}
             onRemoveItem={(orderId, cartId) => {
               const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
               if (target) askVoidItem(target, (reason) => handleRemoveOrderItem(orderId, cartId, reason));
