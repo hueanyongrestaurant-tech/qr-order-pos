@@ -69,7 +69,19 @@ export type ActivityAction =
   | "expense_edited"
   | "expense_deleted"
   | "backfill_order"
-  | "table_moved";
+  | "table_moved"
+  | "unserve_item"      // ย้อนการเสิร์ฟ 1 รายการ
+  | "unserve_all"       // ย้อน "เสิร์ฟทั้งหมด"
+  | "unready_takeaway"  // ย้อน "พร้อมรับ" ของกลับบ้าน
+  | "restore_item";     // คืนรายการที่ยกเลิก (void) ไปแล้ว
+
+// ตัวเลือกของหน้าต่างยืนยัน (ConfirmModal ใน App) — tone กำหนดสีปุ่มยืนยัน: danger = แดง (ยกเลิก/ลบ, ค่าเริ่มต้น),
+// success = เขียว (เสิร์ฟ/พร้อมรับ/รับเงิน), neutral = สีหลัก (ย้อนกลับ)
+export interface ConfirmOptions {
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "danger" | "success" | "neutral";
+}
 
 export interface ActivityLog {
   id: string;
@@ -125,6 +137,7 @@ export interface CartItem {
   voided?: boolean;       // true = ถูกยกเลิก แต่ยังคงอยู่ใน items[] เสมอ ห้ามลบออกจาก array เด็ดขาด
   voidReason?: string;
   voidedAt?: Date;
+  voidedWhileUnserved?: boolean; // ยกเลิกตอนยังไม่เสิร์ฟ — ใช้ตอนคืนรายการ (restore) ให้กลับไปเป็น "ยังไม่เสิร์ฟ" ถูกต้อง
 }
 
 export interface Order {

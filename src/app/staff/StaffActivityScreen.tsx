@@ -86,13 +86,21 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
   const visibleLogs = dayLogs.filter((l) => actionFilter === "all" || l.action === actionFilter);
 
   // ยอดรวมเงินที่ถูก void/cancel ของวันที่เลือก — ให้เจ้าของร้านเทียบกับเงินสดในลิ้นชักได้ทันที
-  const voidCancelTotal = dayLogs
-    .filter((l) => l.action === "void_item" || l.action === "cancel_order")
-    .reduce((s, l) => s + (l.amount || 0), 0);
+  // รายการที่คืนกลับมา (restore_item) หักออก เพราะกลับไปอยู่ในบิลแล้ว
+  const voidCancelTotal = dayLogs.reduce(
+    (s, l) =>
+      l.action === "void_item" || l.action === "cancel_order"
+        ? s + (l.amount || 0)
+        : l.action === "restore_item"
+          ? s - (l.amount || 0)
+          : s,
+    0,
+  );
 
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
     "all", "void_item", "cancel_order", "adjust_item_qty",
+    "unserve_item", "unserve_all", "unready_takeaway", "restore_item",
     "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted", "backfill_order", "table_moved",
   ];
 
@@ -231,7 +239,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   </div>
                 )}
 
-                {l.action === "cancel_order" && Array.isArray(l.details?.items) && (
+                {(l.action === "cancel_order" || l.action === "unserve_all" || l.action === "unready_takeaway") && Array.isArray(l.details?.items) && (
                   <div className="mt-1.5 border-t border-border pt-1.5 space-y-0.5">
                     {l.details.items.map((it: any, i: number) => (
                       <div key={i} className={`text-xs ${it.voided ? "line-through text-muted-foreground" : "text-muted-foreground"}`}>

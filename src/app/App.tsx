@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, FieldPath } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 
@@ -66,6 +66,7 @@ import type {
   ExpenseDay,
   ExpenseCatalogEntry,
   Category,
+  ConfirmOptions,
 } from "./types";
 import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED } from "./constants";
 import { T } from "./translations";
@@ -182,7 +183,13 @@ async function addVoidReason(reason: string): Promise<void> {
   }
 }
 
-function ConfirmModal({ message, onConfirm, onCancel, lang, confirmLabel, cancelLabel }: { message: string; onConfirm: () => void; onCancel: () => void; lang: Language; confirmLabel?: string; cancelLabel?: string }) {
+const CONFIRM_TONE_CLASS: Record<NonNullable<ConfirmOptions["tone"]>, string> = {
+  danger: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+  success: "bg-secondary text-secondary-foreground hover:bg-secondary/90",
+  neutral: "bg-primary text-primary-foreground hover:bg-primary/90",
+};
+
+function ConfirmModal({ message, onConfirm, onCancel, lang, confirmLabel, cancelLabel, tone = "danger" }: { message: string; onConfirm: () => void; onCancel: () => void; lang: Language } & ConfirmOptions) {
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onCancel}>
       <div
@@ -193,13 +200,13 @@ function ConfirmModal({ message, onConfirm, onCancel, lang, confirmLabel, cancel
         <div className="flex gap-2.5">
           <button
             onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
+            className="flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
           >
             {cancelLabel ?? (lang === "en" ? "Cancel" : "ยกเลิก")}
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-all"
+            className={`flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-semibold transition-all ${CONFIRM_TONE_CLASS[tone]}`}
           >
             {confirmLabel ?? (lang === "en" ? "Confirm" : "ยืนยัน")}
           </button>
@@ -803,9 +810,8 @@ export default function App() {
   const [staffTab, setStaffTab] = useState<StaffTab>("orders");
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const menuScrollTopRef = useRef(0);
-  type ConfirmLabels = { confirmLabel?: string; cancelLabel?: string };
-  const [confirmDialog, setConfirmDialog] = useState<({ message: string; onConfirm: () => void } & ConfirmLabels) | null>(null);
-  const askConfirm = (message: string, onConfirm: () => void, labels?: ConfirmLabels) =>
+  const [confirmDialog, setConfirmDialog] = useState<({ message: string; onConfirm: () => void } & ConfirmOptions) | null>(null);
+  const askConfirm = (message: string, onConfirm: () => void, labels?: ConfirmOptions) =>
     setConfirmDialog({ message, onConfirm, ...labels });
   // ข้อความแจ้งเตือนในแอป (ปุ่มเดียว) — ใช้แทน alert() ของเบราว์เซอร์ที่ขึ้นชื่อโดเมน ("localhost says")
   const [notice, setNotice] = useState<string | null>(null);
@@ -1210,6 +1216,113 @@ export default function App() {
     });
   };
 
+  // ─── ย้อนกลับ (เฉพาะออเดอร์ที่ยังไม่ปิดบิล) ───────────────────────────────────
+  // ทุกตัวเป็น transaction อ่านสถานะล่าสุดจาก server ก่อน — บิลที่จ่าย/ยกเลิกไปแล้ว (อาจจากอีกเครื่อง) ย้อนไม่ได้
+  // สถานะสลับแค่ระหว่าง in-progress ↔ awaiting-payment ซึ่งอยู่ใน query ของ listener ทั้งคู่ → docChanges เป็น
+  // "modified" ไม่ใช่ "added" จึงไม่ auto-print/ไม่มีเสียงซ้ำ ส่วนตัวนับร้านยุ่งคิดจาก orders ใหม่เองอัตโนมัติ
+  const notUndoableError = (status: unknown) =>
+    new Error(
+      status === "cancelled"
+        ? (lang === "en" ? "This order was cancelled — it can't be undone" : "ออเดอร์นี้ถูกยกเลิกทั้งใบแล้ว ย้อนกลับไม่ได้")
+        : (lang === "en" ? "This bill is already closed — it can't be undone" : "บิลนี้ปิดไปแล้ว ย้อนกลับไม่ได้"),
+    );
+  const logTableOf = (raw: Record<string, any>): string =>
+    raw.isTakeaway ? raw.takeawayLabel ?? raw.tableNumber : raw.tableNumber;
+  // ออเดอร์ที่รอชำระ: รายการที่ไม่มี servedAt ถือว่าเสิร์ฟแล้วตาม status (มาจาก "เสิร์ฟทั้งหมด") — ก่อนดึง status
+  // กลับเป็น in-progress ต้องจด servedAt ให้รายการเหล่านั้นก่อน ไม่งั้นจะกลายเป็น "ยังไม่เสิร์ฟ" ตามไปด้วย
+  const keepServedArgs = (items: CartItem[], served: Record<string, unknown>, exceptCartId: string): unknown[] =>
+    liveItems(items)
+      .filter((ci) => ci.cartId !== exceptCartId && !served[ci.cartId])
+      .flatMap((ci) => [new FieldPath("servedAt", ci.cartId), serverTimestamp()]);
+
+  // ย้อนการเสิร์ฟ 1 รายการ → กลับเป็นยังไม่เสิร์ฟ (ออเดอร์ที่รอชำระอยู่กลับเป็นกำลังเตรียม)
+  const handleUnserveItem = async (orderId: string, cartId: string) => {
+    const ref = doc(db, "orders", orderId);
+    const done = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return null;
+      const raw = snap.data();
+      if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
+      const items: CartItem[] = raw.items || [];
+      const served: Record<string, unknown> = raw.servedAt || {};
+      const target = items.find((ci) => ci.cartId === cartId);
+      if (!target || target.voided) return null;
+      if (raw.status === "in-progress") {
+        if (!served[cartId]) return null; // ยังไม่เสิร์ฟอยู่แล้ว
+        tx.update(ref, new FieldPath("servedAt", cartId), deleteField());
+      } else {
+        tx.update(ref, new FieldPath("servedAt", cartId), deleteField(), "status", "in-progress", ...keepServedArgs(items, served, cartId));
+      }
+      return { raw, target };
+    });
+    if (done) {
+      await logActivity({ action: "unserve_item", orderId, tableNumber: logTableOf(done.raw), itemName: done.target.item.name.th });
+    }
+  };
+
+  // ย้อน "เสิร์ฟทั้งหมด" / "พร้อมรับ" → กลับเป็นกำลังเตรียม — รายการที่เสิร์ฟทีละรายการไว้ก่อน (มี servedAt) ยังนับว่าเสิร์ฟแล้ว
+  const handleUnmarkServed = async (orderId: string) => {
+    const ref = doc(db, "orders", orderId);
+    const done = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return null;
+      const raw = snap.data();
+      if (raw.status === "in-progress") return null; // ย้อนไปแล้ว (เช่นจากอีกเครื่อง)
+      if (raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
+      const items: CartItem[] = raw.items || [];
+      const served: Record<string, unknown> = raw.servedAt || {};
+      const reverted = liveItems(items).filter((ci) => !served[ci.cartId]);
+      // ทุกรายการเสิร์ฟทีละรายการครบแล้ว — ไม่มีอะไรให้ย้อน (ถ้าดึง status กลับจะได้การ์ดค้างที่ไม่มีรายการ)
+      if (reverted.length === 0) return null;
+      tx.update(ref, { status: "in-progress" });
+      return { raw, reverted };
+    });
+    if (done) {
+      await logActivity({
+        action: done.raw.isTakeaway ? "unready_takeaway" : "unserve_all",
+        orderId,
+        tableNumber: logTableOf(done.raw),
+        details: { items: done.reverted.map((ci) => ({ name: ci.item.name.th, quantity: ci.quantity })) },
+      });
+    }
+  };
+
+  // คืนรายการที่ยกเลิก (void) ไปแล้ว — ออเดอร์ที่ถูกยกเลิกทั้งใบ (void ครบทุกรายการ) คืนไม่ได้
+  // รายการที่ถูกยกเลิกตอนยังไม่เสิร์ฟ กลับมาเป็น "ยังไม่เสิร์ฟ" (ถ้าออเดอร์ย้ายไปรอชำระแล้ว ดึงกลับเป็นกำลังเตรียม)
+  const handleRestoreItem = async (orderId: string, cartId: string) => {
+    const ref = doc(db, "orders", orderId);
+    const done = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return null;
+      const raw = snap.data();
+      if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
+      const items: CartItem[] = raw.items || [];
+      const served: Record<string, unknown> = raw.servedAt || {};
+      const target = items.find((ci) => ci.cartId === cartId);
+      if (!target || !target.voided) return null;
+      const newItems = items.map((ci) => {
+        if (ci.cartId !== cartId) return ci;
+        const { voided: _v, voidReason: _r, voidedAt: _a, voidedWhileUnserved: _u, ...rest } = ci;
+        return rest;
+      });
+      if (raw.status === "awaiting-payment" && target.voidedWhileUnserved && !served[cartId]) {
+        tx.update(ref, "items", newItems, "status", "in-progress", ...keepServedArgs(items, served, cartId));
+      } else {
+        tx.update(ref, { items: newItems });
+      }
+      return { raw, target };
+    });
+    if (done) {
+      await logActivity({
+        action: "restore_item",
+        orderId,
+        tableNumber: logTableOf(done.raw),
+        itemName: done.target.item.name.th,
+        amount: cartItemUnitPrice(done.target) * done.target.quantity,
+      });
+    }
+  };
+
   // mark 1 รายการใน order เป็น voided — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array)
   // + ตัดรูปทิ้ง + เขียน log void_item ถ้าทุกรายการถูก void หมด เปลี่ยน status เป็น "cancelled" (ไม่ลบ doc)
   // billTotalBefore: ส่งมาเฉพาะตอน void จากหน้าชำระเงิน — ยอดบิลที่พนักงานเห็นบนการ์ดก่อนกด
@@ -1220,7 +1333,13 @@ export default function App() {
     const amount = cartItemUnitPrice(target) * target.quantity;
     const newItems = order.items.map((ci) =>
       ci.cartId === cartId
-        ? stripItemPhoto({ ...ci, voided: true, ...(reason ? { voidReason: reason } : {}), voidedAt: new Date() })
+        ? stripItemPhoto({
+            ...ci,
+            voided: true,
+            ...(reason ? { voidReason: reason } : {}),
+            voidedAt: new Date(),
+            ...(order.status === "in-progress" && !order.servedAt?.[cartId] ? { voidedWhileUnserved: true } : {}),
+          })
         : ci
     );
     const allVoided = newItems.every((ci) => ci.voided);
@@ -1921,10 +2040,13 @@ export default function App() {
             lang={lang}
             orders={orders}
             onMarkServed={handleMarkServed}
+            onUnmarkServed={handleUnmarkServed}
             onServeItem={handleServeItem}
-            onRemoveItem={(orderId, cartId) => {
+            onUnserveItem={handleUnserveItem}
+            onRestoreItem={handleRestoreItem}
+            onRemoveItem={(orderId, cartId, onVoided) => {
               const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
-              if (target) askVoidItem(target, (reason) => handleRemoveOrderItem(orderId, cartId, reason));
+              if (target) askVoidItem(target, (reason) => onVoided(handleRemoveOrderItem(orderId, cartId, reason)));
             }}
             onCancelOrder={(orderId) =>
               askCancelOrder((reason) => handleCancelOrder(orderId, reason))
@@ -1952,6 +2074,7 @@ export default function App() {
             onCloseTakeaway={handleCloseTakeawayOrder}
             onAdjustItem={handleAdjustPaymentItem}
             onAdjustTakeawayItem={handleAdjustTakeawayItem}
+            onRestoreItem={handleRestoreItem}
             onCancelOrder={(orderId) =>
               askCancelOrder((reason) => handleCancelOrder(orderId, reason))
             }
@@ -2199,6 +2322,7 @@ export default function App() {
           message={confirmDialog.message}
           confirmLabel={confirmDialog.confirmLabel}
           cancelLabel={confirmDialog.cancelLabel}
+          tone={confirmDialog.tone}
           lang={lang}
           onConfirm={() => {
             confirmDialog.onConfirm();

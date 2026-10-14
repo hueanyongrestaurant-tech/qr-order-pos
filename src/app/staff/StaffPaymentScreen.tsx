@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer } from "lucide-react";
+import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
-import type { CartItem, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
+import type { CartItem, ConfirmOptions, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
 import { cartItemKey, cartItemTotal, compareTables, formatOptionDetails, liveItemCount, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
@@ -19,7 +19,8 @@ interface StaffPaymentProps {
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
   onCancelOrders: (orderIds: string[]) => void;
-  onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
+  onAskConfirm: (message: string, onConfirm: () => void, labels?: ConfirmOptions) => void;
+  onRestoreItem: (orderId: string, cartId: string) => Promise<void>; // คืนรายการที่ยกเลิกไปแล้ว (ออเดอร์ยังไม่ปิดบิล)
   onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   onTabChange: (tab: StaffTab) => void;
@@ -48,6 +49,7 @@ interface PaymentCardProps {
   closeAction: (payment: PaymentInput) => void;
   billName: string; // ชื่อบิลในหน้าต่างยืนยันรับเงิน เช่น "โต๊ะ 5" / "T-3"
   onAskConfirm: StaffPaymentProps["onAskConfirm"];
+  restoreAction?: (ci: CartItem) => void; // แตะรายการที่ยกเลิกแล้ว → ปุ่มคืนรายการ
   cancelAction?: () => void;
   moveAction?: () => void;
   printReceiptAction?: (payment: PaymentInput) => void;
@@ -109,10 +111,11 @@ export function SplitAmountField({
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, billName, onAskConfirm, cancelAction, moveAction, printReceiptAction, printDisabled,
+  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, billName, onAskConfirm, restoreAction, cancelAction, moveAction, printReceiptAction, printDisabled,
   expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
+  const [restorePick, setRestorePick] = useState<string | null>(null);
   const cashLabel = lang === "en" ? "Cash" : "เงินสด";
   const transferLabel = lang === "en" ? "Transfer" : "เงินโอน";
 
@@ -149,6 +152,7 @@ function PaymentCard({
     onAskConfirm(lines.join("\n"), () => closeAction(payment), {
       confirmLabel: t.closeTable,
       cancelLabel: en ? "No" : "ไม่",
+      tone: "success",
     });
   };
   return (
@@ -195,17 +199,40 @@ function PaymentCard({
                 </div>
               );
             })}
-            {voidedItems && voidedItems.length > 0 && voidedItems.map((ci, ciIdx) => (
-              <div key={`voided-${ciIdx}`} className="flex items-center justify-between py-1 opacity-50">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium line-through text-muted-foreground truncate">
-                    {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
+            {voidedItems && voidedItems.length > 0 && voidedItems.map((ci) => (
+              <div key={`voided-${ci.cartId}`}>
+                <button
+                  onClick={() => restoreAction && setRestorePick((cur) => (cur === ci.cartId ? null : ci.cartId))}
+                  disabled={!restoreAction}
+                  className="w-full min-h-[44px] text-left flex items-center justify-between py-1"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="opacity-50">
+                      <div className="text-sm font-medium line-through text-muted-foreground truncate">
+                        {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                      </div>
+                      <div className="text-destructive text-xs">
+                        {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
+                      </div>
+                    </div>
+                    {restoreAction && (
+                      <div className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-primary">
+                        <RotateCcw size={11} />
+                        {lang === "en" ? "Tap to restore" : "แตะเพื่อคืนรายการ"}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-destructive text-xs">
-                    {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
-                  </div>
-                </div>
-                <span className="text-muted-foreground text-sm flex-shrink-0 ml-2 line-through">{t.thb}0</span>
+                  <span className="text-muted-foreground text-sm flex-shrink-0 ml-2 line-through opacity-50">{t.thb}0</span>
+                </button>
+                {restoreAction && restorePick === ci.cartId && (
+                  <button
+                    onClick={() => { setRestorePick(null); restoreAction(ci); }}
+                    className="mt-1 w-full min-h-[44px] px-3 rounded-xl inline-flex items-center justify-center gap-2 text-sm font-semibold bg-primary/10 text-primary border-2 border-primary/40 hover:bg-primary/15 active:scale-95 transition-all"
+                  >
+                    <RotateCcw size={16} />
+                    {lang === "en" ? "Restore this item" : "คืนรายการนี้"}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -329,7 +356,7 @@ function PaymentCard({
 
 export function StaffPaymentScreen({
   lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
-  onCancelOrder, onCancelOrders, onAskConfirm, onNotice, onMoveTable, onTabChange, onLogout, onLangToggle,
+  onCancelOrder, onCancelOrders, onAskConfirm, onRestoreItem, onNotice, onMoveTable, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -356,6 +383,21 @@ export function StaffPaymentScreen({
     } finally {
       setIsPrinting(false);
     }
+  };
+
+  // คืนรายการที่ยกเลิกแล้ว — ยืนยันก่อน แล้วยอดบิลบนการ์ดเพิ่มกลับเองจาก listener
+  const askRestore = (order: Order, ci: CartItem, billName: string) => {
+    const en = lang === "en";
+    const name = (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
+    onAskConfirm(
+      en ? `Restore ${name} to ${billName}?` : `คืน ${name} กลับเข้าบิล ${billName} ใช่ไหม?`,
+      () => {
+        onRestoreItem(order.id, ci.cartId).catch((err: any) =>
+          onNotice((en ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err))),
+        );
+      },
+      { confirmLabel: en ? "Restore" : "คืนรายการ", cancelLabel: en ? "No" : "ไม่", tone: "neutral" },
+    );
   };
 
   const select = (key: string) => {
@@ -427,6 +469,10 @@ export function StaffPaymentScreen({
                         closeAction={(payment) => onCloseTable(g.tableNumber, payment)}
                         billName={`${t.tableLabel} ${g.tableNumber}`}
                         onAskConfirm={onAskConfirm}
+                        restoreAction={(ci) => {
+                          const order = g.orders.find((o) => o.items.some((x) => x.cartId === ci.cartId));
+                          if (order) askRestore(order, ci, `${t.tableLabel} ${g.tableNumber}`);
+                        }}
                         printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: `${t.tableLabel} ${g.tableNumber}`,
@@ -479,6 +525,7 @@ export function StaffPaymentScreen({
                         closeAction={(payment) => onCloseTakeaway(order.id, payment)}
                         billName={order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")}
                         onAskConfirm={onAskConfirm}
+                        restoreAction={(ci) => askRestore(order, ci, order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"))}
                         printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"),
