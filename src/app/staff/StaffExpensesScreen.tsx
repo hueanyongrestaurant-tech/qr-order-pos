@@ -54,6 +54,14 @@ export function StaffExpensesScreen({
   const entryDate = endDate;
 
   const sortedCatalog = [...catalog].sort((a, b) => b.usageCount - a.usageCount);
+  // รายการแนะนำ: ขึ้นเมื่อพิมพ์แล้วอย่างน้อย 1 ตัว และไม่โชว์ถ้าตรงเป๊ะกับที่พิมพ์อยู่แล้ว
+  const [showSuggest, setShowSuggest] = useState(false);
+  const query = name.trim().toLowerCase();
+  const suggestions = query
+    ? sortedCatalog
+        .filter((c) => c.name.toLowerCase().includes(query) && c.name.toLowerCase() !== query)
+        .slice(0, 6)
+    : [];
 
   const filteredDays = expenseDays
     .filter((e) => e.date >= startDate && e.date <= endDate)
@@ -227,28 +235,50 @@ export function StaffExpensesScreen({
               ({editing ? editing.date : entryDate})
             </span>
           </h3>
-          <input
-            list="expense-catalog-list"
-            value={name}
-            onChange={(e) => handleNameChange(e.target.value)}
-            placeholder={lang === "en" ? "Item name (e.g. eggs, veggies)" : "ชื่อของ (เช่น ไข่ไก่, ผัก)"}
-            className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary mb-2"
-          />
-          <datalist id="expense-catalog-list">
-            {sortedCatalog.map((c) => (
-              <option key={c.id} value={c.name} />
-            ))}
-          </datalist>
+          {/* รายการแนะนำเขียนเอง แทน <datalist> — บน Android WebView datalist เป็น popup ของระบบ จาง ๆ และเด้งทับช่องพิมพ์ */}
+          <div className="relative mb-2">
+            <input
+              type="text"
+              autoComplete="off"
+              value={name}
+              onChange={(e) => { handleNameChange(e.target.value); setShowSuggest(true); }}
+              onBlur={() => setShowSuggest(false)}
+              onKeyDown={(e) => { if (e.key === "Escape") setShowSuggest(false); }}
+              placeholder={lang === "en" ? "Item name (e.g. eggs, veggies)" : "ชื่อของ (เช่น ไข่ไก่, ผัก)"}
+              className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary"
+            />
+            {showSuggest && suggestions.length > 0 && (
+              <ul className="absolute left-0 right-0 top-full mt-1 z-30 bg-card border-2 border-border rounded-lg shadow-lg overflow-hidden max-h-64 overflow-y-auto">
+                {suggestions.map((c) => (
+                  <li key={c.id} className="border-b border-border last:border-b-0">
+                    <button
+                      type="button"
+                      // กันช่องพิมพ์เสีย focus (ไม่งั้น onBlur ปิดรายการก่อน click จะทำงาน)
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => { handleNameChange(c.name); setShowSuggest(false); }}
+                      className="w-full min-h-11 px-3 py-2 flex items-center justify-between gap-2 text-left text-sm text-foreground hover:bg-muted active:bg-muted"
+                    >
+                      <span className="font-medium truncate">{c.name}</span>
+                      {c.unit && <span className="text-muted-foreground text-xs flex-shrink-0">{c.unit}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <div className="grid grid-cols-3 gap-1.5 mb-2">
             <input
               type="number"
               inputMode="decimal"
+              autoComplete="off"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               placeholder={lang === "en" ? "Qty" : "จำนวน"}
               className="bg-background border border-border rounded-lg px-2.5 py-2 text-sm outline-none focus:border-primary"
             />
             <input
+              type="text"
+              autoComplete="off"
               value={unit}
               onChange={(e) => setUnit(e.target.value)}
               placeholder={lang === "en" ? "Unit" : "หน่วย"}
@@ -257,6 +287,7 @@ export function StaffExpensesScreen({
             <input
               type="number"
               inputMode="decimal"
+              autoComplete="off"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder={t.thb + (lang === "en" ? " Price" : " ราคา")}
