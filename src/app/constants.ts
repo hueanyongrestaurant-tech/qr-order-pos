@@ -17,6 +17,12 @@ export const OUTER_KITCHEN_ITEM_PREFIXES = ["ข้าวซอย", "ขนม�
 // categoryId ของรายการ Add-on แยกที่พนักงานพิมพ์เอง (handleManualAddOn ใน App.tsx) — พิมพ์ทั้งสองจุด
 export const ADDON_CATEGORY_ID = "__addon__";
 
+// ผังโต๊ะในร้าน — เลขโต๊ะ = "<ชั้น>-<โต๊ะ>" (ตรงกับ QR และ rules ของ orders) ใช้ทั้งหน้าเลือกโต๊ะและหน้าย้ายโต๊ะ
+export const TABLE_FLOORS: { floor: number; tables: number }[] = [
+  { floor: 1, tables: 5 },
+  { floor: 2, tables: 9 },
+];
+
 export const ADD_ONS = [
   { id: "extra-plate", label: { en: "Extra Plate", th: "จานเปล่าเพิ่ม" }, price: 10 },
   { id: "cutlery", label: { en: "Cutlery Set", th: "ช้อนส้อมชุด" }, price: 0 },

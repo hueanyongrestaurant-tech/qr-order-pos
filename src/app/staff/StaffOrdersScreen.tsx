@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Clock, Plus, Printer, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Check, Clock, Plus, Printer, Trash2, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
@@ -27,10 +27,11 @@ interface StaffOrdersProps {
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
   onStartManualOrder: () => void;
+  onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder, categories }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
   const t = T[lang];
 
   // กดเสิร์ฟแล้วย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลาหลายวิ
@@ -395,6 +396,13 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                         <Printer size={15} />
                       </button>
                       <button
+                        onClick={() => onMoveTable(order.tableNumber)}
+                        title={t.moveTable}
+                        className="flex-shrink-0 bg-muted text-foreground px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                      >
+                        <ArrowRightLeft size={15} />
+                      </button>
+                      <button
                         onClick={() => handleServeAll(order)}
                         className="flex-1 min-h-[44px] bg-secondary text-secondary-foreground py-2.5 rounded-xl text-sm font-semibold hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                       >
@@ -464,6 +472,15 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                           <span className="text-foreground leading-tight">{lang === "en" ? ci.item.name.en : ci.item.name.th}</span>
                         </div>
                       ))}
+                    </div>
+                    <div className="px-4 pb-3 flex justify-end">
+                      <button
+                        onClick={() => onMoveTable(tableNum)}
+                        className="min-h-[36px] px-3 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-muted hover:bg-muted/80 active:scale-95 transition-all"
+                      >
+                        <ArrowRightLeft size={13} />
+                        {t.moveTable}
+                      </button>
                     </div>
                   </div>
                 ))}

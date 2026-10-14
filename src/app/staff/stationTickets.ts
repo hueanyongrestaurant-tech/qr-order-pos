@@ -120,9 +120,13 @@ export function ticketLabel(order: Order, lang: Language): string {
   return order.isTakeaway ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน") : order.tableNumber;
 }
 
-function headerLines(order: Order, lang: Language): TicketLine[] {
+// banner = บรรทัดเด่นใต้เลขโต๊ะ (ใบย้ายโต๊ะ: "ย้ายจาก 1-3 -> 2-5" ให้ครัวรู้ว่าไม่ใช่ออเดอร์ใหม่)
+function headerLines(order: Order, lang: Language, banner?: string): TicketLine[] {
   return [
     { kind: "text", text: ticketLabel(order, lang), size: "wide", align: "center", bold: true },
+    ...(banner
+      ? [{ kind: "text", text: banner, size: "wide", align: "center", bold: true, emphasis: "group", wrap: true } as TicketLine]
+      : []),
     { kind: "text", text: order.timestamp.toLocaleString(lang === "th" ? "th-TH" : "en-US"), size: "normal", align: "center" },
   ];
 }
@@ -162,19 +166,19 @@ function itemLines(items: CartItem[], lang: Language): TicketLine[] {
 const TOP_MARGIN_LINES = 5; // ขอบบนก่อนเนื้อหา (แทน spacer 30mm ของ JSX เดิม)
 const TEAR_GAP_LINES = 2;
 
-export function layoutTicket(order: Order, plan: TicketPlan, lang: Language): TicketLine[] {
+export function layoutTicket(order: Order, plan: TicketPlan, lang: Language, banner?: string): TicketLine[] {
   const lines: TicketLine[] = [];
   for (let i = 0; i < TOP_MARGIN_LINES; i++) lines.push(blank("normal"));
 
   plan.sections.forEach((section, idx) => {
     if (idx === 0) {
-      lines.push(...headerLines(order, lang), { kind: "rule" }, titleLine(section.kind, lang), { kind: "rule" });
+      lines.push(...headerLines(order, lang, banner), { kind: "rule" }, titleLine(section.kind, lang), { kind: "rule" });
     } else {
       // จุดฉีก — ส่วนล่างพิมพ์เลขโต๊ะ/เวลาซ้ำ เพราะฉีกแยกไปแล้วต้องรู้ว่าของโต๊ะไหน
       for (let k = 0; k < TEAR_GAP_LINES; k++) lines.push(blank());
       lines.push({ kind: "text", text: lang === "en" ? "== TEAR HERE ==" : "= = ฉีกตรงนี้ = =", size: "wide", align: "center" });
       for (let k = 0; k < TEAR_GAP_LINES; k++) lines.push(blank());
-      lines.push(titleLine(section.kind, lang), ...headerLines(order, lang), { kind: "rule" });
+      lines.push(titleLine(section.kind, lang), ...headerLines(order, lang, banner), { kind: "rule" });
     }
     lines.push(...itemLines(section.items, lang));
   });

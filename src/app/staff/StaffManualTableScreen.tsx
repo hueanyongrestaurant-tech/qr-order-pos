@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { LannaBorder } from "../shared";
+import { TABLE_FLOORS } from "../constants";
 
 // ใช้ร่วมกับหน้าตั้งค่าบิลย้อนหลัง: title/topSlot (ช่องเวลา) แทรกด้านบน และ disabled ปิดปุ่มโต๊ะจนกว่าจะกรอกครบ
 export function StaffManualTableScreen({
@@ -18,10 +19,6 @@ export function StaffManualTableScreen({
   disabled?: boolean;
 }) {
   const t = T[lang];
-  const floors: { floor: number; tables: number }[] = [
-    { floor: 1, tables: 5 },
-    { floor: 2, tables: 9 },
-  ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -48,7 +45,7 @@ export function StaffManualTableScreen({
           {lang === "en" ? "Takeaway" : "กลับบ้าน"}
         </button>
 
-        {floors.map((f) => (
+        {TABLE_FLOORS.map((f) => (
           <div key={f.floor} className="mb-6">
             <h3 className="font-semibold text-foreground text-sm mb-3">
               {lang === "en" ? `Floor ${f.floor}` : `ชั้น ${f.floor}`}

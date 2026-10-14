@@ -68,7 +68,8 @@ export type ActivityAction =
   | "category_deleted"
   | "expense_edited"
   | "expense_deleted"
-  | "backfill_order";
+  | "backfill_order"
+  | "table_moved";
 
 export interface ActivityLog {
   id: string;
@@ -149,6 +150,11 @@ export interface Order {
   // ส่วน backfilledAt = เวลาที่กรอกจริงบน server ไว้ตรวจสอบ
   backfilled?: boolean;
   backfilledAt?: Date;
+  // ย้ายโต๊ะ (handleMoveTable ใน App.tsx) — ทุกออเดอร์ที่ย้ายในรอบเดียวกันได้ moveId เดียวกัน
+  // listener ออเดอร์เห็น moveId เปลี่ยน = เพิ่งย้าย → พิมพ์ใบย้าย (ดู buildMoveTicketOrder) ย้ายซ้ำจะเขียนทับเป็นรอบล่าสุด
+  moveId?: string;
+  movedFrom?: string;
+  movedAt?: Date;
 }
 
 // ─── บัญชีรายจ่าย (Expenses) ───────────────────────────────────────────────────

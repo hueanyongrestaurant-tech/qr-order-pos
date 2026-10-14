@@ -23,6 +23,9 @@
 | `createdAt` | Timestamp | `serverTimestamp()` — **History/Stats จัดบิลเข้าวันจาก field นี้** (บิลย้อนหลัง = เวลาขายจริงที่กรอก) |
 | `backfilled` | boolean? | true = บิลขายย้อนหลัง (ลืมลงระบบ เพิ่มทีหลังจากหน้าประวัติ) สร้างเป็น `"paid"` ตรงๆ ไม่ผ่าน in-progress |
 | `backfilledAt` | Timestamp? | `serverTimestamp()` เวลาที่กรอกบิลย้อนหลังจริง (ไว้ตรวจสอบ) |
+| `moveId` | string? | ย้ายโต๊ะ: ทุกออเดอร์ที่ย้ายรอบเดียวกันได้ id เดียวกัน — listener เห็นค่าใหม่ = พิมพ์ใบย้าย (ดู `staff/tableMove.ts`) |
+| `movedFrom` | string? | โต๊ะเดิมของการย้ายครั้งล่าสุด (หน้าประวัติแสดง "ย้ายจาก X") |
+| `movedAt` | Timestamp? | `serverTimestamp()` เวลาที่ย้าย (เวลาบนหัวใบย้าย) |
 
 ### `CartItem` (embedded ใน `items[]`)
 
@@ -47,7 +50,7 @@
 
 | field | type | หมายเหตุ |
 |---|---|---|
-| `action` | enum | `void_item \| cancel_order \| adjust_item_qty \| backfill_order \| menu_item_added \| menu_item_edited \| menu_item_deleted \| category_deleted \| expense_deleted` |
+| `action` | enum | `void_item \| cancel_order \| adjust_item_qty \| backfill_order \| table_moved \| menu_item_added \| menu_item_edited \| menu_item_deleted \| category_deleted \| expense_deleted` |
 | `createdAt` | Timestamp | `serverTimestamp()` |
 | `orderId` | string? | |
 | `tableNumber` | string? | โต๊ะ หรือ `takeawayLabel` |
@@ -74,5 +77,6 @@
 - `categories/{id}` — หมวดหมู่ (`nameEn`, `nameTh`, `order`, `active`, `signature`)
 - `status/live` — `{ busyTables, busyItems }` แบนเนอร์ "ร้านยุ่ง"
 - `counters/takeaway-YYYY-MM-DD` — `{ count }` ตัวนับคิวกลับบ้าน (บิลย้อนหลังไม่ใช้ — label คงที่ `"กลับบ้าน"`)
+- `counters/table-moves` — guard ของการย้ายโต๊ะ `{ lastMoveId, lastFrom, lastTo, lastMoveAt }` ทุกการย้ายอ่าน+เขียน doc นี้ใน transaction เพื่อให้การย้ายพร้อมกันชนกันแล้ว retry (กันสองเครื่องย้ายเข้าโต๊ะเดียวกัน)
 - `expenses/YYYY-MM-DD` — บัญชีรายจ่ายรายวัน `{ date, items: ExpenseLineItem[], totalAmount, updatedAt }`
 - `expenseItems/{sanitizedName}` — catalog ของที่เคยซื้อ ใช้ทำ autocomplete

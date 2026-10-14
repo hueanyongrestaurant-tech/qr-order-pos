@@ -108,6 +108,7 @@ import { LannaBorder, RestaurantLogo } from "./shared";
 // ลูกค้าที่สแกน QR จะโดนดึง plugin ของฝั่งพนักงานไปรวมกับ chunk หลักด้วย
 import { getPrintRole, getSelectedPrinterAddress } from "./staff/printerStore";
 import { isSoundMuted } from "./staff/soundStore";
+import { activeDineInOrders, buildMoveTicketOrder, moveBanner, occupiedTables, takeNewMoves } from "./staff/tableMove";
 import { MenuScreen } from "./customer/MenuScreen";
 import { ItemDetailScreen } from "./customer/ItemDetailScreen";
 import { CartScreen } from "./customer/CartScreen";
@@ -130,6 +131,20 @@ const StaffStatsScreen = lazy(() => import("./staff/StaffStatsScreen").then((m) 
 const StaffBackfillSetupScreen = lazy(() => import("./staff/StaffBackfillSetupScreen").then((m) => ({ default: m.StaffBackfillSetupScreen })));
 const StaffBackfillPaymentScreen = lazy(() => import("./staff/StaffBackfillPaymentScreen").then((m) => ({ default: m.StaffBackfillPaymentScreen })));
 const StaffActivityScreen = lazy(() => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen })));
+const MoveTableModal = lazy(() => import("./staff/MoveTableModal").then((m) => ({ default: m.MoveTableModal })));
+
+// เหตุที่ย้ายโต๊ะไม่ได้ — โยนจากใน transaction (Firestore ไม่ retry error ของเรา) แล้วแจ้งพนักงานตาม code
+class MoveTableError extends Error {
+  code: "occupied" | "nothing";
+  constructor(code: "occupied" | "nothing") {
+    super(code);
+    this.code = code;
+  }
+}
+// guard doc ของการย้ายโต๊ะ — ทุกการย้ายอ่าน+เขียน doc นี้ใน transaction การย้ายพร้อมกันจึงชนกันแล้ว retry
+// (query เช็คโต๊ะปลายทางอยู่นอก read set ของ transaction ถ้าไม่มี guard สองเครื่องจะเห็นว่าว่างทั้งคู่)
+// อยู่ใน counters/ เพราะ rules เดิมให้พนักงานอ่าน/เขียนได้อยู่แล้ว ไม่ต้องแก้ rules
+const TABLE_MOVE_GUARD = "table-moves";
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
@@ -619,11 +634,14 @@ export default function App() {
     // ออเดอร์เก่าทุกใบตอน mount/reconnect (Firestore ส่ง docChanges "added" ทุก doc ที่มีอยู่
     // แล้วในสแนปช็อตแรกเสมอ ไม่ใช่แค่ของใหม่จริง ๆ)
     isFirstOrdersSnapshotRef.current = true;
+    // moveId ที่เห็นแล้วใน subscription นี้ — snapshot แรกจดทุกตัวโดยไม่พิมพ์ (ดู tableMove.ts)
+    const seenMoveIds = new Set<string>();
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs
         .map((d) => mapOrderDoc(d.id, d.data()))
         .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
       setOrders(data);
+      const newMoves = takeNewMoves(seenMoveIds, data);
 
       if (isFirstOrdersSnapshotRef.current) {
         isFirstOrdersSnapshotRef.current = false;
@@ -657,6 +675,23 @@ export default function App() {
             // ไม่มีอะไรของจุดนี้ไม่พิมพ์ ยังโหลดหมวดไม่เสร็จ (ref ว่าง) พิมพ์ใบ "ทุกรายการ" แทน
             printStationTicketsNative(order, getPrintRole(), allCategoriesRef.current, langRef.current).catch((err) => {
               console.error("Auto-print kitchen ticket failed:", err);
+            });
+          });
+        });
+      }
+
+      // ใบย้ายโต๊ะ — การย้ายเป็นการแก้ออเดอร์ ("modified") ไม่ใช่ "added" auto-print ด้านบนจึงไม่จับ
+      // ทุกเครื่องที่ตั้งเครื่องพิมพ์ไว้พิมพ์ส่วนของจุดตัวเอง (เครื่องที่กดย้ายก็พิมพ์ผ่านทางนี้ ไม่มีทางพิมพ์แยก)
+      // 1 การย้าย = 1 ใบต่อจุด รวมทุกรอบ เฉพาะรายการที่ยังไม่เสิร์ฟ ไม่มีอะไรค้าง = ไม่พิมพ์
+      if (newMoves.length > 0 && getSelectedPrinterAddress()) {
+        import("./staff/nativePrinter").then(({ isNativePrintAvailable, printStationTicketsNative }) => {
+          if (!isNativePrintAvailable()) return;
+          newMoves.forEach((group) => {
+            const ticketOrder = buildMoveTicketOrder(group);
+            if (!ticketOrder) return;
+            const lang = langRef.current;
+            printStationTicketsNative(ticketOrder, getPrintRole(), allCategoriesRef.current, lang, moveBanner(group.from, group.to, lang)).catch((err) => {
+              console.error("Auto-print table-move ticket failed:", err);
             });
           });
         });
@@ -1373,6 +1408,61 @@ export default function App() {
     setSelectedPayTable(null);
   };
 
+  // ย้ายโต๊ะ — ทุกออเดอร์ค้าง (in-progress + awaiting-payment) ของโต๊ะเดิมไปโต๊ะใหม่ใน transaction เดียว
+  // สำเร็จทั้งหมดหรือไม่ย้ายเลย + เขียน activity log ในก้อนเดียวกัน ออเดอร์ที่จ่ายแล้ว/ยกเลิก/กลับบ้านไม่แตะ
+  // การพิมพ์ใบย้ายไม่ได้ทำที่นี่ — orders listener ของทุกเครื่องเห็น moveId ใหม่แล้วพิมพ์เอง (ดู tableMove.ts)
+  const handleMoveTable = async (from: string, to: string) => {
+    if (from === to) return;
+    const moveId = uid();
+    // กรอง status ใน query เสมอ — ไม่งั้นอ่านประวัติทั้งหมดของโต๊ะนั้น
+    const activeAt = (table: string) =>
+      getDocs(query(
+        collection(db, "orders"),
+        where("tableNumber", "==", table),
+        where("status", "in", ["in-progress", "awaiting-payment"]),
+      ));
+    const isMovable = (raw: any) =>
+      raw.isTakeaway !== true && (raw.status === "in-progress" || raw.status === "awaiting-payment");
+
+    await runTransaction(db, async (tx) => {
+      const guardRef = doc(db, "counters", TABLE_MOVE_GUARD);
+      await tx.get(guardRef);
+      // query อยู่นอก read set แต่รันใหม่ทุกครั้งที่ transaction retry (guard ชน) จึงเห็นการย้ายที่ commit ก่อนหน้าเสมอ
+      const [targetSnap, sourceSnap] = await Promise.all([activeAt(to), activeAt(from)]);
+      if (targetSnap.docs.some((d) => isMovable(d.data()))) throw new MoveTableError("occupied");
+      const sourceDocs = await Promise.all(sourceSnap.docs.map((d) => tx.get(doc(db, "orders", d.id))));
+      const moving = sourceDocs.filter((s) => s.exists() && s.data().tableNumber === from && isMovable(s.data()));
+      if (moving.length === 0) throw new MoveTableError("nothing");
+
+      moving.forEach((s) =>
+        tx.update(s.ref, { tableNumber: to, moveId, movedFrom: from, movedAt: serverTimestamp() }),
+      );
+      tx.set(guardRef, { lastMoveId: moveId, lastFrom: from, lastTo: to, lastMoveAt: serverTimestamp() }, { merge: true });
+      const action: ActivityAction = "table_moved";
+      tx.set(doc(collection(db, "activityLogs")), {
+        action,
+        tableNumber: from,
+        amount: moving.reduce((sum, s) => sum + orderTotal(mapOrderDoc(s.id, s.data())), 0),
+        details: { from, to, moveId, orderIds: moving.map((s) => s.id), orderCount: moving.length },
+        createdAt: serverTimestamp(),
+      });
+    });
+  };
+
+  // ปุ่มย้ายโต๊ะ (หน้าออเดอร์/จ่ายเงิน) → เลือกโต๊ะปลายทาง → ยืนยัน → ย้าย
+  const [moveFromTable, setMoveFromTable] = useState<string | null>(null);
+  const confirmMoveTable = (from: string, to: string) => {
+    setMoveFromTable(null);
+    const t = T[lang];
+    const n = activeDineInOrders(orders, from).length;
+    askConfirm(t.moveTableConfirm(n, from, to), () => {
+      handleMoveTable(from, to).catch((err) => {
+        if (err instanceof MoveTableError) alert(err.code === "occupied" ? t.moveTableOccupied(to) : t.moveTableNothing(from));
+        else alert(t.moveTableFailed + (err?.message || String(err)));
+      });
+    }, { confirmLabel: t.moveTableConfirmYes });
+  };
+
   const handleCloseTakeawayOrder = async (orderId: string, payment: PaymentInput) => {
     await updateDoc(doc(db, "orders", orderId), {
       status: "paid",
@@ -1847,6 +1937,7 @@ export default function App() {
             onLangToggle={toggleLang}
             onAskConfirm={askConfirm}
             onStartManualOrder={handleStartManualOrder}
+            onMoveTable={setMoveFromTable}
             categories={allCategories}
           />
         </Suspense>
@@ -1872,6 +1963,7 @@ export default function App() {
               )
             }
             onAskConfirm={askConfirm}
+            onMoveTable={setMoveFromTable}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}
@@ -2114,6 +2206,17 @@ export default function App() {
           }}
           onCancel={() => setConfirmDialog(null)}
         />
+      )}
+      {moveFromTable && (
+        <Suspense fallback={null}>
+          <MoveTableModal
+            lang={lang}
+            from={moveFromTable}
+            occupied={occupiedTables(orders)}
+            onSelect={(to) => confirmMoveTable(moveFromTable, to)}
+            onCancel={() => setMoveFromTable(null)}
+          />
+        </Suspense>
       )}
       {reasonPrompt && (
         <ReasonPickerModal

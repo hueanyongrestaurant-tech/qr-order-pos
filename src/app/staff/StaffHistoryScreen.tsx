@@ -49,6 +49,7 @@ interface HistoryEntry {
   total: number;
   itemCount: number;
   backfilled: boolean;
+  movedFrom?: string; // บิลที่เคยย้ายโต๊ะ — โต๊ะเดิม (ย้ายหลายครั้ง = โต๊ะก่อนการย้ายครั้งล่าสุด)
 }
 
 export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, initialDate, onAddBackfill, onCancelBackfill, onAskConfirm }: StaffHistoryProps) {
@@ -127,6 +128,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
       existing.itemCount += liveItemCount(o.items);
       if (o.timestamp < existing.timestamp) existing.timestamp = o.timestamp;
       if (o.backfilled) existing.backfilled = true;
+      if (!existing.movedFrom && o.movedFrom) existing.movedFrom = o.movedFrom;
     } else {
       entryMap.set(key, {
         tableNumber: o.tableNumber,
@@ -137,6 +139,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
         total: orderTotal(o),
         itemCount: liveItemCount(o.items),
         backfilled: !!o.backfilled,
+        movedFrom: o.movedFrom,
       });
     }
   });
@@ -240,6 +243,11 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
                     <div className="text-left">
                       <div className="text-sm font-medium text-foreground flex items-center gap-1.5 flex-wrap">
                         {e.isTakeaway ? e.takeawayLabel : `${t.tableLabel} ${e.tableNumber}`}
+                        {!e.isTakeaway && e.movedFrom && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                            {t.movedFromLabel(e.movedFrom)}
+                          </span>
+                        )}
                         {e.backfilled && (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
                             {lang === "en" ? "Added later" : "เพิ่มย้อนหลัง"}

@@ -93,7 +93,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
     "all", "void_item", "cancel_order", "adjust_item_qty",
-    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted", "backfill_order",
+    "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted", "backfill_order", "table_moved",
   ];
 
   return (
@@ -188,6 +188,13 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                 {l.action === "menu_item_edited" && l.details && (
                   <div className="mt-1 text-xs text-muted-foreground">
                     {t.thb}{l.details.oldPrice} → {t.thb}{l.details.newPrice}
+                  </div>
+                )}
+
+                {l.action === "table_moved" && l.details?.to && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {l.details.from} → {l.details.to}
+                    {typeof l.details.orderCount === "number" && ` · ${l.details.orderCount} ${lang === "en" ? "orders" : "ออเดอร์"}`}
                   </div>
                 )}
 

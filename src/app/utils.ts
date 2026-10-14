@@ -374,6 +374,9 @@ export function mapOrderDoc(id: string, raw: any): Order {
     cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
     backfilled: raw.backfilled === true ? true : undefined,
     backfilledAt: raw.backfilledAt?.toDate ? raw.backfilledAt.toDate() : undefined,
+    moveId: raw.moveId,
+    movedFrom: raw.movedFrom,
+    movedAt: raw.movedAt?.toDate ? raw.movedAt.toDate() : undefined,
   } as Order;
 }
 

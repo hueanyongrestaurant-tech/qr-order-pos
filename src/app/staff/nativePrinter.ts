@@ -317,18 +317,20 @@ async function ensurePrinterConnected(): Promise<void> {
 // พิมพ์ใบของจุดที่เครื่องนี้รับผิดชอบ (role) — แยกรายการ/จัดหน้าที่ stationTickets.ts ที่นี่แค่แปลง
 // TicketLine เป็น ESC/POS คืนจำนวนใบที่พิมพ์ (0 = ออเดอร์นี้ไม่มีอะไรของจุดนี้ ไม่ได้ต่อเครื่องพิมพ์เลย)
 // หลายใบ (โหมด "all": เคาน์เตอร์ + ครัว) ส่งเป็นงานพิมพ์เดียว ตัด/feed กระดาษระหว่างใบ
+// banner = บรรทัดเด่นใต้เลขโต๊ะ (ใบย้ายโต๊ะ ดู tableMove.ts)
 export async function printStationTicketsNative(
   order: Order,
   role: PrintRole,
   categories: Category[],
   lang: Language,
+  banner?: string,
 ): Promise<number> {
   const plans = planTickets(order, role, categories);
   if (plans.length === 0) return 0;
   await ensurePrinterConnected();
 
   const builder = CapacitorThermalPrinter.begin().raw(selectCodepageCmd(THAI_CODEPAGE_N));
-  plans.forEach((plan) => emitTicketLines(builder, layoutTicket(order, plan, lang)));
+  plans.forEach((plan) => emitTicketLines(builder, layoutTicket(order, plan, lang, banner)));
   await builder.write();
   return plans.length;
 }

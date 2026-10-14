@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CreditCard, Minus, Plus, Printer } from "lucide-react";
+import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
@@ -20,6 +20,7 @@ interface StaffPaymentProps {
   onCancelOrder: (orderId: string) => void;
   onCancelOrders: (orderIds: string[]) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
@@ -45,6 +46,7 @@ interface PaymentCardProps {
   total2: number;
   closeAction: (payment: PaymentInput) => void;
   cancelAction?: () => void;
+  moveAction?: () => void;
   printReceiptAction?: (payment: PaymentInput) => void;
   printDisabled: boolean;
   expandedKey: string | null;
@@ -104,7 +106,7 @@ export function SplitAmountField({
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, printReceiptAction, printDisabled,
+  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, cancelAction, moveAction, printReceiptAction, printDisabled,
   expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
@@ -186,10 +188,23 @@ function PaymentCard({
             ))}
           </div>
 
-          {cancelAction && (
-            <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium mb-3">
-              {t.cancelOrder}
-            </button>
+          {(cancelAction || moveAction) && (
+            <div className="flex items-center justify-between gap-2 mb-3">
+              {cancelAction ? (
+                <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium">
+                  {t.cancelOrder}
+                </button>
+              ) : <span />}
+              {moveAction && (
+                <button
+                  onClick={moveAction}
+                  className="min-h-[36px] px-3 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium text-foreground bg-muted hover:bg-muted/80 active:scale-95 transition-all"
+                >
+                  <ArrowRightLeft size={13} />
+                  {t.moveTable}
+                </button>
+              )}
+            </div>
           )}
 
           <div className="flex gap-2 mb-3">
@@ -292,7 +307,7 @@ function PaymentCard({
 
 export function StaffPaymentScreen({
   lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
-  onCancelOrder, onCancelOrders, onAskConfirm, onTabChange, onLogout, onLangToggle,
+  onCancelOrder, onCancelOrders, onAskConfirm, onMoveTable, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -403,6 +418,7 @@ export function StaffPaymentScreen({
                           onCancelOrders(g.orders.map((o) => o.id));
                           setExpandedKey(null);
                         }}
+                        moveAction={() => onMoveTable(g.tableNumber)}
                         expandedKey={expandedKey}
                         select={select}
                         paymentMethod={paymentMethod}
