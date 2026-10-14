@@ -120,13 +120,13 @@ export function ticketLabel(order: Order, lang: Language): string {
   return order.isTakeaway ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน") : order.tableNumber;
 }
 
-// banner = บรรทัดเด่นใต้เลขโต๊ะ (ใบย้ายโต๊ะ: "ย้ายจาก 1-3 -> 2-5" ให้ครัวรู้ว่าไม่ใช่ออเดอร์ใหม่)
+// banner = บรรทัดใต้เลขโต๊ะ (ใบย้ายโต๊ะ: "ย้ายจาก 1-3 -> 2-5" ให้ครัวรู้ว่าไม่ใช่ออเดอร์ใหม่)
+// ขนาดปกติ ตัวหนา ไม่กลับสี ไม่ wrap — ขนาด wide ได้แค่ ~15 ตัว/บรรทัด เคยแตกหลายบรรทัดอ่านยาก
+// ขนาดปกติได้ 30 ตัว (LINE_WIDTH) "ย้ายจาก 1-10 -> 2-12" กว้าง ~19 ช่อง จึงอยู่บรรทัดเดียวเสมอ
 function headerLines(order: Order, lang: Language, banner?: string): TicketLine[] {
   return [
     { kind: "text", text: ticketLabel(order, lang), size: "wide", align: "center", bold: true },
-    ...(banner
-      ? [{ kind: "text", text: banner, size: "wide", align: "center", bold: true, emphasis: "group", wrap: true } as TicketLine]
-      : []),
+    ...(banner ? [{ kind: "text", text: banner, size: "normal", align: "center", bold: true } as TicketLine] : []),
     { kind: "text", text: order.timestamp.toLocaleString(lang === "th" ? "th-TH" : "en-US"), size: "normal", align: "center" },
   ];
 }
