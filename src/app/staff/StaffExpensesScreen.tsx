@@ -19,13 +19,14 @@ interface StaffExpensesProps {
   onEditItem: (date: string, index: number, item: ExpenseLineItem) => void;
   onDeleteItem: (date: string, index: number) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
 
 export function StaffExpensesScreen({
-  lang, expenseDays, catalog, rangeStart, rangeEnd, onRangeChange, onAddItem, onEditItem, onDeleteItem, onAskConfirm, onTabChange, onLogout, onLangToggle,
+  lang, expenseDays, catalog, rangeStart, rangeEnd, onRangeChange, onAddItem, onEditItem, onDeleteItem, onAskConfirm, onNotice, onTabChange, onLogout, onLangToggle,
 }: StaffExpensesProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
@@ -176,7 +177,7 @@ export function StaffExpensesScreen({
       }
     } catch (err) {
       console.error("save expenses image failed", err);
-      alert(lang === "en" ? "Could not create image" : "สร้างรูปภาพไม่สำเร็จ");
+      onNotice(lang === "en" ? "Could not create image" : "สร้างรูปภาพไม่สำเร็จ");
     } finally {
       setSavingImage(false);
     }

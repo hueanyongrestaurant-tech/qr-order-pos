@@ -26,12 +26,13 @@ interface StaffOrdersProps {
   onLogout: () => void;
   onLangToggle: () => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onStartManualOrder: () => void;
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
   const t = T[lang];
 
   // กดเสิร์ฟแล้วย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลาหลายวิ
@@ -85,7 +86,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
   };
 
   const failAlert = (err: any) =>
-    alert((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err)));
+    onNotice((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err)));
 
   const handleServeItem = (order: Order, ci: CartItem) => {
     const key = `${order.id}:${ci.cartId}`;
@@ -150,9 +151,9 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
       // พิมพ์เฉพาะส่วนของจุดที่เครื่องนี้รับผิดชอบ — ไม่มีอะไรของจุดนี้ให้แจ้ง ไม่เงียบไปเฉยๆ
       const { printStationTicketsNative } = await import("./nativePrinter");
       const printed = await printStationTicketsNative(order, printRole, categories, lang);
-      if (printed === 0) alert(noItemsForRoleMessage(printRole, lang));
+      if (printed === 0) onNotice(noItemsForRoleMessage(printRole, lang));
     } catch (err: any) {
-      alert((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
+      onNotice((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
     } finally {
       setIsPrinting(false);
     }

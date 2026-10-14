@@ -1961,6 +1961,7 @@ export default function App() {
             onLogout={handleLogout}
             onLangToggle={toggleLang}
             onAskConfirm={askConfirm}
+            onNotice={setNotice}
             onStartManualOrder={handleStartManualOrder}
             onMoveTable={setMoveFromTable}
             categories={allCategories}
@@ -1988,6 +1989,7 @@ export default function App() {
               )
             }
             onAskConfirm={askConfirm}
+            onNotice={setNotice}
             onMoveTable={setMoveFromTable}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
@@ -2083,6 +2085,7 @@ export default function App() {
             onEditItem={handleEditExpenseItem}
             onDeleteItem={handleDeleteExpenseItem}
             onAskConfirm={askConfirm}
+            onNotice={setNotice}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}

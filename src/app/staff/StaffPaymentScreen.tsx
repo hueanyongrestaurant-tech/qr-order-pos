@@ -20,6 +20,7 @@ interface StaffPaymentProps {
   onCancelOrder: (orderId: string) => void;
   onCancelOrders: (orderIds: string[]) => void;
   onAskConfirm: (message: string, onConfirm: () => void) => void;
+  onNotice: (message: string) => void; // หน้าต่างแจ้งเตือนในแอป (NoticeModal ใน App) — แทน alert() ของเบราว์เซอร์
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
@@ -307,7 +308,7 @@ function PaymentCard({
 
 export function StaffPaymentScreen({
   lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
-  onCancelOrder, onCancelOrders, onAskConfirm, onMoveTable, onTabChange, onLogout, onLangToggle,
+  onCancelOrder, onCancelOrders, onAskConfirm, onNotice, onMoveTable, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -330,7 +331,7 @@ export function StaffPaymentScreen({
       const { printReceiptNative } = await import("./nativePrinter");
       await printReceiptNative(data, lang);
     } catch (err: any) {
-      alert((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
+      onNotice((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
     } finally {
       setIsPrinting(false);
     }
