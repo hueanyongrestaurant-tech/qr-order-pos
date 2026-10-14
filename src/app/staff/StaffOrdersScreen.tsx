@@ -77,8 +77,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
   const undoLabel = en ? "Undo" : "ย้อนกลับ";
 
   // ─── แถบย้อนกลับ (ด้านล่างจอ ค้าง UNDO_MS) ───
-  // undo ไม่มี = แจ้งอย่างเดียว (เช่นยกเลิกรายการสุดท้ายจนออเดอร์ถูกยกเลิกทั้งใบ ซึ่งย้อนไม่ได้)
-  const [toast, setToast] = useState<{ id: number; label: string; undo?: () => Promise<unknown> } | null>(null);
+  const [toast, setToast] = useState<{ id: number; label: string; undo: () => Promise<unknown> } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -88,7 +87,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     toastTimerRef.current = null;
     setToast(null);
   };
-  const showToast = (label: string, undo?: () => Promise<unknown>) => {
+  const showToast = (label: string, undo: () => Promise<unknown>) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     const id = Date.now();
     setToast({ id, label, undo });
@@ -163,13 +162,8 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
   const handleRemoveItem = (order: Order, ci: CartItem) => {
     onRemoveItem(order.id, ci.cartId, (p) => {
       const voiding = settle(p);
-      // รายการสุดท้ายของออเดอร์ → ออเดอร์ถูกยกเลิกทั้งใบ ซึ่งไม่ทำย้อนกลับให้
-      if (liveItems(order.items).length <= 1) {
-        showToast(en
-          ? `Cancelled ${itemText(ci)} — whole order cancelled (${tableText(order)})`
-          : `ยกเลิก ${itemText(ci)} แล้ว — ออเดอร์ ${tableText(order)} ถูกยกเลิกทั้งใบ`);
-        return;
-      }
+      // รายการสุดท้ายของออเดอร์ → ออเดอร์ถูกยกเลิกทั้งใบ ซึ่งไม่ทำย้อนกลับให้ — ไม่ขึ้นแถบเลย (ยกเลิกเงียบๆ)
+      if (liveItems(order.items).length <= 1) return;
       showToast(en ? `Cancelled ${itemText(ci)} (${tableText(order)})` : `ยกเลิก ${itemText(ci)} (${tableText(order)}) แล้ว`, () =>
         voiding.then((ok) => (ok ? onRestoreItem(order.id, ci.cartId) : undefined)),
       );
@@ -665,27 +659,17 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
         <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-3 pb-3 pointer-events-none" role="status" aria-live="polite">
           <div className="pointer-events-auto flex items-center gap-3 bg-[#1F140B] text-white rounded-2xl shadow-2xl border-2 border-amber-400 pl-4 pr-2 py-2 max-w-xl w-full">
             <span className="flex-1 min-w-0 text-base font-semibold leading-snug">{toast.label}</span>
-            {toast.undo ? (
-              <button
-                onClick={() => {
-                  const undo = toast.undo!;
-                  dismissToast();
-                  undo().catch(failAlert);
-                }}
-                className="flex-shrink-0 min-h-[52px] px-5 rounded-xl inline-flex items-center gap-2 bg-amber-400 text-[#1F140B] text-base font-bold hover:bg-amber-300 active:scale-95 transition-all"
-              >
-                <RotateCcw size={18} />
-                {undoLabel}
-              </button>
-            ) : (
-              <button
-                onClick={dismissToast}
-                aria-label={en ? "Close" : "ปิด"}
-                className="flex-shrink-0 min-h-[44px] min-w-[44px] rounded-xl inline-flex items-center justify-center text-white/80 hover:bg-white/10"
-              >
-                <X size={20} />
-              </button>
-            )}
+            <button
+              onClick={() => {
+                const undo = toast.undo;
+                dismissToast();
+                undo().catch(failAlert);
+              }}
+              className="flex-shrink-0 min-h-[52px] px-5 rounded-xl inline-flex items-center gap-2 bg-amber-400 text-[#1F140B] text-base font-bold hover:bg-amber-300 active:scale-95 transition-all"
+            >
+              <RotateCcw size={18} />
+              {undoLabel}
+            </button>
           </div>
         </div>
       )}
