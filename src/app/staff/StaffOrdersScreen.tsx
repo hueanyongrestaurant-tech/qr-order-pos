@@ -3,11 +3,32 @@ import { ArrowRightLeft, Check, Clock, Plus, Printer, RotateCcw, Trash2, X } fro
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
-import { compareTables, formatClock, liveItems, orderTotal, timeAgo } from "../utils";
+import { compareTables, formatClock, liveItems, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 
 // แถบย้อนกลับค้างไว้ 10 วิ หลังกดเสิร์ฟ/พร้อมรับ/ยกเลิกรายการ
 const UNDO_MS = 10000;
+
+// ป้ายเวลารอบนการ์ดกำลังเตรียม (นับจากเวลาสั่งของออเดอร์ใบนั้น) — ถึง WARN เป็นเหลือง ถึง LATE เป็นแดง
+const WAIT_WARN_MIN = 15;
+const WAIT_LATE_MIN = 25;
+
+// เวลาปัจจุบันที่ขยับเองทุกต้นนาที — ให้ป้ายเวลารออัปเดตโดยไม่ต้องอ่าน Firestore เพิ่ม
+function useMinuteClock(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    let interval: number | undefined;
+    const align = window.setTimeout(() => {
+      setNow(Date.now());
+      interval = window.setInterval(() => setNow(Date.now()), 60000);
+    }, 60000 - (Date.now() % 60000));
+    return () => {
+      window.clearTimeout(align);
+      if (interval !== undefined) window.clearInterval(interval);
+    };
+  }, []);
+  return now;
+}
 import { kitchenOptionSummary } from "./ticket";
 import { usePrintRole, useSelectedPrinterAddress } from "./printerStore";
 import { noItemsForRoleMessage } from "./stationTickets";
@@ -75,6 +96,23 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
   const noLabel = en ? "No" : "ไม่";
   const undoLabel = en ? "Undo" : "ย้อนกลับ";
+
+  const now = useMinuteClock();
+  const waitBadge = (o: Order) => {
+    const mins = Math.max(0, Math.floor((now - o.timestamp.getTime()) / 60000));
+    const tone =
+      mins >= WAIT_LATE_MIN
+        ? "bg-red-600 text-white border-red-600"
+        : mins >= WAIT_WARN_MIN
+          ? "bg-amber-100 text-amber-800 border-amber-400"
+          : "bg-muted text-muted-foreground border-border";
+    return (
+      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-sm font-bold whitespace-nowrap tabular-nums ${tone}`}>
+        <Clock size={14} />
+        {en ? `${mins} min` : `${mins} นาที`}
+      </span>
+    );
+  };
 
   // ─── แถบย้อนกลับ (ด้านล่างจอ ค้าง UNDO_MS) ───
   const [toast, setToast] = useState<{ id: number; label: string; undo: () => Promise<unknown> } | null>(null);
@@ -386,14 +424,20 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                         <div className="w-10 h-10 bg-accent text-accent-foreground font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
                           {order.takeawayLabel}
                         </div>
-                        <div className="font-semibold text-foreground text-sm">{timeAgo(order.timestamp)}</div>
+                        <div className="flex items-center gap-1 text-accent text-xs font-medium">
+                          <Clock size={12} />
+                          <span>{formatClock(order.timestamp)}</span>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => onCancelOrder(order.id)}
-                        className="text-destructive/60 hover:text-destructive transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-3">
+                        {waitBadge(order)}
+                        <button
+                          onClick={() => onCancelOrder(order.id)}
+                          className="text-destructive/60 hover:text-destructive transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                     <div className="px-4 py-3 space-y-2.5">
                       {order.items.map((ci) => ci.voided ? renderVoidedRow(order, ci) : (
@@ -453,14 +497,14 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                         </div>
                         <div>
                           <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t.tableLabel}</div>
-                          <div className="font-semibold text-foreground text-sm">{timeAgo(order.timestamp)}</div>
+                          <div className="flex items-center gap-1 text-amber-600 text-xs font-medium">
+                            <Clock size={12} />
+                            <span>{formatClock(order.timestamp)}</span>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1.5">
-                        <div className="flex items-center gap-1 text-amber-600 text-xs font-medium">
-                          <Clock size={12} />
-                          <span>{formatClock(order.timestamp)}</span>
-                        </div>
+                      <div className="flex items-center gap-3">
+                        {waitBadge(order)}
                         <button
                           onClick={() => onCancelOrder(order.id)}
                           className="text-destructive/60 hover:text-destructive transition-colors"
