@@ -88,13 +88,15 @@ export function getSelectedPrinter(): SavedPrinter | null {
 // ─── Print role (which station THIS device prints tickets for) ───────────────
 // "all" = ใบเคาน์เตอร์ + ใบครัวในงานพิมพ์เดียว (แบบเครื่องเดียว) เป็นค่าเริ่มต้น — เครื่องที่อัปเดต
 // แอปแล้วยังไม่ได้ตั้งค่าจึงพิมพ์ครบเหมือนเดิม การแยกรายการดู stationTickets.ts
-export type PrintRole = "all" | "counter" | "kitchen";
+// "inner"/"outer" = ครัวใน/ครัวนอกแยกเครื่อง, "kitchen" = ครัวรวมใน+นอก (สำรองเผื่อเครื่องพิมพ์เสีย)
+export type PrintRole = "all" | "counter" | "kitchen" | "inner" | "outer";
+const PRINT_ROLES: PrintRole[] = ["all", "counter", "kitchen", "inner", "outer"];
 
 const PRINT_ROLE_KEY = "hueanyong.printers.role";
 
 export function getPrintRole(): PrintRole {
   const raw = localStorage.getItem(PRINT_ROLE_KEY);
-  return raw === "counter" || raw === "kitchen" ? raw : "all";
+  return PRINT_ROLES.includes(raw as PrintRole) ? (raw as PrintRole) : "all";
 }
 
 export function setPrintRole(role: PrintRole) {

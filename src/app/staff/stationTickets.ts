@@ -1,11 +1,15 @@
 // ─── Station tickets: แยกรายการในออเดอร์ไปตามจุดพิมพ์ ─────────────────────────
 //
-// ร้านมี 2 จุด แต่ละจุดมีแอป + เครื่องพิมพ์ของตัวเอง (หน้าที่ของเครื่องตั้งใน printerStore):
-// - เคาน์เตอร์: เฉพาะหมวดที่ชื่อขึ้นต้นด้วย COUNTER_CATEGORY_PREFIXES (เครื่องดื่ม/ของฝาก)
-// - ครัว: ที่เหลือทั้งหมด รวมเมนูที่หาหมวดไม่เจอ (หมวดถูกลบ) — แบ่งเป็นส่วน "ครัวใน" ด้านบน
-//   กับ "ครัวนอก" (OUTER_KITCHEN_ITEM_PREFIXES) ด้านล่างสุดเสมอ คั่นด้วยเส้นฉีก
+// ร้านมี 3 จุด แต่ละจุดมีแอป + เครื่องพิมพ์ของตัวเอง (หน้าที่ของเครื่องตั้งใน printerStore):
+// - เคาน์เตอร์ (counter): เฉพาะหมวดที่ชื่อขึ้นต้นด้วย COUNTER_CATEGORY_PREFIXES (เครื่องดื่ม/ของฝาก)
+// - ครัวนอก (outer): เมนูที่ชื่อขึ้นต้นด้วย OUTER_KITCHEN_ITEM_PREFIXES (ข้าวซอย/ขนมจีนน้ำเงี้ยว)
+// - ครัวใน (inner): ที่เหลือทั้งหมด รวมเมนูที่หาหมวดไม่เจอ (หมวดถูกลบ)
+//   ครัวใน/ครัวนอกเป็นคนละใบ (ตัดกระดาษ) แต่ละใบมีหัวใบครบในตัว
+// - หน้าที่สำรองเผื่อเครื่องพิมพ์เสีย: "kitchen" = ครัวใน+ครัวนอกในใบเดียว (ครัวในบน ครัวนอกล่างสุด
+//   คั่นด้วยเส้นฉีก — แบบเดิมตอนมี 2 จุด) และ "all" = ใบเคาน์เตอร์ + ใบครัวแบบ "kitchen"
 // - Add-on แยก (ADDON_CATEGORY_ID เช่นค่าถุง) ติดไปทุกใบ/ทุกส่วนที่พิมพ์ — ออเดอร์ที่มีแต่ add-on
-//   พิมพ์ทั้งสองจุด (ครัว: ส่วนครัวในเท่านั้น) เพราะบางทีใช้ add-on แทนของที่ไม่มีในเมนู
+//   พิมพ์ทุกจุด (เคาน์เตอร์ ครัวใน ครัวนอก; "kitchen" พิมพ์ส่วนครัวในเท่านั้นแบบเดิม) เพราะบางทีใช้
+//   add-on แทนของที่ไม่มีในเมนู
 // - custom add-on ที่ผูกกับเมนู (ci.customNote) อยู่ในรายการเดียวกับเมนูนั้น จึงไปตามเมนูเอง
 // - จุดที่ไม่มีรายการของตัวเองเลยไม่พิมพ์
 // - ยังโหลดหมวดไม่เสร็จ (categories ว่าง) แยกไม่ได้ → ทุกเครื่องพิมพ์ใบ "ทุกรายการ" ใบเดียว
@@ -59,9 +63,9 @@ export interface TicketSection {
   items: CartItem[];
 }
 
-// 1 ใบ = 1 ชิ้นกระดาษที่ตัด/ฉีกออกมา — ใบครัวอาจมี 2 ส่วน (ครัวใน + ครัวนอก) ในใบเดียว
+// 1 ใบ = 1 ชิ้นกระดาษที่ตัด/ฉีกออกมา — ใบ "kitchen" อาจมี 2 ส่วน (ครัวใน + ครัวนอก) ในใบเดียว
 export interface TicketPlan {
-  station: "counter" | "kitchen" | "fallback";
+  station: "counter" | "kitchen" | "inner" | "outer" | "fallback";
   sections: TicketSection[];
 }
 
@@ -87,7 +91,18 @@ export function planTickets(order: Order, role: PrintRole, categories: Category[
   if (outer.length > 0) kitchenSections.push({ kind: "outer", items: [...outer, ...addons] });
   const kitchenPlan: TicketPlan | null = kitchenSections.length > 0 ? { station: "kitchen", sections: kitchenSections } : null;
 
-  const plans = role === "counter" ? [counterPlan] : role === "kitchen" ? [kitchenPlan] : [counterPlan, kitchenPlan];
+  // ครัวใน/ครัวนอกแยกเครื่อง — ออเดอร์ที่มีแต่ add-on พิมพ์ทั้งสองครัว (ต่างจาก "kitchen" ที่พิมพ์แค่ส่วนครัวใน)
+  const innerPlan: TicketPlan | null =
+    inner.length > 0 || addonOnly ? { station: "inner", sections: [{ kind: "inner", items: [...inner, ...addons] }] } : null;
+  const outerPlan: TicketPlan | null =
+    outer.length > 0 || addonOnly ? { station: "outer", sections: [{ kind: "outer", items: [...outer, ...addons] }] } : null;
+
+  const plans =
+    role === "counter" ? [counterPlan]
+    : role === "inner" ? [innerPlan]
+    : role === "outer" ? [outerPlan]
+    : role === "kitchen" ? [kitchenPlan]
+    : [counterPlan, kitchenPlan];
   return plans.filter((p): p is TicketPlan => p !== null);
 }
 
@@ -187,9 +202,14 @@ export function layoutTicket(order: Order, plan: TicketPlan, lang: Language, ban
   return lines;
 }
 
+const NO_ITEMS_MESSAGES: Record<PrintRole, { th: string; en: string }> = {
+  all: { th: "ออเดอร์นี้ไม่มีรายการให้พิมพ์", en: "This order has no items to print." },
+  counter: { th: "ออเดอร์นี้ไม่มีรายการของเคาน์เตอร์", en: "This order has no counter items." },
+  kitchen: { th: "ออเดอร์นี้ไม่มีรายการของครัว", en: "This order has no kitchen items." },
+  inner: { th: "ออเดอร์นี้ไม่มีรายการของครัวใน", en: "This order has no inner kitchen items." },
+  outer: { th: "ออเดอร์นี้ไม่มีรายการของครัวนอก", en: "This order has no outer kitchen items." },
+};
+
 export function noItemsForRoleMessage(role: PrintRole, lang: Language): string {
-  if (lang === "en") {
-    return role === "kitchen" ? "This order has no kitchen items." : role === "counter" ? "This order has no counter items." : "This order has no items to print.";
-  }
-  return role === "kitchen" ? "ออเดอร์นี้ไม่มีรายการของครัว" : role === "counter" ? "ออเดอร์นี้ไม่มีรายการของเคาน์เตอร์" : "ออเดอร์นี้ไม่มีรายการให้พิมพ์";
+  return NO_ITEMS_MESSAGES[role][lang];
 }

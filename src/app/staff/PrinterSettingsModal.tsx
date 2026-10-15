@@ -198,35 +198,54 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
           </button>
         )}
 
-        {/* หน้าที่ของเครื่องนี้ — ร้านมี 2 จุด (เคาน์เตอร์/ครัว) แต่ละจุดพิมพ์เฉพาะรายการของตัวเอง
-            จำไว้ในเครื่องนี้ (printerStore) ค่าเริ่มต้น "ทั้งหมด" สำหรับวันที่ใช้เครื่องเดียว */}
+        {/* หน้าที่ของเครื่องนี้ — ร้านมี 3 จุด (เคาน์เตอร์/ครัวใน/ครัวนอก) แต่ละจุดพิมพ์เฉพาะรายการของตัวเอง
+            แถวล่างเป็นตัวเลือกสำรองเผื่อเครื่องพิมพ์เสีย จำไว้ในเครื่องนี้ (printerStore) ค่าเริ่มต้น "ทั้งหมด" */}
         {selected && (
           <div className="mb-4">
             <div className="text-xs font-medium text-foreground mb-1.5">
               {lang === "en" ? "This device prints" : "เครื่องนี้พิมพ์"}
             </div>
-            <div className="grid grid-cols-3 gap-1.5">
-              {([
-                ["all", lang === "en" ? "Everything" : "ทั้งหมด"],
+            {([
+              [
                 ["counter", lang === "en" ? "Counter" : "เคาน์เตอร์"],
-                ["kitchen", lang === "en" ? "Kitchen" : "ครัว"],
-              ] as [PrintRole, string][]).map(([value, label]) => (
-                <button
-                  key={value}
-                  onClick={() => handleRole(value)}
-                  className={`py-2 rounded-xl border text-sm transition-all ${role === value ? "border-primary bg-primary/10 text-foreground font-semibold" : "border-border text-muted-foreground hover:bg-muted"
-                    }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+                ["inner", lang === "en" ? "Inner kitchen" : "ครัวใน"],
+                ["outer", lang === "en" ? "Outer kitchen" : "ครัวนอก"],
+              ],
+              [
+                ["kitchen", lang === "en" ? "Kitchen (inner+outer)" : "ครัว (รวมใน+นอก)"],
+                ["all", lang === "en" ? "Everything" : "พิมพ์ทั้งหมด"],
+              ],
+            ] as [PrintRole, string][][]).map((row, rowIdx) => (
+              <div key={rowIdx}>
+                {rowIdx === 1 && (
+                  <div className="text-[11px] text-muted-foreground mt-2 mb-1">
+                    {lang === "en" ? "Backup (if a printer is down)" : "สำรอง (เผื่อเครื่องพิมพ์เสีย)"}
+                  </div>
+                )}
+                <div className={`grid gap-1.5 ${row.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+                  {row.map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => handleRole(value)}
+                      className={`py-2 rounded-xl border text-sm transition-all ${role === value ? "border-primary bg-primary/10 text-foreground font-semibold" : "border-border text-muted-foreground hover:bg-muted"
+                        }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
             <p className="text-xs text-muted-foreground mt-1.5">
               {role === "counter"
                 ? (lang === "en" ? "Drinks and souvenirs only." : "เฉพาะเครื่องดื่มและของฝาก")
-                : role === "kitchen"
-                  ? (lang === "en" ? "Food only — inner kitchen on top, khao soi / khanom jeen nam ngiao at the bottom to tear off." : "เฉพาะอาหาร — ครัวในอยู่บน ข้าวซอย/ขนมจีนน้ำเงี้ยว (ครัวนอก) อยู่ล่างให้ฉีกแยก")
-                  : (lang === "en" ? "Counter ticket followed by kitchen ticket (single-device setup)." : "ใบเคาน์เตอร์ต่อด้วยใบครัว (ใช้เครื่องเดียว)")}
+                : role === "inner"
+                  ? (lang === "en" ? "Food except khao soi / khanom jeen nam ngiao." : "อาหารทั้งหมด ยกเว้นข้าวซอย/ขนมจีนน้ำเงี้ยว")
+                  : role === "outer"
+                    ? (lang === "en" ? "Khao soi / khanom jeen nam ngiao only." : "เฉพาะข้าวซอย/ขนมจีนน้ำเงี้ยว")
+                    : role === "kitchen"
+                      ? (lang === "en" ? "All food — inner kitchen on top, khao soi / khanom jeen nam ngiao at the bottom to tear off." : "อาหารทั้งหมด — ครัวในอยู่บน ข้าวซอย/ขนมจีนน้ำเงี้ยว (ครัวนอก) อยู่ล่างให้ฉีกแยก")
+                      : (lang === "en" ? "Counter ticket followed by kitchen ticket (single-device setup)." : "ใบเคาน์เตอร์ต่อด้วยใบครัว (ใช้เครื่องเดียว)")}
             </p>
           </div>
         )}
