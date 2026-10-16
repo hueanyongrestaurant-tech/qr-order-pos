@@ -17,7 +17,6 @@
 // ลูกค้า — มือถือที่นาฬิกาเพี้ยนจึงไม่ทำให้ลูกค้าใหม่โดนบล็อกผิดๆ
 
 export const TABLE_SESSION_MAX_MS = 4 * 60 * 60 * 1000; // หน้าเว็บลูกค้าหมดอายุเองหลังเปิดไว้ 4 ชม.
-export const NEW_CUSTOMER_WINDOW_MS = 15 * 60 * 1000; // ป้าย "ลูกค้าใหม่?" ฝั่งพนักงาน: ออเดอร์ที่เข้ามาภายใน 15 นาทีหลังปิดบิล
 export const CLOSURE_CHECK_TIMEOUT_MS = 4000; // อ่านเวลาปิดบิลไม่ทันในเวลานี้ = ปล่อยสั่งได้ตามปกติ
 
 export type ExpiredReason = "closed" | "timeout" | "unknown";
@@ -107,11 +106,4 @@ export function planTableClose(
   const total = toClose.reduce((s, d) => s + d.total, 0);
   if (!sameSet || total !== expected.total) return { kind: "changed" };
   return { kind: "ok", toClose };
-}
-
-// ป้าย "ลูกค้าใหม่?" — ออเดอร์ที่เข้ามาไม่นานหลังโต๊ะเพิ่งปิดบิล (อาจเป็นลูกค้าคนก่อนที่ยังสั่งได้ หรือลูกค้าใหม่จริง)
-export function isLikelyNewCustomer(orderAtMs: number, closedAtMs: number | undefined): boolean {
-  if (!closedAtMs) return false;
-  const gap = orderAtMs - closedAtMs;
-  return gap >= 0 && gap <= NEW_CUSTOMER_WINDOW_MS;
 }

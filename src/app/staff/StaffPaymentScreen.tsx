@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, X } from "lucide-react";
+import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, ConfirmOptions, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
@@ -174,9 +174,8 @@ function PaymentCard({
           <div className="text-left">
             <div className="text-foreground text-sm font-medium">{subtitle}</div>
             {hasPending && (
-              <div className="mt-0.5 inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
-                <AlertTriangle size={12} />
-                {lang === "en" ? `${pending!.length} unserved` : `ค้างเสิร์ฟ ${pending!.length} รายการ`}
+              <div className="mt-0.5 text-xs font-semibold text-amber-700">
+                {lang === "en" ? `${pending!.length} not served` : `ยังไม่เสิร์ฟ ${pending!.length}`}
               </div>
             )}
           </div>
@@ -254,13 +253,8 @@ function PaymentCard({
 
           {hasPending && (
             <div className="mb-3 rounded-xl border-2 border-amber-400 bg-amber-50 p-3">
-              <div className="flex items-start gap-1.5 text-amber-800 text-sm font-semibold mb-2">
-                <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
-                <span>
-                  {lang === "en"
-                    ? "Not served yet — serve or cancel before closing the bill (not in the total above)"
-                    : "ยังไม่เสิร์ฟ — เสิร์ฟหรือยกเลิกก่อนปิดบิล (ยังไม่รวมในยอดด้านบน)"}
-                </span>
+              <div className="text-amber-800 text-sm font-semibold mb-2">
+                {lang === "en" ? "Not served yet" : "ยังไม่เสิร์ฟ"}
               </div>
               <div className="space-y-2">
                 {pending!.map(({ order, ci }) => (

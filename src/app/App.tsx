@@ -927,17 +927,6 @@ export default function App() {
     return unsubscribeReasons;
   }, [everAuthed]);
 
-  // เวลาปิดบิลล่าสุดของแต่ละโต๊ะ — ป้าย "ลูกค้าใหม่?" บนหน้าออเดอร์ (doc เปลี่ยนเฉพาะตอนปิดบิล อ่านน้อย)
-  const [tableClosedAt, setTableClosedAt] = useState<Record<string, number>>({});
-  useEffect(() => {
-    if (getTableFromUrl() !== null || !everAuthed) return;
-    return onSnapshot(doc(db, "status", TABLE_CLOSURES_DOC), (snap) => {
-      const raw: Record<string, any> = snap.data()?.closedAt ?? {};
-      // serverTimestamp ที่ยังเขียนไม่เสร็จอ่านได้ null — ใช้เวลาเครื่องแทนไปก่อน
-      setTableClosedAt(Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v?.toMillis ? v.toMillis() : Date.now()])));
-    });
-  }, [everAuthed]);
-
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
   const [staffTab, setStaffTab] = useState<StaffTab>("orders");
@@ -1700,9 +1689,9 @@ export default function App() {
       if (err instanceof CloseTableError) {
         setNotice(
           err.code === "pending"
-            ? (en ? `Table ${tableNum} still has unserved items — serve or cancel them before closing the bill.` : `โต๊ะ ${tableNum} ยังมีรายการที่ยังไม่เสิร์ฟ — เสิร์ฟหรือยกเลิกก่อนปิดบิล`)
+            ? (en ? `Table ${tableNum} has items not served yet. Serve all items first.` : `โต๊ะ ${tableNum} ยังเสิร์ฟไม่ครบ เสิร์ฟให้ครบก่อนปิดบิล`)
             : err.code === "changed"
-              ? (en ? `Table ${tableNum}'s bill just changed (another device). Check the total and close again.` : `บิลโต๊ะ ${tableNum} เพิ่งเปลี่ยน (จากอีกเครื่อง) — ตรวจยอดอีกครั้งแล้วกดปิดบิลใหม่`)
+              ? (en ? `Table ${tableNum}'s bill just changed. Check the total and close again.` : `บิลโต๊ะ ${tableNum} เพิ่งมีการเปลี่ยนแปลง ตรวจยอดแล้วกดปิดบิลอีกครั้ง`)
               : (en ? `Table ${tableNum}'s bill is already closed.` : `บิลโต๊ะ ${tableNum} ถูกปิดไปแล้ว`),
         );
       } else {
@@ -2258,7 +2247,6 @@ export default function App() {
             onStartManualOrder={handleStartManualOrder}
             onMoveTable={setMoveFromTable}
             categories={allCategories}
-            tableClosedAt={tableClosedAt}
           />
         </Suspense>
       );
