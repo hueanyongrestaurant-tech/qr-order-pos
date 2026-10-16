@@ -4,6 +4,7 @@ import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { compareTables, formatClock, liveItems, orderTotal } from "../utils";
+import { isLikelyNewCustomer } from "../tableSession";
 import { StaffHeader } from "./StaffHeader";
 
 // แถบย้อนกลับค้างไว้ 10 วิ หลังกดเสิร์ฟ/พร้อมรับ/ยกเลิกรายการ
@@ -54,9 +55,10 @@ interface StaffOrdersProps {
   onStartManualOrder: () => void;
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
+  tableClosedAt: Record<string, number>; // เวลาปิดบิลล่าสุดของแต่ละโต๊ะ (ms) — ใช้ขึ้นป้าย "ลูกค้าใหม่?"
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories, tableClosedAt }: StaffOrdersProps) {
   const t = T[lang];
 
   // กดเสิร์ฟแล้วย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลาหลายวิ
@@ -497,6 +499,12 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                         </div>
                         <div>
                           <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t.tableLabel}</div>
+                          {/* เข้ามาไม่นานหลังโต๊ะนี้เพิ่งปิดบิล — อาจเป็นลูกค้าคนก่อนที่เปิดหน้าเว็บค้างไว้ ให้พนักงานดูโต๊ะจริงก่อนทำ */}
+                          {isLikelyNewCustomer(order.timestamp.getTime(), tableClosedAt[order.tableNumber]) && (
+                            <div className="inline-flex items-center px-1.5 py-0.5 mb-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-300 text-[11px] font-semibold whitespace-nowrap">
+                              {en ? "New customer?" : "ลูกค้าใหม่?"}
+                            </div>
+                          )}
                           <div className="flex items-center gap-1 text-amber-600 text-xs font-medium">
                             <Clock size={12} />
                             <span>{formatClock(order.timestamp)}</span>

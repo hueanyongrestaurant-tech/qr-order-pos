@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, ConfirmOptions, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
-import { cartItemKey, cartItemTotal, compareTables, formatOptionDetails, liveItemCount, orderTotal } from "../utils";
+import { cartItemKey, cartItemTotal, compareTables, formatClock, formatOptionDetails, liveItemCount, orderTotal, unservedItems } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 import type { ReceiptData } from "./ticket";
 import { useSelectedPrinterAddress } from "./printerStore";
@@ -13,8 +13,11 @@ import { useSelectedPrinterAddress } from "./printerStore";
 interface StaffPaymentProps {
   lang: Language;
   orders: Order[];
-  onCloseTable: (n: string, payment: PaymentInput) => void;
+  // expected = ออเดอร์/ยอดที่พนักงานเห็นบนการ์ดตอนกด — App ปิดบิลเฉพาะเมื่อข้อมูลบน server ยังตรงกัน
+  onCloseTable: (n: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => void;
   onCloseTakeaway: (orderId: string, payment: PaymentInput) => void;
+  onServeItem: (orderId: string, cartId: string) => Promise<void>;
+  onRemoveItem: (orderId: string, cartId: string) => void; // App ถามยืนยัน/เหตุผลเอง แล้ว void รายการ
   onAdjustItem: (contributingOrders: Order[], key: string, delta: number) => void;
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
@@ -47,6 +50,10 @@ interface PaymentCardProps {
   onAdjust: (key: string, delta: number) => void;
   total2: number;
   closeAction: (payment: PaymentInput) => void;
+  // รายการของโต๊ะนี้ที่ยังไม่เสิร์ฟ (รอบที่ยัง in-progress) — มีอย่างน้อย 1 รายการ = ปิดบิลไม่ได้
+  pending?: { order: Order; ci: CartItem }[];
+  onServePending?: (order: Order, ci: CartItem) => void;
+  onVoidPending?: (order: Order, ci: CartItem) => void;
   billName: string; // ชื่อบิลในหน้าต่างยืนยันรับเงิน เช่น "โต๊ะ 5" / "T-3"
   onAskConfirm: StaffPaymentProps["onAskConfirm"];
   restoreAction?: (ci: CartItem) => void; // แตะรายการที่ยกเลิกแล้ว → ปุ่มคืนรายการ
@@ -111,7 +118,7 @@ export function SplitAmountField({
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, billName, onAskConfirm, restoreAction, cancelAction, moveAction, printReceiptAction, printDisabled,
+  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, pending, onServePending, onVoidPending, billName, onAskConfirm, restoreAction, cancelAction, moveAction, printReceiptAction, printDisabled,
   expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
@@ -126,10 +133,12 @@ function PaymentCard({
   const splitTransferValid = splitEntry.value !== "" && transferNum > 0 && transferNum < total2;
   const cashDue = paymentMethod === "cash" ? total2 : paymentMethod === "split" ? total2 - transferNum : 0;
   const cashNum = Number(cashInput);
-  const canClose =
+  const hasPending = !!pending && pending.length > 0;
+  const paymentReady =
     paymentMethod === "transfer" ||
     (paymentMethod === "cash" && cashInput !== "" && cashNum >= cashDue) ||
     (paymentMethod === "split" && splitTransferValid && cashInput !== "" && cashNum >= cashDue);
+  const canClose = paymentReady && !hasPending;
   const payment: PaymentInput = {
     method: paymentMethod,
     ...(paymentMethod !== "transfer" ? { cashReceived: Number(cashInput || 0) } : {}),
@@ -164,6 +173,12 @@ function PaymentCard({
           </div>
           <div className="text-left">
             <div className="text-foreground text-sm font-medium">{subtitle}</div>
+            {hasPending && (
+              <div className="mt-0.5 inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
+                <AlertTriangle size={12} />
+                {lang === "en" ? `${pending!.length} unserved` : `ค้างเสิร์ฟ ${pending!.length} รายการ`}
+              </div>
+            )}
           </div>
         </div>
         <div className="font-display font-bold text-lg text-primary">{t.thb}{total}</div>
@@ -236,6 +251,52 @@ function PaymentCard({
               </div>
             ))}
           </div>
+
+          {hasPending && (
+            <div className="mb-3 rounded-xl border-2 border-amber-400 bg-amber-50 p-3">
+              <div className="flex items-start gap-1.5 text-amber-800 text-sm font-semibold mb-2">
+                <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+                <span>
+                  {lang === "en"
+                    ? "Not served yet — serve or cancel before closing the bill (not in the total above)"
+                    : "ยังไม่เสิร์ฟ — เสิร์ฟหรือยกเลิกก่อนปิดบิล (ยังไม่รวมในยอดด้านบน)"}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {pending!.map(({ order, ci }) => (
+                  <div key={`${order.id}:${ci.cartId}`} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-foreground text-sm font-medium truncate">
+                        {ci.quantity}× {lang === "en" ? ci.item.name.en || ci.item.name.th : ci.item.name.th}
+                      </div>
+                      <div className="text-muted-foreground text-xs">
+                        {lang === "en" ? "ordered" : "สั่งเมื่อ"} {formatClock(order.timestamp)}
+                        {formatOptionDetails(ci, lang) ? ` · ${formatOptionDetails(ci, lang)}` : ""}
+                      </div>
+                    </div>
+                    {onVoidPending && (
+                      <button
+                        onClick={() => onVoidPending(order, ci)}
+                        className="min-h-[40px] px-3 rounded-lg inline-flex items-center gap-1 text-xs font-semibold text-destructive bg-card border-2 border-destructive/30 active:scale-95 transition-all"
+                      >
+                        <X size={13} />
+                        {lang === "en" ? "Cancel" : "ยกเลิก"}
+                      </button>
+                    )}
+                    {onServePending && (
+                      <button
+                        onClick={() => onServePending(order, ci)}
+                        className="min-h-[40px] px-3 rounded-lg inline-flex items-center gap-1 text-xs font-semibold bg-secondary text-secondary-foreground active:scale-95 transition-all"
+                      >
+                        <Check size={13} />
+                        {t.serveItem}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(cancelAction || moveAction) && (
             <div className="flex items-center justify-between gap-2 mb-3">
@@ -345,7 +406,7 @@ function PaymentCard({
               className="flex-1 bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Check size={16} />
-              {t.closeTable}
+              {hasPending ? (lang === "en" ? "Serve all items first" : "เสิร์ฟให้ครบก่อนปิดบิล") : t.closeTable}
             </button>
           </div>
         </div>
@@ -355,7 +416,7 @@ function PaymentCard({
 }
 
 export function StaffPaymentScreen({
-  lang, orders, onCloseTable, onCloseTakeaway, onAdjustItem, onAdjustTakeawayItem,
+  lang, orders, onCloseTable, onCloseTakeaway, onServeItem, onRemoveItem, onAdjustItem, onAdjustTakeawayItem,
   onCancelOrder, onCancelOrders, onAskConfirm, onRestoreItem, onNotice, onMoveTable, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
@@ -400,6 +461,22 @@ export function StaffPaymentScreen({
     );
   };
 
+  // เสิร์ฟรายการที่ค้างจากการ์ดจ่ายเงิน — ใช้หน้าต่างยืนยันแบบเดียวกับหน้าออเดอร์
+  const askServePending = (order: Order, ci: CartItem) => {
+    const en = lang === "en";
+    const name = (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
+    const table = `${t.tableLabel} ${order.tableNumber}`;
+    onAskConfirm(
+      en ? `Serve ${name} (${table})?` : `เสิร์ฟ ${name} (${table}) ใช่ไหม?`,
+      () => {
+        onServeItem(order.id, ci.cartId).catch((err: any) =>
+          onNotice((en ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err))),
+        );
+      },
+      { cancelLabel: en ? "No" : "ไม่", confirmLabel: t.serveItem, tone: "success" },
+    );
+  };
+
   const select = (key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
     setPaymentMethod("cash");
@@ -432,6 +509,10 @@ export function StaffPaymentScreen({
       total: tableOrders.reduce((s, o) => s + orderTotal(o), 0),
       itemCount: allItems.reduce((s, ci) => s + ci.quantity, 0),
       rounds: tableOrders.length,
+      // รอบที่ยังเตรียมอยู่ของโต๊ะเดียวกัน — ไม่รวมในยอด แต่ต้องจัดการให้หมดก่อนปิดบิล
+      pending: orders
+        .filter((o) => o.tableNumber === tn && !o.isTakeaway && o.status === "in-progress")
+        .flatMap((o) => unservedItems(o).map((ci) => ({ order: o, ci }))),
     };
   });
 
@@ -466,7 +547,12 @@ export function StaffPaymentScreen({
                         items={g.items}
                         voidedItems={g.voidedItems}
                         onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
-                        closeAction={(payment) => onCloseTable(g.tableNumber, payment)}
+                        closeAction={(payment) =>
+                          onCloseTable(g.tableNumber, payment, { orderIds: g.orders.map((o) => o.id), total: g.total })
+                        }
+                        pending={g.pending}
+                        onServePending={askServePending}
+                        onVoidPending={(order, ci) => onRemoveItem(order.id, ci.cartId)}
                         billName={`${t.tableLabel} ${g.tableNumber}`}
                         onAskConfirm={onAskConfirm}
                         restoreAction={(ci) => {

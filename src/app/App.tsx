@@ -115,6 +115,16 @@ import { ItemDetailScreen } from "./customer/ItemDetailScreen";
 import { CartScreen } from "./customer/CartScreen";
 import { LinkExpiredScreen } from "./customer/LinkExpiredScreen";
 import { OrderSentScreen } from "./customer/OrderSentScreen";
+import {
+  CLOSURE_CHECK_TIMEOUT_MS,
+  checkClosure,
+  decideSessionOnLoad,
+  isSessionTimedOut,
+  planTableClose,
+  type ExpiredReason,
+  type SessionStart,
+  type TableSession,
+} from "./tableSession";
 
 // ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
 // แต่ละ Staff*Screen import ตรงจากไฟล์ตัวเอง แยกเป็นคนละ JS chunk ต่อหน้าจอ
@@ -146,6 +156,74 @@ class MoveTableError extends Error {
 // (query เช็คโต๊ะปลายทางอยู่นอก read set ของ transaction ถ้าไม่มี guard สองเครื่องจะเห็นว่าว่างทั้งคู่)
 // อยู่ใน counters/ เพราะ rules เดิมให้พนักงานอ่าน/เขียนได้อยู่แล้ว ไม่ต้องแก้ rules
 const TABLE_MOVE_GUARD = "table-moves";
+
+// ปิดบิลโต๊ะไม่ได้ — โยนจากใน transaction แล้วแจ้งพนักงานตาม code (ดู planTableClose)
+class CloseTableError extends Error {
+  code: "pending" | "changed" | "nothing";
+  constructor(code: "pending" | "changed" | "nothing") {
+    super(code);
+    this.code = code;
+  }
+}
+// เวลาปิดบิลล่าสุดของแต่ละโต๊ะ { closedAt: { "1-3": Timestamp } } — หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ดู tableSession.ts)
+// อยู่ใน status/ เพราะ rules เดิมให้ลูกค้าอ่าน + พนักงานเขียนได้อยู่แล้ว ไม่ต้องแก้ rules
+// (ห้ามใส่ใน status/live — doc นั้นถูก setDoc ทับทั้งก้อนโดยตัวนับร้านยุ่ง)
+const TABLE_CLOSURES_DOC = "tableClosures";
+
+function readTableSession(): TableSession | null {
+  try {
+    const raw = sessionStorage.getItem(`${STORAGE_PREFIX}:tableSession`);
+    return raw === null ? null : (JSON.parse(raw) as TableSession);
+  } catch {
+    return null;
+  }
+}
+function writeTableSession(session: TableSession) {
+  try {
+    sessionStorage.setItem(`${STORAGE_PREFIX}:tableSession`, JSON.stringify(session));
+  } catch {
+    // sessionStorage ใช้ไม่ได้ — รอบนั่งจะเริ่มใหม่ทุกครั้งที่โหลดหน้า (รีเฟรช = เจอ s ที่ไม่ตรง → ให้สแกนใหม่)
+  }
+}
+
+// ตัดสินรอบนั่งครั้งเดียวต่อการโหลดหน้า (memo ไว้ — StrictMode เรียก initializer ซ้ำได้)
+// รอบใหม่: จด session ลง sessionStorage แล้วเขียน s ลง URL ให้รีเฟรช/กู้แท็บกลับมาเจอรอบเดิม
+let memoSessionStart: SessionStart | null | undefined;
+function getInitialSessionStart(): SessionStart | null {
+  if (memoSessionStart !== undefined) return memoSessionStart;
+  const table = getTableFromUrl();
+  if (!table) return (memoSessionStart = null);
+  let urlSessionId: string | null = null;
+  try {
+    urlSessionId = new URLSearchParams(window.location.search).get("s");
+  } catch { /* ignore */ }
+  const start = decideSessionOnLoad({ table, urlSessionId, stored: readTableSession(), now: Date.now(), newId: uid });
+  if (start.action === "new") {
+    writeTableSession(start.session);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("s", start.session.id);
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch { /* ignore */ }
+  } else if (start.action === "expired" && start.session && !start.session.expired) {
+    writeTableSession({ ...start.session, expired: start.reason });
+  }
+  return (memoSessionStart = start);
+}
+
+// closedAt (ms) ล่าสุดของโต๊ะ — 0 = ไม่เคยปิดบิล, "error" = อ่านไม่ได้/ไม่ทันเวลา (ผู้เรียกต้องปล่อยผ่าน)
+async function fetchTableClosedAt(table: string): Promise<number | "error"> {
+  try {
+    const snap = await Promise.race([
+      getDoc(doc(db, "status", TABLE_CLOSURES_DOC)),
+      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("timeout")), CLOSURE_CHECK_TIMEOUT_MS)),
+    ]);
+    const ts = snap.data()?.closedAt?.[table];
+    return ts?.toMillis ? ts.toMillis() : 0;
+  } catch {
+    return "error";
+  }
+}
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
 // (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
@@ -403,6 +481,8 @@ export default function App() {
   // เชื่อ session ที่บันทึกไว้ได้ก็ต่อเมื่อเป็นโต๊ะเดียวกับที่บันทึกไว้เท่านั้น (กันเคสสแกนโต๊ะอื่นในแท็บเดิม)
   const savedCustomerTable = initialTableFromUrl ? readSession<string>("customerTable") : null;
   const isResumingCustomerSession = !!initialTableFromUrl && savedCustomerTable === initialTableFromUrl;
+  // รอบนั่งโต๊ะของลูกค้า (ดู tableSession.ts) — null = ฝั่งพนักงาน
+  const initialSessionStart = getInitialSessionStart();
 
   const [lang, setLang] = useState<Language>("th");
   const langRef = useRef(lang);
@@ -410,6 +490,7 @@ export default function App() {
   const isFirstOrdersSnapshotRef = useRef(true);
   const [view, setView] = useState<View>(() => {
     if (!initialTableFromUrl) return "staff-login"; // ฝั่งพนักงาน: effect ของ onAuthStateChanged จะจัดหน้าที่ถูกต้องให้เอง
+    if (initialSessionStart?.action === "expired") return "link-expired";
     if (isResumingCustomerSession) {
       const savedView = readSession<View>("customerView");
       if (savedView && CUSTOMER_RESUMABLE_VIEWS.includes(savedView)) return savedView;
@@ -417,6 +498,19 @@ export default function App() {
     return "menu";
   });
   const [tableNumber, setTableNumber] = useState<string | null>(() => initialTableFromUrl);
+  const tableSessionRef = useRef<TableSession | null>(initialSessionStart?.session ?? null);
+  const [expiredReason, setExpiredReason] = useState<ExpiredReason | null>(() =>
+    initialSessionStart?.action === "expired" ? initialSessionStart.reason : null,
+  );
+  // ตะกร้าไม่ล้าง — ลูกค้าที่ยังนั่งอยู่จริงสแกนใหม่ในแท็บเดิมแล้วได้ตะกร้าเดิมคืน (ลูกค้าเก่าที่ไม่อยู่ร้านสแกนใหม่ไม่ได้อยู่แล้ว)
+  const expireTableSession = (reason: ExpiredReason) => {
+    if (tableSessionRef.current) {
+      tableSessionRef.current = { ...tableSessionRef.current, expired: reason };
+      writeTableSession(tableSessionRef.current);
+    }
+    setExpiredReason(reason);
+    setView("link-expired");
+  };
 
   // Customer state
   const [cart, setCart] = useState<CartItem[]>(() =>
@@ -598,6 +692,34 @@ export default function App() {
       writeSession("customerSelectedItemId", selectedItem?.id ?? null);
     }
   }, [tableNumber, view, cart, selectedItem]);
+
+  // รอบนั่งใหม่: อ่านเวลาปิดบิลล่าสุดของโต๊ะเก็บเป็น baseline (1 read ต่อการสแกน) — ปิดบิลหลังจากนี้ = รอบนี้หมดอายุ
+  // เฉพาะรอบที่เพิ่งเริ่มในการโหลดนี้ — รอบที่กู้กลับมา (รีเฟรช/แท็บค้าง) ห้ามอ่าน baseline ใหม่ ไม่งั้นเวลาปิดบิล
+  // ที่เกิดระหว่างนั้นจะกลายเป็น baseline แล้วแท็บค้างสั่งได้
+  useEffect(() => {
+    if (initialSessionStart?.action !== "new") return;
+    let cancelled = false;
+    fetchTableClosedAt(initialSessionStart.session.table).then((closedAt) => {
+      const cur = tableSessionRef.current;
+      if (cancelled || closedAt === "error" || !cur || cur.baselineClosedAt !== undefined) return;
+      tableSessionRef.current = { ...cur, baselineClosedAt: closedAt };
+      writeTableSession(tableSessionRef.current);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // เปิดหน้าค้างไว้เกิน 4 ชม. แล้วกลับมาดู → หน้าให้สแกนใหม่ทันที (ไม่ต้องรอกดสั่ง)
+  useEffect(() => {
+    if (!initialSessionStart) return;
+    const onVisible = () => {
+      const cur = tableSessionRef.current;
+      if (document.visibilityState === "visible" && cur && !cur.expired && isSessionTimedOut(cur, Date.now())) {
+        expireTableSession("timeout");
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // iOS Safari (โดยเฉพาะเปิดผ่านแอปกล้อง/แอปแชทที่ใช้ in-app browser) มักดึงหน้าที่ถูก
   // "แช่แข็ง" ไว้ใน back-forward cache กลับมาแสดงโดยไม่รันโค้ดใหม่เลย ทำให้ Firestore
@@ -805,6 +927,17 @@ export default function App() {
     return unsubscribeReasons;
   }, [everAuthed]);
 
+  // เวลาปิดบิลล่าสุดของแต่ละโต๊ะ — ป้าย "ลูกค้าใหม่?" บนหน้าออเดอร์ (doc เปลี่ยนเฉพาะตอนปิดบิล อ่านน้อย)
+  const [tableClosedAt, setTableClosedAt] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !everAuthed) return;
+    return onSnapshot(doc(db, "status", TABLE_CLOSURES_DOC), (snap) => {
+      const raw: Record<string, any> = snap.data()?.closedAt ?? {};
+      // serverTimestamp ที่ยังเขียนไม่เสร็จอ่านได้ null — ใช้เวลาเครื่องแทนไปก่อน
+      setTableClosedAt(Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v?.toMillis ? v.toMillis() : Date.now()])));
+    });
+  }, [everAuthed]);
+
   const [selectedPayTable, setSelectedPayTable] = useState<string | null>(null);
   const [loginError, setLoginError] = useState(false);
   const [staffTab, setStaffTab] = useState<StaffTab>("orders");
@@ -992,6 +1125,22 @@ export default function App() {
     return true;
   };
 
+  // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 4 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
+  // อ่านเวลาปิดบิลไม่ได้/ไม่ทัน → ปล่อยสั่งได้ตามปกติ (ไม่ให้ปัญหาเน็ตทำให้ลูกค้าจริงสั่งไม่ได้)
+  const tableSessionExpiredBeforeOrder = async (): Promise<boolean> => {
+    const session = tableSessionRef.current;
+    if (!session) return false;
+    if (session.expired) { expireTableSession(session.expired); return true; }
+    if (isSessionTimedOut(session, Date.now())) { expireTableSession("timeout"); return true; }
+    const result = checkClosure(session, await fetchTableClosedAt(session.table));
+    if (result.session !== session) {
+      tableSessionRef.current = result.session;
+      writeTableSession(result.session);
+    }
+    if (result.expired) { expireTableSession("closed"); return true; }
+    return false;
+  };
+
   const handleConfirmOrder = async () => {
     // กันกดปุ่ม/แตะจอซ้ำเร็ว ๆ (พบบ่อยทั้ง iOS และ Android) ที่ทำให้ยิง addDoc สองครั้ง
     // กลายเป็นออเดอร์เบิ้ล — เช็คด้วย ref เพราะ state อาจอัปเดตไม่ทันถ้าแตะรัวมาก
@@ -1001,6 +1150,7 @@ export default function App() {
     setIsSubmittingOrder(true);
     try {
       if (await cartHasUnavailableItems(cart)) return;
+      if (await tableSessionExpiredBeforeOrder()) return;
       // JSON round-trip: ตัดฟิลด์ undefined ให้ Firestore | .map(stripItemPhoto): ตัดรูป base64 ที่ทำ doc บวม
       const cleanItems = (JSON.parse(JSON.stringify(cart)) as CartItem[]).map(stripItemPhoto);
       await addDoc(collection(db, "orders"), {
@@ -1504,26 +1654,61 @@ export default function App() {
     }
   };
 
-  const handleCloseTable = async (tableNum: string, payment: PaymentInput) => {
-    // orders เรียงเก่า→ใหม่อยู่แล้ว (listener sort ตาม timestamp) — ยอดโอนของ split จึงถูกเติมลงรอบแรกๆ ก่อน
-    const toClose = orders.filter(
-      (o) => o.tableNumber === tableNum && o.status === "awaiting-payment"
-    );
-    if (toClose.length === 0) return;
+  // ปิดบิลโต๊ะ — อ่านออเดอร์ค้างของโต๊ะใหม่จาก server ใน transaction แล้วปิดทุกรอบพร้อมกัน (สำเร็จหมดหรือไม่ปิดเลย)
+  // ไม่ยอมปิดถ้า: ยังมีรอบที่ยังไม่เสิร์ฟ (ไม่งั้นรอบนั้นค้างไปรวมกับบิลลูกค้าคนถัดไป) หรือชุดออเดอร์/ยอดไม่ตรงกับ
+  // ที่พนักงานเห็นบนการ์ด (expected) เช่นอีกเครื่องเพิ่งเสิร์ฟรอบใหม่เข้ามา — เงินที่รับมาคิดจากยอดบนจอ
+  // พร้อมกันนั้นจดเวลาปิดบิลของโต๊ะลง status/tableClosures ให้หน้าเว็บลูกค้าคนเก่าที่เปิดค้างสั่งต่อไม่ได้
+  const handleCloseTable = async (tableNum: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => {
     const batchId = uid();
-    const transferShares = payment.method === "split"
-      ? allocateTransfer(toClose.map(orderTotal), payment.transferAmount ?? 0)
-      : [];
-    await Promise.all(
-      toClose.map((o, i) =>
-        updateDoc(doc(db, "orders", o.id), {
+    await runTransaction(db, async (tx) => {
+      // อ่าน+เขียน closures doc ทุกครั้ง = guard: สองเครื่องปิดโต๊ะเดียวกันพร้อมกันจะชนกันแล้ว retry
+      // (retry รัน query ใหม่ เห็นว่าอีกเครื่องปิดไปแล้ว → "nothing")
+      const closuresRef = doc(db, "status", TABLE_CLOSURES_DOC);
+      await tx.get(closuresRef);
+      const snap = await getDocs(query(
+        collection(db, "orders"),
+        where("tableNumber", "==", tableNum),
+        where("status", "in", ["in-progress", "awaiting-payment"]),
+      ));
+      const fresh = (await Promise.all(snap.docs.map((d) => tx.get(doc(db, "orders", d.id))))).filter((s) => s.exists());
+      const plan = planTableClose(
+        tableNum,
+        fresh.map((s) => {
+          const o = mapOrderDoc(s.id, s.data());
+          return { id: s.id, tableNumber: o.tableNumber, status: o.status, isTakeaway: o.isTakeaway, createdAtMs: o.timestamp.getTime(), total: orderTotal(o) };
+        }),
+        expected,
+      );
+      if (plan.kind !== "ok") throw new CloseTableError(plan.kind);
+      const transferShares = payment.method === "split"
+        ? allocateTransfer(plan.toClose.map((o) => o.total), payment.transferAmount ?? 0)
+        : [];
+      plan.toClose.forEach((o, i) =>
+        tx.update(doc(db, "orders", o.id), {
           status: "paid",
           paymentBatchId: batchId,
           ...paymentFields(payment, transferShares[i]),
-        })
-      )
-    );
+        }),
+      );
+      tx.set(closuresRef, { closedAt: { [tableNum]: serverTimestamp() } }, { merge: true });
+    });
     setSelectedPayTable(null);
+  };
+  const closeTableWithNotice = (tableNum: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => {
+    const en = lang === "en";
+    handleCloseTable(tableNum, payment, expected).catch((err) => {
+      if (err instanceof CloseTableError) {
+        setNotice(
+          err.code === "pending"
+            ? (en ? `Table ${tableNum} still has unserved items — serve or cancel them before closing the bill.` : `โต๊ะ ${tableNum} ยังมีรายการที่ยังไม่เสิร์ฟ — เสิร์ฟหรือยกเลิกก่อนปิดบิล`)
+            : err.code === "changed"
+              ? (en ? `Table ${tableNum}'s bill just changed (another device). Check the total and close again.` : `บิลโต๊ะ ${tableNum} เพิ่งเปลี่ยน (จากอีกเครื่อง) — ตรวจยอดอีกครั้งแล้วกดปิดบิลใหม่`)
+              : (en ? `Table ${tableNum}'s bill is already closed.` : `บิลโต๊ะ ${tableNum} ถูกปิดไปแล้ว`),
+        );
+      } else {
+        setNotice((en ? "Could not close the bill: " : "ปิดบิลไม่สำเร็จ: ") + (err?.message || String(err)));
+      }
+    });
   };
 
   // ย้ายโต๊ะ — ทุกออเดอร์ค้าง (in-progress + awaiting-payment) ของโต๊ะเดิมไปโต๊ะใหม่ใน transaction เดียว
@@ -1956,7 +2141,7 @@ export default function App() {
       break;
 
     case "link-expired":
-      content = <LinkExpiredScreen lang={lang} />;
+      content = <LinkExpiredScreen lang={lang} reason={expiredReason ?? "unknown"} />;
       break;
 
     case "item-detail": {
@@ -2059,6 +2244,7 @@ export default function App() {
             onStartManualOrder={handleStartManualOrder}
             onMoveTable={setMoveFromTable}
             categories={allCategories}
+            tableClosedAt={tableClosedAt}
           />
         </Suspense>
       );
@@ -2070,8 +2256,19 @@ export default function App() {
           <StaffPaymentScreen
             lang={lang}
             orders={orders}
-            onCloseTable={handleCloseTable}
+            onCloseTable={closeTableWithNotice}
             onCloseTakeaway={handleCloseTakeawayOrder}
+            onServeItem={handleServeItem}
+            onRemoveItem={(orderId, cartId) => {
+              const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
+              if (target) {
+                askVoidItem(target, (reason) =>
+                  handleRemoveOrderItem(orderId, cartId, reason).catch((err) =>
+                    setNotice((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err))),
+                  ),
+                );
+              }
+            }}
             onAdjustItem={handleAdjustPaymentItem}
             onAdjustTakeawayItem={handleAdjustTakeawayItem}
             onRestoreItem={handleRestoreItem}

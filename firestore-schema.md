@@ -76,6 +76,8 @@
 - `menuItems/{id}` — เมนู (`name`, `description`, `price`, `photo` base64, option groups, `active`, `order`)
 - `categories/{id}` — หมวดหมู่ (`nameEn`, `nameTh`, `order`, `active`, `signature`)
 - `status/live` — `{ busyTables, busyItems }` แบนเนอร์ "ร้านยุ่ง"
+- `status/tableClosures` — `{ closedAt: { "<โต๊ะ>": Timestamp } }` เวลาปิดบิลล่าสุดของแต่ละโต๊ะ เขียนใน transaction เดียวกับการปิดบิล
+  หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ปิดบิลหลังลูกค้าเปิดหน้า = ให้สแกน QR ใหม่) และหน้าออเดอร์ใช้ขึ้นป้าย "ลูกค้าใหม่?" (ดู `src/app/tableSession.ts`)
 - `counters/takeaway-YYYY-MM-DD` — `{ count }` ตัวนับคิวกลับบ้าน (บิลย้อนหลังไม่ใช้ — label คงที่ `"กลับบ้าน"`)
 - `counters/table-moves` — guard ของการย้ายโต๊ะ `{ lastMoveId, lastFrom, lastTo, lastMoveAt }` ทุกการย้ายอ่าน+เขียน doc นี้ใน transaction เพื่อให้การย้ายพร้อมกันชนกันแล้ว retry (กันสองเครื่องย้ายเข้าโต๊ะเดียวกัน)
 - `expenses/YYYY-MM-DD` — บัญชีรายจ่ายรายวัน `{ date, items: ExpenseLineItem[], totalAmount, updatedAt }`
