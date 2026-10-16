@@ -110,7 +110,9 @@ export interface MenuItem {
   hasEggAddon?: boolean;   // ปิดตัวเลือกไข่ดาวสำหรับเมนูนี้ได้
   hasPlainAddOns?: boolean; // ปิดตัวเลือกจาน/ช้อนส้อม/แก้วน้ำสำหรับเมนูนี้ได้
   customGroups?: CustomGroup[];
-  popular?: boolean;
+  popular?: boolean; // สวิตช์ "เมนูเด่น" เดิมในหน้าแก้เมนู — เก็บค่าไว้เฉยๆ ไม่มีผลกับหน้าลูกค้าแล้ว
+  recommended?: boolean;     // true = อยู่ในแถบ "แนะนำ" (แถบแรกของหน้าสั่ง) ด้วย นอกจากหมวดของตัวเอง
+  recommendedOrder?: number; // ลำดับในแถบ "แนะนำ" — ลากเรียงในหน้าจัดการเมนู แยกจาก order ในหมวด
   disabledMeats?: MeatChoice[]; // ซ่อนตัวเลือกเนื้อในตัว (hasMeatChoice) ของเมนูนี้
   soldOutMeats?: MeatChoice[];  // ตัวเลือกเนื้อในตัวที่หมด — ยังแสดงแต่เลือกไม่ได้
   order?: number;
@@ -205,5 +207,5 @@ export interface Category {
   nameTh: string;
   order: number;
   active?: boolean;
-  signature?: boolean;
+  signature?: boolean; // เดิมคือ "เมนูเด่น" ทั้งหมวด — เลิกใช้แล้ว อาจยังค้างอยู่ใน doc เก่า
 }

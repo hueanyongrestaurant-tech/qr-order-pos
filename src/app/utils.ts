@@ -113,11 +113,16 @@ export function isCartItemUnavailable(ci: CartItem, fresh: MenuItem): boolean {
 // • เมนู: active / soldOut / soldOutMeats จาก prev (เมนูใหม่ = ขายปกติ)
 // • ตัวเลือกในกลุ่ม: soldOut จาก prev เทียบด้วย id กลุ่ม+ตัวเลือก (ตัวเลือกที่เพิ่มใหม่ใน form = ขายปกติ)
 //   ส่วน active (ซ่อนตัวเลือก) ยังมาจาก form ตามเดิม เพราะตั้งค่ากันในหน้าแก้เมนูนี้เอง
+// • แนะนำ (recommended / recommendedOrder): จาก prev เหมือนกัน — ตั้งจากปุ่มดาวในหน้าจัดการเมนูเท่านั้น
 export function withLiveAvailability(item: MenuItem, prev: MenuItem | undefined): MenuItem {
   const liveSoldOutChoices = new Set<string>();
   prev?.customGroups?.forEach((g) => g.choices.forEach((c) => { if (c.soldOut) liveSoldOutChoices.add(`${g.id}:${c.id}`); }));
+  const { recommended: _staleRecommended, recommendedOrder: _staleRecommendedOrder, ...rest } = item;
   return {
-    ...item,
+    ...rest,
+    // Firestore ไม่รับ undefined — ใส่เฉพาะตอนมีค่า
+    ...(prev?.recommended ? { recommended: true } : {}),
+    ...(prev?.recommended && typeof prev.recommendedOrder === "number" ? { recommendedOrder: prev.recommendedOrder } : {}),
     active: prev ? prev.active ?? true : true,
     soldOut: prev?.soldOut ?? false,
     soldOutMeats: prev?.soldOutMeats ?? [],

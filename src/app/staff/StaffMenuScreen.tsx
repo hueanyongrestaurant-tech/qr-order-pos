@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { GripVertical, Plus, Trash2, Utensils } from "lucide-react";
+import { GripVertical, Plus, Star, Trash2, Utensils } from "lucide-react";
 import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from "../types";
 import { allMeatsSoldOut, meatOptions, menuAvailabilitySetting, type MeatOption } from "../utils";
 import { T } from "../translations";
@@ -102,14 +102,15 @@ interface StaffMenuProps {
   categories: Category[];
   onAddCategory: (nameEn: string, nameTh: string) => void;
   onDeleteCategory: (categoryId: string) => void;
-  onToggleCategorySignature: (categoryId: string, signature: boolean) => void;
+  onToggleRecommended: (item: MenuItem) => void;
+  onReorderRecommended: (orderedIds: string[]) => void;
   onReorderCategories: (orderedIds: string[]) => void;
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
   scrollTopRef: React.MutableRefObject<number>;
 }
 
 export function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onSetAvailability, onToggleMeatSoldOut, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleCategorySignature, onReorderCategories, onReorderMenuItems,
+  lang, items, onAdd, onEdit, onSetAvailability, onToggleMeatSoldOut, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleRecommended, onReorderRecommended, onReorderCategories, onReorderMenuItems,
   scrollTopRef,
 }: StaffMenuProps) {
   const t = T[lang];
@@ -118,6 +119,11 @@ export function StaffMenuScreen({
 
   const sortedCategories = [...categories].sort((a, b) => a.order - b.order);
   const catDrag = useDragReorder(sortedCategories, (orderedIds) => onReorderCategories(orderedIds));
+  // ลำดับเดียวกับแถบ "แนะนำ" ในหน้าสั่ง — เมนูที่ซ่อนอยู่ยังแสดง (จางๆ) ให้พนักงานเห็นว่ายังติดดาวอยู่
+  const recommendedItems = items
+    .filter((i) => i.recommended)
+    .sort((a, b) => (a.recommendedOrder ?? 999999) - (b.recommendedOrder ?? 999999) || a.name.en.localeCompare(b.name.en));
+  const recDrag = useDragReorder(recommendedItems, (orderedIds) => onReorderRecommended(orderedIds));
 
   useEffect(() => {
     const handleScroll = () => { scrollTopRef.current = window.scrollY; };
@@ -147,6 +153,45 @@ export function StaffMenuScreen({
           {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
         </button>
 
+        {/* เมนูแนะนำ (แถบแรกของหน้าสั่ง) — ติดดาวที่เมนูด้านล่าง แล้วลาก Grip เรียงลำดับตรงนี้ */}
+        <div className="bg-card border border-border rounded-xl p-3 mb-4">
+          <h3 className="font-semibold text-foreground text-sm mb-1 flex items-center gap-1.5">
+            <Star size={14} className="text-primary" fill="currentColor" />
+            {lang === "en" ? "Recommended" : "เมนูแนะนำ"}
+          </h3>
+          {recDrag.orderedList.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {lang === "en"
+                ? "Tap ☆ on a menu item below to add it. No items = the Recommended tab is hidden."
+                : "แตะ ☆ ที่เมนูด้านล่างเพื่อเพิ่ม — ยังไม่มีเมนูแนะนำ ลูกค้าจะไม่เห็นแถบนี้"}
+            </p>
+          ) : (
+            <div className="space-y-1.5 mt-2">
+              {recDrag.orderedList.map((item) => (
+                <div
+                  key={item.id}
+                  ref={recDrag.setItemRef(item.id)}
+                  className={`flex items-center gap-2 bg-background rounded-lg px-3 py-2 transition-shadow ${item.active === false ? "opacity-50" : ""
+                    } ${recDrag.dragId === item.id ? "shadow-lg ring-2 ring-primary/40 relative z-10" : ""}`}
+                  style={{ touchAction: recDrag.dragId ? "none" : undefined }}
+                >
+                  <button
+                    onPointerDown={recDrag.startDrag(item.id)}
+                    className="text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing flex-shrink-0 touch-none"
+                    aria-label={lang === "en" ? "Drag to reorder" : "ลากเพื่อเรียงลำดับ"}
+                  >
+                    <GripVertical size={16} />
+                  </button>
+                  <span className="flex-1 min-w-0 text-sm text-foreground truncate">
+                    {lang === "en" ? item.name.en : item.name.th}
+                  </span>
+                  <RecommendedStar lang={lang} on onClick={() => onToggleRecommended(item)} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Category management */}
         <div className="bg-card border border-border rounded-xl p-3 mb-6">
           <h3 className="font-semibold text-foreground text-sm mb-2.5">
@@ -171,13 +216,6 @@ export function StaffMenuScreen({
                 <span className="flex-1 text-sm text-foreground">
                   {lang === "en" ? cat.nameEn : cat.nameTh}
                 </span>
-                <button
-                  onClick={() => onToggleCategorySignature(cat.id, !cat.signature)}
-                  className={`text-[10px] px-2 py-1 rounded-full font-medium flex-shrink-0 ${cat.signature ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-                    }`}
-                >
-                  {t.popular}
-                </button>
                 <button
                   onClick={() =>
                     onAskConfirm(
@@ -235,6 +273,7 @@ export function StaffMenuScreen({
               cat={cat}
               catItems={catItems}
               onReorderMenuItems={onReorderMenuItems}
+              onToggleRecommended={onToggleRecommended}
               onSetAvailability={onSetAvailability}
               onToggleMeatSoldOut={onToggleMeatSoldOut}
               onEdit={onEdit}
@@ -254,16 +293,31 @@ const AVAILABILITY_OPTIONS: { value: MenuAvailability; th: string; en: string; s
   { value: "hidden", th: "ซ่อน", en: "Hidden", selectedClass: "bg-[#3C2414]/70 text-[#FFF8F0] shadow-sm" },
 ];
 
+// ดาว = อยู่ในแถบ "แนะนำ" — แตะครั้งเดียวสลับ บันทึกทันที (ใช้ทั้งในกล่องเมนูแนะนำและแถวเมนูในหมวด)
+function RecommendedStar({ lang, on, onClick }: { lang: Language; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={on}
+      aria-label={lang === "en" ? (on ? "Remove from Recommended" : "Add to Recommended") : (on ? "เอาออกจากเมนูแนะนำ" : "เพิ่มในเมนูแนะนำ")}
+      className={`p-1 -m-1 flex-shrink-0 transition-colors active:scale-90 ${on ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
+    >
+      <Star size={18} fill={on ? "currentColor" : "none"} />
+    </button>
+  );
+}
+
 // รายการเมนูภายในหมวดหมู่เดียว แยกเป็นคอมโพเนนต์ต่างหาก
 // เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
 function CategoryMenuItemsList({
-  lang, t, cat, catItems, onReorderMenuItems, onSetAvailability, onToggleMeatSoldOut, onEdit, onDelete, onAskConfirm,
+  lang, t, cat, catItems, onReorderMenuItems, onToggleRecommended, onSetAvailability, onToggleMeatSoldOut, onEdit, onDelete, onAskConfirm,
 }: {
   lang: Language;
   t: (typeof T)["en"];
   cat: Category;
   catItems: (MenuItem & { active?: boolean })[];
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
+  onToggleRecommended: (item: MenuItem) => void;
   onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
   onToggleMeatSoldOut: (item: MenuItem, option: MeatOption) => void;
   onEdit: (item: MenuItem) => void;
@@ -305,6 +359,7 @@ function CategoryMenuItemsList({
               </div>
               <div className="text-muted-foreground text-xs">{t.thb}{item.price}</div>
             </div>
+            <RecommendedStar lang={lang} on={!!item.recommended} onClick={() => onToggleRecommended(item)} />
             {/* สลับสถานะการขายกดครั้งเดียว: ขาย (เขียว) / หมด (ส้ม — ลูกค้ายังเห็นแต่กดสั่งไม่ได้) / ซ่อน (เทา — หายจากหน้าสั่ง) */}
             <div className="flex flex-shrink-0 rounded-full bg-muted p-0.5" role="radiogroup">
               {AVAILABILITY_OPTIONS.map((opt) => {

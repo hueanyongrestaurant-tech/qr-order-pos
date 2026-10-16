@@ -8,6 +8,9 @@ import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
 
+// id ของแถบ "แนะนำ" (ไม่ใช่หมวดจริงใน Firestore) — เมนูที่ recommended อยู่ทั้งในหมวดตัวเองและในแถบนี้
+export const RECOMMENDED_TAB_ID = "__recommended__";
+
 interface MenuProps {
   lang: Language;
   tableNumber: string;
@@ -38,9 +41,24 @@ export function MenuScreen({
 
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
   const cartSum = cartTotal(cart);
-  const filtered = menuItems
-    .filter((item) => item.categoryId === activeCategory)
-    .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
+  const sortedCategories = [...categories].sort((a, b) => a.order - b.order);
+  // เมนูที่ซ่อนถูกกรองออกตั้งแต่ App แล้ว — เมนูในหมวดที่ซ่อน/ถูกลบไม่นับ (ในหมวดปกติก็ไม่เห็นอยู่แล้ว)
+  const recommendedItems = menuItems
+    .filter((item) => item.recommended && categories.some((c) => c.id === item.categoryId))
+    .sort((a, b) => (a.recommendedOrder ?? 999999) - (b.recommendedOrder ?? 999999) || a.name.en.localeCompare(b.name.en));
+  const hasRecommended = recommendedItems.length > 0;
+  const filtered = activeCategory === RECOMMENDED_TAB_ID
+    ? recommendedItems
+    : menuItems
+      .filter((item) => item.categoryId === activeCategory)
+      .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999) || a.name.en.localeCompare(b.name.en));
+
+  // อยู่แถบ "แนะนำ" แล้วเมนูแนะนำหมดไป (เอาดาวออก/ซ่อนเมนู) → แถบหาย กลับไปหมวดแรก
+  const firstCategoryId = sortedCategories[0]?.id;
+  useEffect(() => {
+    if (activeCategory === RECOMMENDED_TAB_ID && !hasRecommended && firstCategoryId) onCategoryChange(firstCategoryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCategory, hasRecommended, firstCategoryId]);
 
   return (
     <>
@@ -85,7 +103,20 @@ export function MenuScreen({
             className="flex overflow-x-auto px-4 pb-3 gap-2 pt-1"
             style={{ scrollbarWidth: "none" }}
           >
-            {[...categories].sort((a, b) => a.order - b.order).map((cat) => (
+            {/* แถบแรกเสมอ แต่ไม่ใช่แถบที่เปิดตอนเข้า (App ตั้งหมวดแรกตามลำดับไว้) */}
+            {hasRecommended && (
+              <button
+                onClick={() => onCategoryChange(RECOMMENDED_TAB_ID)}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeCategory === RECOMMENDED_TAB_ID
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-white/10 text-[#E6D5BA] hover:bg-white/20"
+                  }`}
+              >
+                <Star size={12} fill="currentColor" />
+                <span>{t.recommended}</span>
+              </button>
+            )}
+            {sortedCategories.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => onCategoryChange(cat.id)}
@@ -95,7 +126,6 @@ export function MenuScreen({
                   }`}
               >
                 <span>{lang === "en" ? cat.nameEn : cat.nameTh}</span>
-                {cat.signature && <span className="text-[9px] opacity-70">★</span>}
               </button>
             ))}
             {onAddOn && (
@@ -166,21 +196,9 @@ export function MenuScreen({
                       loading="lazy"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
-                    {(item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
-                      <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Star size={8} fill="currentColor" />
-                        {t.popular}
-                      </div>
-                    )}
                   </div>
                 )}
                 <div className="p-2.5">
-                  {!item.photo && (item.popular || categories.find((c) => c.id === item.categoryId)?.signature) && (
-                    <div className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full mb-1.5">
-                      <Star size={8} fill="currentColor" />
-                      {t.popular}
-                    </div>
-                  )}
                   <div className="font-semibold text-foreground text-sm leading-snug">
                     {lang === "en" ? item.name.en : item.name.th}
                   </div>

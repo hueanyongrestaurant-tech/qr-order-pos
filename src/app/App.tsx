@@ -1998,7 +1998,7 @@ export default function App() {
 
   const handleAddCategory = async (nameEn: string, nameTh: string) => {
     const newOrder = allCategories.length > 0 ? Math.max(...allCategories.map((c) => c.order)) + 1 : 0;
-    await addDoc(collection(db, "categories"), { nameEn, nameTh, order: newOrder, active: true, signature: false });
+    await addDoc(collection(db, "categories"), { nameEn, nameTh, order: newOrder, active: true });
   };
 
   const handleReorderCategories = async (orderedIds: string[]) => {
@@ -2017,8 +2017,22 @@ export default function App() {
     await deleteDoc(doc(db, "categories", categoryId));
   };
 
-  const handleToggleCategorySignature = async (categoryId: string, signature: boolean) => {
-    await updateDoc(doc(db, "categories", categoryId), { signature });
+  // ดาวในหน้าจัดการเมนู: เปิด = ต่อท้ายแถบ "แนะนำ" | ปิด = ลบทั้งสองฟิลด์ (ไม่มีค่า = ไม่แนะนำ)
+  const handleToggleRecommended = async (item: MenuItem) => {
+    const ref = doc(db, "menuItems", item.id);
+    const live = allMenuItems.find((m) => m.id === item.id) ?? item;
+    if (live.recommended) {
+      await updateDoc(ref, { recommended: deleteField(), recommendedOrder: deleteField() });
+      return;
+    }
+    const orders = allMenuItems.filter((m) => m.recommended).map((m) => m.recommendedOrder ?? -1);
+    await updateDoc(ref, { recommended: true, recommendedOrder: orders.length > 0 ? Math.max(...orders) + 1 : 0 });
+  };
+
+  const handleReorderRecommended = async (orderedIds: string[]) => {
+    await Promise.all(
+      orderedIds.map((id, i) => updateDoc(doc(db, "menuItems", id), { recommendedOrder: i }))
+    );
   };
 
   // เพิ่มรายการซื้อของ 1 บรรทัดเข้าไปในวันที่ระบุ (สร้าง doc ของวันนั้นถ้ายังไม่มี)
@@ -2305,7 +2319,8 @@ export default function App() {
             onDelete={handleDeleteItem}
             onAddCategory={handleAddCategory}
             onDeleteCategory={handleDeleteCategory}
-            onToggleCategorySignature={handleToggleCategorySignature}
+            onToggleRecommended={handleToggleRecommended}
+            onReorderRecommended={handleReorderRecommended}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}

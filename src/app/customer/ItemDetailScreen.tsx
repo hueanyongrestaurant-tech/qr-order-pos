@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronLeft, Flame, Minus, Plus, ShoppingCart, Star } from "lucide-react";
+import { Check, ChevronLeft, Flame, Minus, Plus, ShoppingCart } from "lucide-react";
 import type { CartItem, Language, MeatChoice, MenuItem, Portion, SpiceLevel } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
@@ -140,12 +140,6 @@ export function ItemDetailScreen({
             </button>
           </div>
         </div>
-
-        {item.popular && (
-          <div className="absolute top-4 left-16 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
-            <Star size={10} fill="currentColor" /> {t.popular}
-          </div>
-        )}
       </div>
 
       {/* Scrollable content */}

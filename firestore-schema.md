@@ -73,8 +73,8 @@
 
 ## collection อื่น (ไม่เปลี่ยนแปลง)
 
-- `menuItems/{id}` — เมนู (`name`, `description`, `price`, `photo` base64, option groups, `active`, `order`)
-- `categories/{id}` — หมวดหมู่ (`nameEn`, `nameTh`, `order`, `active`, `signature`)
+- `menuItems/{id}` — เมนู (`name`, `description`, `price`, `photo` base64, option groups, `active`, `order`, `recommended` + `recommendedOrder` = แถบ "แนะนำ" และลำดับในแถบ)
+- `categories/{id}` — หมวดหมู่ (`nameEn`, `nameTh`, `order`, `active`; `signature` = "เมนูเด่น" ทั้งหมวด เลิกใช้แล้ว อาจค้างใน doc เก่า)
 - `status/live` — `{ busyTables, busyItems }` แบนเนอร์ "ร้านยุ่ง"
 - `status/tableClosures` — `{ closedAt: { "<โต๊ะ>": Timestamp } }` เวลาปิดบิลล่าสุดของแต่ละโต๊ะ เขียนใน transaction เดียวกับการปิดบิล
   หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ปิดบิลหลังลูกค้าเปิดหน้า = ให้สแกน QR ใหม่) และหน้าออเดอร์ใช้ขึ้นป้าย "ลูกค้าใหม่?" (ดู `src/app/tableSession.ts`)
