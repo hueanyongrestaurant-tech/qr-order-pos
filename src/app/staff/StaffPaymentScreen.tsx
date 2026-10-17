@@ -16,7 +16,7 @@ interface StaffPaymentProps {
   // expected = ออเดอร์/ยอดที่พนักงานเห็นบนการ์ดตอนกด — App ปิดบิลเฉพาะเมื่อข้อมูลบน server ยังตรงกัน
   onCloseTable: (n: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => void;
   onCloseTakeaway: (orderId: string, payment: PaymentInput) => void;
-  onServeItem: (orderId: string, cartId: string) => Promise<void>;
+  onServeItem: (orderId: string, cartId: string, qty?: number) => Promise<number>;
   onRemoveItem: (orderId: string, cartId: string) => void; // App ถามยืนยัน/เหตุผลเอง แล้ว void รายการ
   onAdjustItem: (contributingOrders: Order[], key: string, delta: number) => void;
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
@@ -263,6 +263,15 @@ function PaymentCard({
                       <div className="text-foreground text-sm font-medium truncate">
                         {ci.quantity}× {lang === "en" ? ci.item.name.en || ci.item.name.th : ci.item.name.th}
                       </div>
+                      {(() => {
+                        // เสิร์ฟไปบางส่วนแล้ว — ci.quantity คือที่เหลือ บอกจำนวนที่สั่งทั้งหมดด้วย
+                        const ordered = order.items.find((x) => x.cartId === ci.cartId)?.quantity ?? ci.quantity;
+                        return ordered > ci.quantity ? (
+                          <div className="text-secondary text-xs font-semibold">
+                            {lang === "en" ? `served ${ordered - ci.quantity}/${ordered}` : `เสิร์ฟแล้ว ${ordered - ci.quantity}/${ordered}`}
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="text-muted-foreground text-xs">
                         {lang === "en" ? "ordered" : "สั่งเมื่อ"} {formatClock(order.timestamp)}
                         {formatOptionDetails(ci, lang) ? ` · ${formatOptionDetails(ci, lang)}` : ""}
@@ -456,6 +465,7 @@ export function StaffPaymentScreen({
   };
 
   // เสิร์ฟรายการที่ค้างจากการ์ดจ่ายเงิน — ใช้หน้าต่างยืนยันแบบเดียวกับหน้าออเดอร์
+  // ci มาจาก unservedItems → quantity = จำนวนที่ยังไม่เสิร์ฟ กดแล้วเสิร์ฟส่วนที่เหลือทั้งหมด
   const askServePending = (order: Order, ci: CartItem) => {
     const en = lang === "en";
     const name = (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
@@ -463,7 +473,7 @@ export function StaffPaymentScreen({
     onAskConfirm(
       en ? `Serve ${name} (${table})?` : `เสิร์ฟ ${name} (${table}) ใช่ไหม?`,
       () => {
-        onServeItem(order.id, ci.cartId).catch((err: any) =>
+        onServeItem(order.id, ci.cartId, ci.quantity).catch((err: any) =>
           onNotice((en ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err))),
         );
       },

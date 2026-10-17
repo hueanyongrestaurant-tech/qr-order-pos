@@ -218,6 +218,15 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   </div>
                 )}
 
+                {/* ย้อนเสิร์ฟรายการหลายชิ้น — ย้อนกี่ชิ้น เหลือเสิร์ฟแล้วกี่ชิ้น (log เก่า/รายการชิ้นเดียวไม่มี) */}
+                {l.action === "unserve_item" && typeof l.details?.unservedQty === "number" && (
+                  <div className="mt-1 text-xs text-muted-foreground tabular-nums">
+                    {lang === "en"
+                      ? `Undid ${l.details.unservedQty} pcs · served ${l.details.servedLeft}/${l.details.quantity} left`
+                      : `ย้อน ${l.details.unservedQty} ชิ้น · เหลือเสิร์ฟแล้ว ${l.details.servedLeft}/${l.details.quantity}`}
+                  </div>
+                )}
+
                 {/* ยอดบิลก่อน/หลังปรับ — มีเฉพาะ log ที่เกิดจากหน้าชำระเงิน (log เก่าไม่มี field นี้) */}
                 {typeof l.details?.billTotalBefore === "number" && typeof l.details?.billTotalAfter === "number" && (
                   <div className="mt-1 text-xs text-muted-foreground">

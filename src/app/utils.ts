@@ -1,4 +1,4 @@
-import type { CartItem, CustomGroup, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion } from "./types";
+import type { CartItem, CustomGroup, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion, ServedUnits } from "./types";
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
@@ -244,11 +244,102 @@ export function liveItemCount(items: CartItem[]): number {
   return liveItems(items).reduce((s, ci) => s + ci.quantity, 0);
 }
 
+// ─── เสิร์ฟทีละจำนวน ───────────────────────────────────────────────────────────
+// ใช้ได้ทั้งกับ Order ที่ map แล้ว และข้อมูลดิบจาก transaction (servedAt เป็น Timestamp — เช็คแค่ว่ามี key)
+export interface ServeState {
+  status?: string;
+  servedAt?: Record<string, unknown>;
+  servedUnits?: Record<string, ServedUnits | undefined>;
+}
+
+// จำนวนชิ้นที่เสิร์ฟแล้วของบรรทัดนี้ ไม่สน status — servedAt = ครบทั้งบรรทัด (ข้อมูลเดิมก็แบบนี้)
+// ไม่งั้นนับจาก servedUnits.count (จำกัดไม่เกินจำนวนสั่ง เผื่อถูกปรับจำนวนลงทีหลัง)
+export function lineServedQty(state: ServeState, ci: CartItem): number {
+  if (state.servedAt?.[ci.cartId]) return ci.quantity;
+  const n = state.servedUnits?.[ci.cartId]?.count ?? 0;
+  return Math.max(0, Math.min(Math.floor(n), ci.quantity));
+}
+
+export function lineFullyServed(state: ServeState, ci: CartItem): boolean {
+  return lineServedQty(state, ci) >= ci.quantity;
+}
+
+// จำนวนชิ้นที่เสิร์ฟแล้วตามสถานะออเดอร์ — พ้น in-progress แล้วถือว่าเสิร์ฟครบทุกชิ้น
+export function servedQtyOf(order: ServeState, ci: CartItem): number {
+  return order.status !== "in-progress" ? ci.quantity : lineServedQty(order, ci);
+}
+
+// คำนวณการเสิร์ฟเพิ่ม want ชิ้น (ตัดให้อยู่ใน 1..ที่เหลือ) — null = ไม่มีอะไรให้เสิร์ฟ
+// complete = บรรทัดนี้ครบแล้ว (ต้องจด servedAt), orderComplete = ทุกบรรทัดที่ไม่ void ครบ (เปลี่ยน status)
+export function planServe(state: ServeState, items: CartItem[], cartId: string, want: number):
+  { add: number; count: number; complete: boolean; orderComplete: boolean } | null {
+  if (state.status !== "in-progress") return null;
+  const target = items.find((ci) => ci.cartId === cartId);
+  if (!target || target.voided) return null;
+  const cur = lineServedQty(state, target);
+  const remaining = target.quantity - cur;
+  if (remaining <= 0) return null;
+  const add = Math.max(1, Math.min(Math.floor(want) || 1, remaining));
+  const count = cur + add;
+  const complete = count >= target.quantity;
+  const orderComplete = complete && liveItems(items).every((ci) => ci.cartId === cartId || lineFullyServed(state, ci));
+  return { add, count, complete, orderComplete };
+}
+
+// คำนวณการย้อนเสิร์ฟ — want = จำนวนที่ย้อน (แถบเลิกทำส่งจำนวนที่เพิ่งกดมาตรงๆ) ไม่ส่ง = ย้อน "ชุดล่าสุด":
+// บรรทัดที่ครบด้วย servedAt → servedUnits.last (ข้อมูลเดิมไม่มี = ทั้งบรรทัด)
+// ออเดอร์รอชำระที่บรรทัดนี้ครบเพราะ "เสิร์ฟทั้งหมด" (ไม่มี servedAt) → ส่วนที่ "เสิร์ฟทั้งหมด" เติมให้
+// ยังเสิร์ฟไม่ครบ → servedUnits.last หรือทั้งหมดที่เสิร์ฟไว้
+// คืน count = จำนวนที่เหลือว่าเสิร์ฟแล้วหลังย้อน (0 = กลับเป็นยังไม่เสิร์ฟทั้งบรรทัด) — null = ไม่มีอะไรให้ย้อน
+export function planUnserve(state: ServeState, ci: CartItem, want?: number): { back: number; count: number } | null {
+  if (ci.voided || (state.status !== "in-progress" && state.status !== "awaiting-payment")) return null;
+  const units = state.servedUnits?.[ci.cartId];
+  const partial = Math.max(0, Math.min(Math.floor(units?.count ?? 0), ci.quantity));
+  let cur: number;
+  let lastBatch: number;
+  if (state.servedAt?.[ci.cartId]) {
+    cur = ci.quantity;
+    lastBatch = units?.last ?? ci.quantity;
+  } else if (state.status === "awaiting-payment") {
+    cur = ci.quantity;
+    lastBatch = ci.quantity - partial;
+  } else if (state.status === "in-progress") {
+    cur = partial;
+    lastBatch = units?.last ?? partial;
+  } else {
+    return null;
+  }
+  if (cur <= 0) return null;
+  const back = Math.max(1, Math.min(Math.floor(want ?? lastBatch) || cur, cur));
+  return { back, count: cur - back };
+}
+
 // รายการที่ยังไม่เสิร์ฟ (ไม่นับที่ void แล้ว) — ออเดอร์ที่พ้น in-progress ไปแล้วถือว่าเสิร์ฟครบทุกรายการ
 // (รวมออเดอร์เก่าที่กด "เสิร์ฟทั้งหมด" ซึ่งไม่มี servedAt เลย)
+// quantity ของแต่ละตัว = จำนวนที่ "ยังไม่เสิร์ฟ" (เสิร์ฟไปแล้วบางส่วนจะเหลือน้อยกว่าที่สั่ง) — เป็นสำเนา
+// ใช้นับ/แสดง/พิมพ์ใบย้ายเท่านั้น ห้ามเอาไปเขียนกลับลง items[] (ข้อมูลคิดเงิน)
 export function unservedItems(order: Order): CartItem[] {
   if (order.status !== "in-progress") return [];
-  return liveItems(order.items).filter((ci) => !order.servedAt?.[ci.cartId]);
+  return liveItems(order.items).flatMap((ci) => {
+    const left = ci.quantity - lineServedQty(order, ci);
+    if (left <= 0) return [];
+    return [left === ci.quantity ? ci : { ...ci, quantity: left }];
+  });
+}
+
+// ─── ส่งออเดอร์ฝั่งลูกค้า: กันออเดอร์ซ้ำตอนกดส่งใหม่ ─────────────────────────────────
+// ทุกครั้งที่กดส่งตะกร้าเดิม เขียน (setDoc) ลง doc id เดิมที่สุ่มไว้ตั้งแต่ครั้งแรก — เขียนซ้ำไม่มีทางได้ 2 ออเดอร์
+// ลูกค้าไม่มีสิทธิ์อ่าน/แก้ออเดอร์ (rules ให้แค่ create) ถ้า doc id นี้ถูกสร้างไปแล้วจริง การเขียนซ้ำจะกลายเป็น
+// update → permission-denied ซึ่งแปลว่า "ส่งถึงแล้วตั้งแต่รอบก่อน" — แต่นับแบบนั้นเฉพาะเมื่อรอบก่อนจบแบบไม่รู้ผล
+// (หมดเวลา/เน็ตหลุด) ถ้ายังไม่เคยมีรอบไหนไม่รู้ผล permission-denied คือถูกปฏิเสธจริง
+// errCode: undefined = เขียนสำเร็จ, "timeout" = รอเกิน ORDER_SEND_TIMEOUT_MS, อื่นๆ = code ของ FirestoreError
+// sent = ส่งถึงแล้ว | uncertain = ไม่รู้ว่าถึงหรือไม่ (ให้กดส่งใหม่ด้วย id เดิม) | failed = ถูกปฏิเสธแน่นอน
+export type OrderSendOutcome = "sent" | "uncertain" | "failed";
+const DEFINITE_REJECTIONS = new Set(["permission-denied", "invalid-argument", "failed-precondition", "not-found", "already-exists", "unauthenticated"]);
+export function orderSendOutcome(errCode: string | undefined, earlierAttemptUncertain: boolean): OrderSendOutcome {
+  if (errCode === undefined) return "sent";
+  if (errCode === "permission-denied" && earlierAttemptUncertain) return "sent";
+  return DEFINITE_REJECTIONS.has(errCode) ? "failed" : "uncertain";
 }
 
 export function cartTotal(cart: CartItem[]): number {
@@ -369,6 +460,7 @@ export function mapOrderDoc(id: string, raw: any): Order {
           Object.entries(raw.servedAt).map(([k, v]: [string, any]) => [k, v?.toDate ? v.toDate() : new Date()]),
         )
       : undefined,
+    servedUnits: raw.servedUnits || undefined,
     paymentMethod: raw.paymentMethod,
     cashReceived: raw.cashReceived,
     transferAmount: raw.transferAmount,

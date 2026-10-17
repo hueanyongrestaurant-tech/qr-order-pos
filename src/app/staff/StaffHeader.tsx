@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Printer } from "lucide-react";
+import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Printer, WifiOff } from "lucide-react";
 import type { Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { PrinterSettingsModal } from "./PrinterSettingsModal";
 import { AUDIT_UI_ENABLED } from "../constants";
+import { useConnectionAlert } from "./connectionStore";
 
 // ─── Staff Header (shared) ────────────────────────────────────────────────────
 
@@ -21,8 +22,20 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
   // เก็บ state เปิด/ปิด modal ไว้ในตัวเอง ไม่ผ่าน props — StaffHeader ถูกเรียกใช้จาก 7 หน้าจอ
   // จะได้ไม่ต้องแก้ signature/props ที่ต้นทางทุกที่ที่เรียกใช้
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const alert = useConnectionAlert();
   return (
     <div className="bg-[#3C2414] sticky top-0 z-50">
+      {/* แถบเตือนเน็ตหลุด/อ่านออเดอร์ไม่ได้ — อยู่ใน header ที่ sticky จึงเห็นตลอดทุกแท็บ หายเองเมื่อต่อได้ */}
+      {alert && (
+        <div role="alert" className="bg-red-600 text-white px-4 py-2 flex items-center gap-2 text-sm font-bold">
+          <WifiOff size={18} className="flex-shrink-0" />
+          <span className="leading-snug">
+            {alert === "error"
+              ? (lang === "en" ? "Can't load orders — new orders may not show. Retrying…" : "อ่านออเดอร์ไม่ได้ ออเดอร์ใหม่อาจไม่เข้า กำลังลองเชื่อมต่อใหม่…")
+              : (lang === "en" ? "Offline — new orders may not come in" : "ออฟไลน์ ออเดอร์ใหม่อาจไม่เข้า")}
+          </span>
+        </div>
+      )}
       <LannaBorder />
       <div className="px-4 py-2.5 flex items-center justify-between">
         <RestaurantLogo dark lang={lang} />

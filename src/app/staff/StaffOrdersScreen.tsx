@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowRightLeft, Check, Clock, Plus, Printer, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Check, Clock, Minus, Plus, Printer, RotateCcw, Trash2, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
-import { compareTables, formatClock, liveItems, orderTotal } from "../utils";
+import { compareTables, formatClock, lineServedQty, liveItems, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 
 // แถบย้อนกลับค้างไว้ 10 วิ หลังกดเสิร์ฟ/พร้อมรับ/ยกเลิกรายการ
@@ -40,8 +40,10 @@ interface StaffOrdersProps {
   orders: Order[];
   onMarkServed: (orderId: string) => Promise<void>;
   onUnmarkServed: (orderId: string) => Promise<void>;
-  onServeItem: (orderId: string, cartId: string) => Promise<void>;
-  onUnserveItem: (orderId: string, cartId: string) => Promise<void>;
+  // qty = จำนวนชิ้นที่เสิร์ฟครั้งนี้ — resolve เป็นจำนวนที่เสิร์ฟได้จริง (0 = อีกเครื่องเสิร์ฟครบไปก่อนแล้ว)
+  onServeItem: (orderId: string, cartId: string, qty?: number) => Promise<number>;
+  // qty = จำนวนชิ้นที่ย้อน ไม่ส่ง = ย้อนชุดที่เสิร์ฟล่าสุดของรายการนั้น
+  onUnserveItem: (orderId: string, cartId: string, qty?: number) => Promise<void>;
   onRestoreItem: (orderId: string, cartId: string) => Promise<void>;
   // App ถามยืนยัน/เหตุผลเอง — onVoided ถูกเรียกพร้อม promise ของการ void เมื่อพนักงานยืนยันแล้วเท่านั้น
   onRemoveItem: (orderId: string, cartId: string, onVoided: (voiding: Promise<void>) => void) => void;
@@ -59,28 +61,32 @@ interface StaffOrdersProps {
 export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
   const t = T[lang];
 
-  // กดเสิร์ฟแล้วย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลาหลายวิ
-  // ระหว่างนั้นพนักงานจะกดซ้ำ) — key = "orderId:cartId" ต่อรายการ หรือ "orderId:*" เมื่อกดเสิร์ฟทั้งหมด
-  const [pendingServed, setPendingServed] = useState<Set<string>>(new Set());
+  // กดเสิร์ฟแล้วนับ/ย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลา
+  // หลายวิ ระหว่างนั้นพนักงานจะกดซ้ำ) — key = "orderId:cartId" → จำนวนชิ้นที่เสิร์ฟแล้วที่คาดว่า server จะเห็น
+  // หรือ "orderId:*" (ค่าไม่ใช้) เมื่อกดเสิร์ฟทั้งหมด
+  const [pendingServed, setPendingServed] = useState<Map<string, number>>(new Map());
 
-  const addPending = (key: string) => setPendingServed((prev) => new Set(prev).add(key));
+  const addPending = (key: string, served = 0) => setPendingServed((prev) => new Map(prev).set(key, served));
   const dropPending = (key: string) =>
     setPendingServed((prev) => {
-      const next = new Set(prev);
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
       next.delete(key);
       return next;
     });
 
-  // ล้าง key ที่ server ยืนยันแล้ว (เห็นใน servedAt หรือออเดอร์พ้น in-progress ไปแล้ว) ไม่ให้ Set โตค้าง
+  // ล้าง key ที่ server ยืนยันแล้ว (นับถึงจำนวนที่กดไว้ หรือออเดอร์พ้น in-progress ไปแล้ว) ไม่ให้ Map โตค้าง
   useEffect(() => {
     setPendingServed((prev) => {
       if (prev.size === 0) return prev;
-      const next = new Set(
-        [...prev].filter((key) => {
+      const next = new Map(
+        [...prev].filter(([key, served]) => {
           const [orderId, cartId] = key.split(":");
           const o = orders.find((x) => x.id === orderId);
           if (!o || o.status !== "in-progress") return false;
-          return cartId === "*" ? true : !o.servedAt?.[cartId];
+          if (cartId === "*") return true;
+          const ci = o.items.find((x) => x.cartId === cartId);
+          return !!ci && !ci.voided && lineServedQty(o, ci) < served;
         }),
       );
       return next.size === prev.size ? prev : next;
@@ -92,8 +98,8 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
 
   const en = lang === "en";
   const tableText = (o: Order) => (o.isTakeaway ? o.takeawayLabel || "T" : `${t.tableLabel} ${o.tableNumber}`);
-  const itemText = (ci: CartItem) =>
-    (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
+  const itemName = (ci: CartItem) => (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th);
+  const itemText = (ci: CartItem) => itemName(ci) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
   const noLabel = en ? "No" : "ไม่";
   const undoLabel = en ? "Undo" : "ย้อนกลับ";
 
@@ -148,13 +154,20 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     );
 
   // ทุกปุ่มเสิร์ฟ/พร้อมรับถามยืนยันก่อน แล้วขึ้นแถบย้อนกลับ — ข้อความบอกชัดว่าทำอะไรกับโต๊ะไหน
-  const serveItem = (order: Order, ci: CartItem) => {
+  // qty = จำนวนชิ้นที่เสิร์ฟครั้งนี้ — ย้อนจากแถบย้อนกลับ = ย้อนเฉพาะจำนวนที่เสิร์ฟได้จริงในครั้งนี้
+  const serveItem = (order: Order, ci: CartItem, qty: number) => {
     const key = `${order.id}:${ci.cartId}`;
-    addPending(key);
-    const serving = settle(onServeItem(order.id, ci.cartId), () => dropPending(key));
-    showToast(en ? `Served ${itemText(ci)} (${tableText(order)})` : `เสิร์ฟ ${itemText(ci)} (${tableText(order)}) แล้ว`, () => {
+    const after = Math.min(ci.quantity, servedQty(order, ci) + qty);
+    addPending(key, after);
+    let added = 0;
+    const serving = settle(
+      onServeItem(order.id, ci.cartId, qty).then((n) => { added = n; }),
+      () => dropPending(key),
+    );
+    const what = ci.quantity > 1 && qty < ci.quantity ? `${itemName(ci)} ×${qty} (${after}/${ci.quantity})` : itemText(ci);
+    showToast(en ? `Served ${what} (${tableText(order)})` : `เสิร์ฟ ${what} (${tableText(order)}) แล้ว`, () => {
       dropPending(key);
-      return serving.then((ok) => (ok ? onUnserveItem(order.id, ci.cartId) : undefined));
+      return serving.then((ok) => (ok && added > 0 ? onUnserveItem(order.id, ci.cartId, added) : undefined));
     });
   };
 
@@ -171,10 +184,19 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     });
   };
 
+  // เหลือ 1 ชิ้น (รวมรายการที่สั่ง 1) = หน้าต่างยืนยันแบบเดิม / เหลือหลายชิ้น = หน้าต่างเลือกจำนวน (ServeQtyModal)
+  const [serveAsk, setServeAsk] = useState<{ order: Order; ci: CartItem } | null>(null);
   const handleServeItem = (order: Order, ci: CartItem) => {
+    const left = ci.quantity - servedQty(order, ci);
+    if (left <= 0) return;
+    if (left > 1) {
+      setServeAsk({ order, ci });
+      return;
+    }
+    const what = ci.quantity > 1 ? `${itemName(ci)} ×1 (${ci.quantity}/${ci.quantity})` : itemText(ci);
     onAskConfirm(
-      en ? `Serve ${itemText(ci)} (${tableText(order)})?` : `เสิร์ฟ ${itemText(ci)} (${tableText(order)}) ใช่ไหม?`,
-      () => serveItem(order, ci),
+      en ? `Serve ${what} (${tableText(order)})?` : `เสิร์ฟ ${what} (${tableText(order)}) ใช่ไหม?`,
+      () => serveItem(order, ci, 1),
       { cancelLabel: noLabel, confirmLabel: t.serveItem, tone: "success" },
     );
   };
@@ -218,11 +240,22 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
       action().catch(failAlert);
     }, { cancelLabel: noLabel, confirmLabel: undoLabel, tone: "neutral" });
 
-  const askUnserveItem = (order: Order, ci: CartItem) =>
+  // ย้อนทีหลัง = ย้อนชุดที่เสิร์ฟล่าสุดของรายการนั้น (App/planUnserve คำนวณจากข้อมูลล่าสุดบน server อีกที)
+  // ข้อความบอกจำนวนที่จะย้อนตามที่เครื่องนี้เห็น — รายการชิ้นเดียว/ย้อนทั้งบรรทัดใช้ข้อความเดิม
+  const askUnserveItem = (order: Order, ci: CartItem) => {
+    const back = lastServedBatch(order, ci);
+    const stay = servedQty(order, ci) - back;
     runUndo(
-      en ? `Undo serving ${itemText(ci)} (${tableText(order)})? It goes back to not served.` : `ย้อน ${itemText(ci)} (${tableText(order)}) กลับเป็นยังไม่เสิร์ฟ ใช่ไหม?`,
+      ci.quantity > 1 && back < ci.quantity
+        ? (en
+            ? `Undo serving ${itemName(ci)} ×${back} (${tableText(order)})? ${stay}/${ci.quantity} stay served.`
+            : `ย้อน ${itemName(ci)} ×${back} (${tableText(order)}) กลับเป็นยังไม่เสิร์ฟ ใช่ไหม? (เหลือเสิร์ฟแล้ว ${stay}/${ci.quantity})`)
+        : (en
+            ? `Undo serving ${itemText(ci)} (${tableText(order)})? It goes back to not served.`
+            : `ย้อน ${itemText(ci)} (${tableText(order)}) กลับเป็นยังไม่เสิร์ฟ ใช่ไหม?`),
       () => onUnserveItem(order.id, ci.cartId),
     );
+  };
   const askUnready = (order: Order) =>
     runUndo(
       en ? `Move ${tableText(order)} back to preparing?` : `ย้อน ${tableText(order)} กลับเป็นกำลังเตรียม ใช่ไหม?`,
@@ -245,12 +278,23 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     </button>
   );
 
-  // รายการนี้ถือว่าเสิร์ฟแล้วหรือยัง (รวมที่เพิ่งกดบนเครื่องนี้แต่ server ยังไม่ตอบ) — ใช้แบ่งโซนเท่านั้น ไม่เกี่ยวกับเงิน
-  const isServed = (o: Order, ci: CartItem) =>
-    o.status !== "in-progress" ||
-    !!o.servedAt?.[ci.cartId] ||
-    pendingServed.has(`${o.id}:*`) ||
-    pendingServed.has(`${o.id}:${ci.cartId}`);
+  // จำนวนชิ้นที่เสิร์ฟแล้ว (รวมที่เพิ่งกดบนเครื่องนี้แต่ server ยังไม่ตอบ) — ใช้แบ่งโซน/แสดงผลเท่านั้น ไม่เกี่ยวกับเงิน
+  function servedQty(o: Order, ci: CartItem): number {
+    if (o.status !== "in-progress" || pendingServed.has(`${o.id}:*`)) return ci.quantity;
+    return Math.min(ci.quantity, Math.max(lineServedQty(o, ci), pendingServed.get(`${o.id}:${ci.cartId}`) ?? 0));
+  }
+  // ชุดที่เสิร์ฟล่าสุด (ตามที่เครื่องนี้เห็น) — ใช้แค่ในข้อความยืนยันย้อนกลับ ตรรกะเดียวกับ planUnserve
+  function lastServedBatch(o: Order, ci: CartItem): number {
+    const units = o.servedUnits?.[ci.cartId];
+    const partial = Math.min(units?.count ?? 0, ci.quantity);
+    const back = o.servedAt?.[ci.cartId]
+      ? units?.last ?? ci.quantity
+      : o.status !== "in-progress" ? ci.quantity - partial : units?.last ?? partial;
+    const cur = servedQty(o, ci);
+    return Math.max(1, Math.min(back || cur, cur));
+  }
+  // รายการนี้เสิร์ฟครบทุกชิ้นแล้วหรือยัง — ครบแล้วย้ายไปโซนรอชำระ
+  const isServed = (o: Order, ci: CartItem) => servedQty(o, ci) >= ci.quantity;
   const unserved = (o: Order) => liveItems(o.items).filter((ci) => !isServed(o, ci));
   const [isPrinting, setIsPrinting] = useState(false);
   // native printing ต้องเปิดผ่านแอป Capacitor จริง + ตั้งเครื่องพิมพ์ไว้แล้วบนเครื่องนี้ —
@@ -286,7 +330,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
   const inProgress = orders.filter((o) => {
     if (o.status !== "in-progress" || o.isTakeaway) return false;
     if (unserved(o).length > 0) return true;
-    const stuck = liveItems(o.items).every((ci) => !!o.servedAt?.[ci.cartId]);
+    const stuck = liveItems(o.items).every((ci) => lineServedQty(o, ci) >= ci.quantity);
     return stuck && !pendingServed.has(`${o.id}:*`);
   });
 
@@ -526,13 +570,32 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                           {renderItemDetails(
                             ci,
                             !ci.voided && (
-                              <button
-                                onClick={() => handleRemoveItem(order, ci)}
-                                className="mt-1 -ml-1 px-1 py-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
-                              >
-                                <X size={12} />
-                                {t.removeItem}
-                              </button>
+                              <>
+                                {servedQty(order, ci) > 0 && (
+                                  // เสิร์ฟไปบางส่วนแล้ว — บอกชัดว่าเสิร์ฟกี่ชิ้น เหลือกี่ชิ้น แตะเพื่อเปิดปุ่มย้อนชุดล่าสุด
+                                  <button
+                                    onClick={() => togglePick(`served:${order.id}:${ci.cartId}`)}
+                                    className="mt-1.5 min-h-[32px] inline-flex items-center gap-1.5 px-2.5 rounded-lg bg-secondary/10 border border-secondary/40 text-secondary text-xs font-bold tabular-nums"
+                                  >
+                                    <Check size={13} />
+                                    {en
+                                      ? `Served ${servedQty(order, ci)}/${ci.quantity} · ${ci.quantity - servedQty(order, ci)} left`
+                                      : `เสิร์ฟแล้ว ${servedQty(order, ci)}/${ci.quantity} · เหลือ ${ci.quantity - servedQty(order, ci)}`}
+                                    <RotateCcw size={11} className="opacity-60" />
+                                  </button>
+                                )}
+                                {undoPick === `served:${order.id}:${ci.cartId}` && servedQty(order, ci) > 0 &&
+                                  undoButton(en ? "Undo last serve" : "ย้อนที่เพิ่งเสิร์ฟ", () => askUnserveItem(order, ci))}
+                                <div>
+                                  <button
+                                    onClick={() => handleRemoveItem(order, ci)}
+                                    className="mt-1 -ml-1 px-1 py-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                                  >
+                                    <X size={12} />
+                                    {t.removeItem}
+                                  </button>
+                                </div>
+                              </>
                             ),
                           )}
                           {!ci.voided && (
@@ -698,6 +761,21 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
         </div>
       </div>
 
+      {serveAsk && (
+        <ServeQtyModal
+          lang={lang}
+          title={`${itemName(serveAsk.ci)} (${tableText(serveAsk.order)})`}
+          served={servedQty(serveAsk.order, serveAsk.ci)}
+          quantity={serveAsk.ci.quantity}
+          onCancel={() => setServeAsk(null)}
+          onConfirm={(qty) => {
+            const { order, ci } = serveAsk;
+            setServeAsk(null);
+            serveItem(order, ci, qty);
+          }}
+        />
+      )}
+
       {/* แถบย้อนกลับ — ด้านล่างจอ ตัวใหญ่ สีเข้มตัดกับพื้น ปุ่มสีเหลืองใหญ่กดง่าย ค้าง UNDO_MS */}
       {toast && (
         <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-3 pb-3 pointer-events-none" role="status" aria-live="polite">
@@ -718,5 +796,64 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
         </div>
       )}
     </>
+  );
+}
+
+// ─── หน้าต่างเลือกจำนวนที่เสิร์ฟ (รายการที่ยังเหลือมากกว่า 1 ชิ้น) ───────────────────
+// ค่าเริ่มต้น 1 ปรับ −/+ ได้ไม่เกินที่เหลือ ปุ่มลัด "ทั้งหมด (N)" เสิร์ฟที่เหลือทั้งหมดทันที
+// หน้าตา/ปุ่มเหมือน ConfirmModal ใน App (ปุ่มสูง 44px กดง่ายบนแท็บเล็ต)
+function ServeQtyModal({ lang, title, served, quantity, onCancel, onConfirm }: {
+  lang: Language;
+  title: string;
+  served: number;
+  quantity: number;
+  onCancel: () => void;
+  onConfirm: (qty: number) => void;
+}) {
+  const en = lang === "en";
+  const left = Math.max(1, quantity - served);
+  const [qty, setQty] = useState(1);
+  const n = Math.min(qty, left);
+  const stepBtn = "w-12 h-12 rounded-xl bg-muted text-foreground flex items-center justify-center active:scale-95 transition-all disabled:opacity-30";
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onCancel}>
+      <div className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <p className="text-foreground text-sm font-semibold leading-relaxed">{en ? `Serve ${title}` : `เสิร์ฟ ${title}`}</p>
+        <p className="text-muted-foreground text-xs mt-1 tabular-nums">
+          {en
+            ? `Ordered ${quantity} · served ${served} · ${left} left`
+            : `สั่ง ${quantity} · เสิร์ฟแล้ว ${served} · เหลือ ${left}`}
+        </p>
+        <div className="flex items-center justify-center gap-4 my-5">
+          <button onClick={() => setQty(Math.max(1, n - 1))} disabled={n <= 1} className={stepBtn} aria-label="-1">
+            <Minus size={20} />
+          </button>
+          <div className="min-w-[64px] text-center font-display font-bold text-3xl tabular-nums text-foreground">{n}</div>
+          <button onClick={() => setQty(Math.min(left, n + 1))} disabled={n >= left} className={stepBtn} aria-label="+1">
+            <Plus size={20} />
+          </button>
+        </div>
+        <button
+          onClick={() => onConfirm(left)}
+          className="w-full min-h-[44px] mb-2.5 rounded-xl text-sm font-semibold border-2 border-secondary text-secondary hover:bg-secondary/10 active:scale-95 transition-all"
+        >
+          {en ? `All (${left})` : `ทั้งหมด (${left})`}
+        </button>
+        <div className="flex gap-2.5">
+          <button
+            onClick={onCancel}
+            className="flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
+          >
+            {en ? "No" : "ไม่"}
+          </button>
+          <button
+            onClick={() => onConfirm(n)}
+            className="flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-all"
+          >
+            {en ? `Serve ${n}` : `เสิร์ฟ ${n}`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

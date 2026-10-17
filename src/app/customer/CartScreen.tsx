@@ -22,9 +22,10 @@ interface CartProps {
   unavailableCartIds?: string[]; // รายการที่เช็คตอนกดยืนยันแล้วพบว่าสั่งไม่ได้ — ขึ้นป้าย "หมด" + ข้อความเตือน
   confirmLabel?: string; // staff-only: ข้อความปุ่มยืนยันแทน "ยืนยันสั่ง" (บิลย้อนหลังไปขั้นเลือกวิธีจ่ายต่อ)
   notice?: string;       // staff-only: แถบข้อความเหนือรายการ (บอกว่าเป็นบิลย้อนหลัง)
+  sendError?: string;    // ส่งออเดอร์ไม่สำเร็จ/รอนานเกิน — ข้อความเหนือปุ่มยืนยัน (ตะกร้ายังอยู่ กดส่งใหม่ได้)
 }
 
-export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [], confirmLabel, notice }: CartProps) {
+export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [], confirmLabel, notice, sendError }: CartProps) {
   const t = T[lang];
   const total = cartTotal(cart);
   // คิดจากตะกร้าปัจจุบัน — ลบรายการที่หมดออกแล้วข้อความเตือนหายเอง ไม่ต้อง reset state
@@ -175,6 +176,12 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
 
       {cart.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border px-4 pb-4 pt-3">
+          {sendError && (
+            <div role="alert" className="flex items-start gap-2 mb-3 px-3 py-2.5 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm font-semibold">
+              <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{sendError}</span>
+            </div>
+          )}
           {unavailableNames.length > 0 && (
             <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium">
               <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />

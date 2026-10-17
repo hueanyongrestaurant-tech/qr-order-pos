@@ -142,6 +142,11 @@ export interface CartItem {
   voidedWhileUnserved?: boolean; // ยกเลิกตอนยังไม่เสิร์ฟ — ใช้ตอนคืนรายการ (restore) ให้กลับไปเป็น "ยังไม่เสิร์ฟ" ถูกต้อง
 }
 
+export interface ServedUnits {
+  count?: number;
+  last?: number;
+}
+
 export interface Order {
   id: string;
   tableNumber: string;
@@ -151,6 +156,11 @@ export interface Order {
   // เวลาที่เสิร์ฟแต่ละรายการ (key = cartId) — ใช้แค่แบ่งโซนบนหน้า Orders เท่านั้น ไม่เกี่ยวกับเงินเลย
   // แยกเป็น map ของตัวเอง ไม่ใส่ใน items[] เพื่อให้กดเสิร์ฟไม่ต้องเขียน items (ข้อมูลที่ใช้คิดเงิน) ซ้ำทั้งก้อน
   servedAt?: Record<string, Date>;
+  // เสิร์ฟทีละจำนวน (key = cartId) — ดู lineServedQty ใน utils.ts
+  // ยังเสิร์ฟไม่ครบ: { count: เสิร์ฟไปแล้วกี่ชิ้น, last: ชุดล่าสุดกี่ชิ้น } และยังไม่มี servedAt
+  // เสิร์ฟครบ: servedAt ถูกจด + เหลือแค่ { last } ไว้ย้อนตามจำนวนที่เพิ่งเสิร์ฟ (ไม่มี count — servedAt บอกว่าครบ)
+  // ข้อมูลเดิมไม่มี field นี้ = servedAt แบบทั้งบรรทัดเหมือนเดิม
+  servedUnits?: Record<string, ServedUnits>;
   paymentMethod?: PaymentMethod;
   cashReceived?: number;
   // split เท่านั้น: ส่วนที่เป็นเงินโอนของ "ออเดอร์ใบนี้" (ไม่ใช่ทั้งบิล) — ส่วนเงินสด = orderTotal - transferAmount

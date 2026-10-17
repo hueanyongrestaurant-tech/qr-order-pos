@@ -80,6 +80,12 @@ import {
   liveItems,
   liveItemCount,
   unservedItems,
+  lineServedQty,
+  lineFullyServed,
+  planServe,
+  planUnserve,
+  type ServeState,
+  orderSendOutcome,
   cartTotal,
   orderTotal,
   cartItemKey,
@@ -109,6 +115,7 @@ import { LannaBorder, RestaurantLogo } from "./shared";
 // ลูกค้าที่สแกน QR จะโดนดึง plugin ของฝั่งพนักงานไปรวมกับ chunk หลักด้วย
 import { getPrintRole, getSelectedPrinterAddress } from "./staff/printerStore";
 import { isSoundMuted } from "./staff/soundStore";
+import { connectionAlertFrom, setConnectionAlert } from "./staff/connectionStore";
 import { activeDineInOrders, buildMoveTicketOrder, moveBanner, occupiedTables, takeNewMoves } from "./staff/tableMove";
 import { MenuScreen } from "./customer/MenuScreen";
 import { ItemDetailScreen } from "./customer/ItemDetailScreen";
@@ -460,6 +467,12 @@ const AUTH_CHECK_TIMEOUT_MS = 8000;
 const SOLD_OUT_CHECK_TIMEOUT_MS = 3000;
 // รอให้การแก้เมนูหลายจุดติดกัน (เช่นลากเรียงลำดับ = เขียนหลาย doc) นิ่งก่อนค่อยเขียน menu snapshot ครั้งเดียว
 const MENU_SNAPSHOT_DEBOUNCE_MS = 2000;
+// ลูกค้ากดส่งออเดอร์แล้ว server ไม่ตอบภายในนี้ = ขึ้น "ส่งไม่สำเร็จ" (ตะกร้ายังอยู่ กดส่งใหม่ได้ ดู handleConfirmOrder)
+const ORDER_SEND_TIMEOUT_MS = 10000;
+// listener ออเดอร์ฝั่งพนักงาน error แล้ว รอเท่านี้ก่อน subscribe ใหม่ (ไม่ยิงถี่ — แต่ละรอบอ่านออเดอร์ค้างใหม่ทั้งชุด)
+const ORDERS_RETRY_MS = 30000;
+// สถานะออฟไลน์ต้องค้างนานเท่านี้ก่อนขึ้นแถบเตือน — กันกระพริบตอนเน็ตสะดุดแป๊บเดียว
+const CONNECTION_ALERT_DELAY_MS = 4000;
 
 const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
@@ -546,6 +559,11 @@ export default function App() {
   // ระหว่างนี้หน้า "staff-login" แสดงหน้าโหลด (โลโก้) แทนฟอร์มรหัส — ไม่ให้พนักงานเห็นฟอร์มแล้วพิมพ์รหัสซ้ำ
   // ทั้งที่ session ยังอยู่ ฝั่งลูกค้าไม่ใช้ค่านี้
   const [authChecked, setAuthChecked] = useState(false);
+  // สัญญาณการเชื่อมต่อฝั่งพนักงาน (ดู connectionStore) — ordersRetry เพิ่มทีละ 1 เพื่อ subscribe listener ออเดอร์ใหม่หลัง error
+  const [ordersFromCache, setOrdersFromCache] = useState(false);
+  const [ordersListenerError, setOrdersListenerError] = useState(false);
+  const [ordersRetry, setOrdersRetry] = useState(0);
+  const [browserOffline, setBrowserOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
 
   // true = listener ได้ข้อมูลจาก server แล้ว (ไม่ใช่ค่าว่างตอนเริ่ม) — gate การเขียน menu snapshot
   // กันเขียน snapshot ว่าง/ครึ่งๆ กลางๆ ทับของดีบน server
@@ -788,7 +806,15 @@ export default function App() {
     isFirstOrdersSnapshotRef.current = true;
     // moveId ที่เห็นแล้วใน subscription นี้ — snapshot แรกจดทุกตัวโดยไม่พิมพ์ (ดู tableMove.ts)
     const seenMoveIds = new Set<string>();
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    let retryTimer: number | undefined;
+    // includeMetadataChanges: ให้ listener แจ้งตอน SDK ต่อ server ไม่ได้/กลับมาได้ (metadata.fromCache) — ใช้ขึ้น
+    // แถบเตือนออฟไลน์ (connectionStore) ไม่มี read เพิ่ม snapshot ที่เปลี่ยนแค่ metadata ข้ามงานอื่นทั้งหมด
+    // error = listener ถูกปิดไปแล้ว → ขึ้นแถบเตือน แล้ว subscribe ใหม่หลัง ORDERS_RETRY_MS (ordersRetry ใน deps)
+    const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+      setOrdersFromCache(snapshot.metadata.fromCache);
+      setOrdersListenerError(false);
+      if (!isFirstOrdersSnapshotRef.current && snapshot.docChanges().length === 0) return; // metadata อย่างเดียว
+
       const data = snapshot.docs
         .map((d) => mapOrderDoc(d.id, d.data()))
         .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -796,7 +822,9 @@ export default function App() {
       const newMoves = takeNewMoves(seenMoveIds, data);
 
       if (isFirstOrdersSnapshotRef.current) {
-        isFirstOrdersSnapshotRef.current = false;
+        // เปิดแอปตอนเน็ตหลุด SDK ส่ง snapshot จาก cache (ว่าง) มาก่อน — ยังไม่นับเป็น "snapshot แรก" ไม่งั้นพอต่อได้
+        // ออเดอร์ค้างทุกใบจะเข้ามาเป็น "added" แล้วพิมพ์ซ้ำทั้งหมด
+        if (!snapshot.metadata.fromCache) isFirstOrdersSnapshotRef.current = false;
         return;
       }
 
@@ -848,9 +876,40 @@ export default function App() {
           });
         });
       }
+    }, (err) => {
+      console.error("Orders listener failed:", err);
+      setOrdersListenerError(true);
+      retryTimer = window.setTimeout(() => setOrdersRetry((n) => n + 1), ORDERS_RETRY_MS);
     });
-    return unsubscribe;
-  }, [everAuthed]);
+    return () => {
+      unsubscribe();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [everAuthed, ordersRetry]);
+
+  // แถบเตือนออฟไลน์ฝั่งพนักงาน — รวมสัญญาณแล้วส่งให้ StaffHeader ผ่าน connectionStore
+  // ขึ้นหลังค้างนาน CONNECTION_ALERT_DELAY_MS (กันกระพริบตอนเน็ตสะดุดแป๊บเดียว) หายทันทีเมื่อกลับมาต่อได้
+  useEffect(() => {
+    if (getTableFromUrl() !== null) return;
+    const update = () => setBrowserOffline(navigator.onLine === false);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  useEffect(() => {
+    const alert = everAuthed && getTableFromUrl() === null
+      ? connectionAlertFrom({ browserOffline, ordersFromCache, ordersError: ordersListenerError })
+      : null;
+    if (alert === null) {
+      setConnectionAlert(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setConnectionAlert(alert), CONNECTION_ALERT_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [everAuthed, browserOffline, ordersFromCache, ordersListenerError]);
 
   // บัญชีรายจ่าย — ดึงเฉพาะช่วงวันที่ที่หน้า Expenses กำลังดู (1 doc ต่อวัน, id = "YYYY-MM-DD")
   // re-subscribe เมื่อช่วงวันที่เปลี่ยน — handler เพิ่ม/แก้/ลบ ทำงานกับวันที่ในช่วงนี้เสมอ
@@ -1130,6 +1189,23 @@ export default function App() {
     return false;
   };
 
+  // ออเดอร์ที่กำลังส่ง/ส่งไม่สำเร็จของตะกร้าปัจจุบัน — id ใช้ซ้ำตอนกดส่งใหม่, uncertain = เคยมีรอบที่ไม่รู้ผล
+  const orderAttemptRef = useRef<{ id: string; signature: string; uncertain: boolean } | null>(null);
+  // true = ขึ้นข้อความ "ส่งออเดอร์ไม่สำเร็จ กรุณาเรียกพนักงาน" ในหน้าตะกร้า (ตะกร้ายังอยู่ กดส่งใหม่ได้)
+  const [orderSendFailed, setOrderSendFailed] = useState(false);
+  // ตะกร้าล่าสุด (ไว้เช็คตอนออเดอร์ที่หมดเวลาไปแล้วส่งถึงทีหลัง — ลูกค้าแก้ตะกร้าไปแล้วห้ามล้างทิ้ง)
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
+  const orderSignature = (items: CartItem[]) =>
+    JSON.stringify([tableNumber, (JSON.parse(JSON.stringify(items)) as CartItem[]).map(stripItemPhoto)]);
+  const finishOrderSent = () => {
+    orderAttemptRef.current = null;
+    setOrderSendFailed(false);
+    setCart([]);
+    setCartUnavailableCartIds([]);
+    setView("order-sent");
+  };
+
   const handleConfirmOrder = async () => {
     // กันกดปุ่ม/แตะจอซ้ำเร็ว ๆ (พบบ่อยทั้ง iOS และ Android) ที่ทำให้ยิง addDoc สองครั้ง
     // กลายเป็นออเดอร์เบิ้ล — เช็คด้วย ref เพราะ state อาจอัปเดตไม่ทันถ้าแตะรัวมาก
@@ -1137,20 +1213,47 @@ export default function App() {
     if (!(tableNumber && cart.length > 0)) return;
     isSubmittingOrderRef.current = true;
     setIsSubmittingOrder(true);
+    setOrderSendFailed(false);
     try {
       if (await cartHasUnavailableItems(cart)) return;
       if (await tableSessionExpiredBeforeOrder()) return;
       // JSON round-trip: ตัดฟิลด์ undefined ให้ Firestore | .map(stripItemPhoto): ตัดรูป base64 ที่ทำ doc บวม
       const cleanItems = (JSON.parse(JSON.stringify(cart)) as CartItem[]).map(stripItemPhoto);
-      await addDoc(collection(db, "orders"), {
+      // ตะกร้าเดิม (โต๊ะ + รายการเหมือนเดิมเป๊ะ) ใช้ doc id เดิมทุกครั้งที่กดส่งใหม่ — ดู orderSendOutcome
+      // แก้ตะกร้าแล้วถือเป็นออเดอร์ใหม่ สุ่ม id ใหม่
+      const signature = orderSignature(cart);
+      if (orderAttemptRef.current?.signature !== signature) {
+        orderAttemptRef.current = { id: doc(collection(db, "orders")).id, signature, uncertain: false };
+      }
+      const attempt = orderAttemptRef.current;
+      const writing = setDoc(doc(db, "orders", attempt.id), {
         tableNumber,
         items: cleanItems,
         status: "in-progress",
         createdAt: serverTimestamp(),
       });
-      setCart([]);
-      setCartUnavailableCartIds([]);
-      setView("order-sent");
+      // หมดเวลาแล้ว SDK ยังพยายามส่งต่อเองเบื้องหลัง — ถ้าส่งถึงทีหลังและตะกร้ายังเหมือนเดิม พาไปหน้าส่งสำเร็จเอง
+      writing.then(() => {
+        if (orderAttemptRef.current === attempt && orderSignature(cartRef.current) === attempt.signature) finishOrderSent();
+      }, () => {});
+      let errCode: string | undefined;
+      try {
+        await Promise.race([
+          writing,
+          new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "timeout" })), ORDER_SEND_TIMEOUT_MS)),
+        ]);
+      } catch (err: any) {
+        errCode = typeof err?.code === "string" ? err.code : "unknown";
+        console.error("send order failed", err);
+      }
+      const outcome = orderSendOutcome(errCode, attempt.uncertain);
+      if (outcome === "sent") {
+        if (orderAttemptRef.current === attempt) finishOrderSent();
+        return;
+      }
+      if (outcome === "uncertain") attempt.uncertain = true;
+      setOrderSendFailed(true);
     } finally {
       isSubmittingOrderRef.current = false;
       setIsSubmittingOrder(false);
@@ -1332,27 +1435,30 @@ export default function App() {
     await updateDoc(doc(db, "orders", orderId), { status: "awaiting-payment" });
   };
 
-  // เสิร์ฟทีละรายการ — เขียนแค่ key เดียวใน servedAt (ไม่แตะ items[] ที่ใช้คิดเงิน) และถ้ารายการที่ไม่ถูก void
-  // เสิร์ฟครบทุกตัวแล้ว เปลี่ยน status เป็น awaiting-payment ในจังหวะเดียวกัน ทำใน transaction เพื่อเช็คจากข้อมูล
-  // ล่าสุดบน server — กันเคสแท็บเล็ต 2 เครื่องกดเสิร์ฟคนละรายการพร้อมกันแล้วไม่มีใครเปลี่ยน status ให้
-  const handleServeItem = async (orderId: string, cartId: string) => {
+  // เสิร์ฟทีละรายการ/ทีละจำนวน (qty ชิ้น) — เขียนแค่ key ของรายการนั้นใน servedUnits/servedAt (ไม่แตะ items[]
+  // ที่ใช้คิดเงิน) ยังไม่ครบ = servedUnits.count ครบ = จด servedAt (เครื่องที่ยังเป็นแอปเวอร์ชันเก่าเห็นตรงกัน)
+  // และถ้ารายการที่ไม่ถูก void เสิร์ฟครบทุกตัวแล้ว เปลี่ยน status เป็น awaiting-payment ในจังหวะเดียวกัน
+  // ทำใน transaction เพื่อนับจากข้อมูลล่าสุดบน server — กันแท็บเล็ต 2 เครื่องกดพร้อมกันแล้วนับเกินจำนวนสั่ง
+  // หรือไม่มีใครเปลี่ยน status ให้ คืนจำนวนที่เสิร์ฟจริง (อาจน้อยกว่าที่ขอถ้าอีกเครื่องเสิร์ฟไปก่อน) 0 = ไม่ได้เสิร์ฟ
+  const handleServeItem = async (orderId: string, cartId: string, qty = 1): Promise<number> => {
     const ref = doc(db, "orders", orderId);
-    await runTransaction(db, async (tx) => {
+    const done = await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
-      if (!snap.exists()) return;
+      if (!snap.exists()) return null;
       const raw = snap.data();
-      if (raw.status !== "in-progress") return;
       const items: CartItem[] = raw.items || [];
-      const served: Record<string, unknown> = raw.servedAt || {};
-      const target = items.find((ci) => ci.cartId === cartId);
-      if (!target || target.voided || served[cartId]) return;
-      const allServed = liveItems(items).every((ci) => ci.cartId === cartId || !!served[ci.cartId]);
-      if (allServed) {
-        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp(), "status", "awaiting-payment");
+      const plan = planServe(raw, items, cartId, qty);
+      if (!plan) return null;
+      const units = new FieldPath("servedUnits", cartId);
+      if (plan.complete) {
+        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp(), units, { last: plan.add },
+          ...(plan.orderComplete ? ["status", "awaiting-payment"] : []));
       } else {
-        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp());
+        tx.update(ref, units, { count: plan.count, last: plan.add });
       }
+      return plan.add;
     });
+    return done ?? 0;
   };
 
   // ─── ย้อนกลับ (เฉพาะออเดอร์ที่ยังไม่ปิดบิล) ───────────────────────────────────
@@ -1369,13 +1475,21 @@ export default function App() {
     raw.isTakeaway ? raw.takeawayLabel ?? raw.tableNumber : raw.tableNumber;
   // ออเดอร์ที่รอชำระ: รายการที่ไม่มี servedAt ถือว่าเสิร์ฟแล้วตาม status (มาจาก "เสิร์ฟทั้งหมด") — ก่อนดึง status
   // กลับเป็น in-progress ต้องจด servedAt ให้รายการเหล่านั้นก่อน ไม่งั้นจะกลายเป็น "ยังไม่เสิร์ฟ" ตามไปด้วย
-  const keepServedArgs = (items: CartItem[], served: Record<string, unknown>, exceptCartId: string): unknown[] =>
+  // รายการที่เคยเสิร์ฟไปบางส่วนก่อน "เสิร์ฟทั้งหมด" จด last = ส่วนที่ "เสิร์ฟทั้งหมด" เติมให้ (ย้อนทีหลังได้ถูกจำนวน)
+  const keepServedArgs = (raw: ServeState, items: CartItem[], exceptCartId: string): unknown[] =>
     liveItems(items)
-      .filter((ci) => ci.cartId !== exceptCartId && !served[ci.cartId])
-      .flatMap((ci) => [new FieldPath("servedAt", ci.cartId), serverTimestamp()]);
+      .filter((ci) => ci.cartId !== exceptCartId && !raw.servedAt?.[ci.cartId])
+      .flatMap((ci) => {
+        const partial = lineServedQty({ servedUnits: raw.servedUnits }, ci);
+        return [
+          new FieldPath("servedAt", ci.cartId), serverTimestamp(),
+          ...(partial > 0 ? [new FieldPath("servedUnits", ci.cartId), { last: ci.quantity - partial }] : []),
+        ];
+      });
 
-  // ย้อนการเสิร์ฟ 1 รายการ → กลับเป็นยังไม่เสิร์ฟ (ออเดอร์ที่รอชำระอยู่กลับเป็นกำลังเตรียม)
-  const handleUnserveItem = async (orderId: string, cartId: string) => {
+  // ย้อนการเสิร์ฟของ 1 รายการ — qty = จำนวนที่ย้อน (แถบเลิกทำส่งจำนวนที่เพิ่งกดเสิร์ฟ) ไม่ส่ง = ย้อนชุดล่าสุด
+  // (ดู planUnserve) เหลือ 0 = กลับเป็นยังไม่เสิร์ฟทั้งบรรทัด — ออเดอร์ที่รอชำระอยู่กลับเป็นกำลังเตรียม
+  const handleUnserveItem = async (orderId: string, cartId: string, qty?: number) => {
     const ref = doc(db, "orders", orderId);
     const done = await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
@@ -1383,19 +1497,29 @@ export default function App() {
       const raw = snap.data();
       if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
       const items: CartItem[] = raw.items || [];
-      const served: Record<string, unknown> = raw.servedAt || {};
       const target = items.find((ci) => ci.cartId === cartId);
-      if (!target || target.voided) return null;
-      if (raw.status === "in-progress") {
-        if (!served[cartId]) return null; // ยังไม่เสิร์ฟอยู่แล้ว
-        tx.update(ref, new FieldPath("servedAt", cartId), deleteField());
-      } else {
-        tx.update(ref, new FieldPath("servedAt", cartId), deleteField(), "status", "in-progress", ...keepServedArgs(items, served, cartId));
-      }
-      return { raw, target };
+      if (!target) return null;
+      const plan = planUnserve(raw, target, qty);
+      if (!plan) return null; // ยังไม่เสิร์ฟอยู่แล้ว
+      tx.update(
+        ref,
+        new FieldPath("servedAt", cartId), deleteField(),
+        new FieldPath("servedUnits", cartId), plan.count > 0 ? { count: plan.count } : deleteField(),
+        ...(raw.status === "awaiting-payment" ? ["status", "in-progress", ...keepServedArgs(raw, items, cartId)] : []),
+      );
+      return { raw, target, plan };
     });
     if (done) {
-      await logActivity({ action: "unserve_item", orderId, tableNumber: logTableOf(done.raw), itemName: done.target.item.name.th });
+      await logActivity({
+        action: "unserve_item",
+        orderId,
+        tableNumber: logTableOf(done.raw),
+        itemName: done.target.item.name.th,
+        // รายการหลายชิ้น: ย้อนกี่ชิ้น เหลือเสิร์ฟแล้วกี่ชิ้น จากที่สั่งกี่ชิ้น
+        ...(done.target.quantity > 1
+          ? { details: { unservedQty: done.plan.back, servedLeft: done.plan.count, quantity: done.target.quantity } }
+          : {}),
+      });
     }
   };
 
@@ -1410,7 +1534,11 @@ export default function App() {
       if (raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
       const items: CartItem[] = raw.items || [];
       const served: Record<string, unknown> = raw.servedAt || {};
-      const reverted = liveItems(items).filter((ci) => !served[ci.cartId]);
+      // จำนวนที่ย้อน = ส่วนที่ "เสิร์ฟทั้งหมด" เติมให้ — รายการที่เสิร์ฟไปบางส่วนก่อนแล้วกลับไปเหลือเท่าเดิม
+      const reverted = liveItems(items)
+        .filter((ci) => !served[ci.cartId])
+        .map((ci) => ({ ci, back: ci.quantity - lineServedQty({ servedUnits: raw.servedUnits }, ci) }))
+        .filter((r) => r.back > 0);
       // ทุกรายการเสิร์ฟทีละรายการครบแล้ว — ไม่มีอะไรให้ย้อน (ถ้าดึง status กลับจะได้การ์ดค้างที่ไม่มีรายการ)
       if (reverted.length === 0) return null;
       tx.update(ref, { status: "in-progress" });
@@ -1421,7 +1549,7 @@ export default function App() {
         action: done.raw.isTakeaway ? "unready_takeaway" : "unserve_all",
         orderId,
         tableNumber: logTableOf(done.raw),
-        details: { items: done.reverted.map((ci) => ({ name: ci.item.name.th, quantity: ci.quantity })) },
+        details: { items: done.reverted.map(({ ci, back }) => ({ name: ci.item.name.th, quantity: back })) },
       });
     }
   };
@@ -1436,7 +1564,6 @@ export default function App() {
       const raw = snap.data();
       if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
       const items: CartItem[] = raw.items || [];
-      const served: Record<string, unknown> = raw.servedAt || {};
       const target = items.find((ci) => ci.cartId === cartId);
       if (!target || !target.voided) return null;
       const newItems = items.map((ci) => {
@@ -1444,8 +1571,8 @@ export default function App() {
         const { voided: _v, voidReason: _r, voidedAt: _a, voidedWhileUnserved: _u, ...rest } = ci;
         return rest;
       });
-      if (raw.status === "awaiting-payment" && target.voidedWhileUnserved && !served[cartId]) {
-        tx.update(ref, "items", newItems, "status", "in-progress", ...keepServedArgs(items, served, cartId));
+      if (raw.status === "awaiting-payment" && target.voidedWhileUnserved && !lineFullyServed(raw, target)) {
+        tx.update(ref, "items", newItems, "status", "in-progress", ...keepServedArgs(raw, items, cartId));
       } else {
         tx.update(ref, { items: newItems });
       }
@@ -1477,7 +1604,7 @@ export default function App() {
             voided: true,
             ...(reason ? { voidReason: reason } : {}),
             voidedAt: new Date(),
-            ...(order.status === "in-progress" && !order.servedAt?.[cartId] ? { voidedWhileUnserved: true } : {}),
+            ...(order.status === "in-progress" && !lineFullyServed(order, ci) ? { voidedWhileUnserved: true } : {}),
           })
         : ci
     );
@@ -1487,7 +1614,7 @@ export default function App() {
     const allServedNow =
       !allVoided &&
       order.status === "in-progress" &&
-      liveItems(newItems).every((ci) => !!order.servedAt?.[ci.cartId]);
+      liveItems(newItems).every((ci) => lineFullyServed(order, ci));
     await logActivity({
       action: "void_item",
       orderId: order.id,
@@ -2188,6 +2315,7 @@ export default function App() {
           onLangToggle={toggleLang}
           submitting={isSubmittingOrder}
           unavailableCartIds={cartUnavailableCartIds}
+          sendError={orderSendFailed ? T[lang].orderSendFailed : undefined}
         />
       );
       break;

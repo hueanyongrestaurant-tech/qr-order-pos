@@ -178,12 +178,18 @@ function itemLines(items: CartItem[], lang: Language): TicketLine[] {
   return lines;
 }
 
-const TOP_MARGIN_LINES = 5; // ขอบบนก่อนเนื้อหา (แทน spacer 30mm ของ JSX เดิม)
+const TOP_MARGIN_LINES = 5; // ขอบบนก่อนเนื้อหา (แทน spacer 30mm ของ JSX เดิม) — ใบเคาน์เตอร์ไม่เว้น (ดู topMarginLines)
 const TEAR_GAP_LINES = 2;
+
+// ใบเคาน์เตอร์เริ่มหัวใบทันที ไม่เว้นขอบบน (ประหยัดกระดาษ) — ใบครัว/ใบรวม/ใบย้ายของครัวเว้นเหมือนเดิม
+// ใบย้ายโต๊ะใช้ layoutTicket ตัวเดียวกัน ใบย้ายของเคาน์เตอร์จึงไม่เว้นตามไปด้วย
+export function topMarginLines(plan: TicketPlan): number {
+  return plan.station === "counter" ? 0 : TOP_MARGIN_LINES;
+}
 
 export function layoutTicket(order: Order, plan: TicketPlan, lang: Language, banner?: string): TicketLine[] {
   const lines: TicketLine[] = [];
-  for (let i = 0; i < TOP_MARGIN_LINES; i++) lines.push(blank("normal"));
+  for (let i = 0; i < topMarginLines(plan); i++) lines.push(blank("normal"));
 
   plan.sections.forEach((section, idx) => {
     if (idx === 0) {
