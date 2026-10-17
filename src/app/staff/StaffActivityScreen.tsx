@@ -218,6 +218,17 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                   </div>
                 )}
 
+                {/* ยกเลิกรายการ — จำนวนที่ยกเลิกจากที่สั่ง (log เก่าไม่มี = ยกเลิกทั้งบรรทัด) */}
+                {l.action === "void_item" && typeof l.details?.voidedQty === "number" && (
+                  <div className="mt-1 text-xs text-muted-foreground tabular-nums">
+                    {l.details.voidedQty < l.details.quantityBefore
+                      ? (lang === "en"
+                          ? `Cancelled ${l.details.voidedQty} of ${l.details.quantityBefore} pcs`
+                          : `ยกเลิก ${l.details.voidedQty} จาก ${l.details.quantityBefore} ชิ้น`)
+                      : (lang === "en" ? `Cancelled ${l.details.voidedQty} pcs` : `ยกเลิก ${l.details.voidedQty} ชิ้น`)}
+                  </div>
+                )}
+
                 {/* ย้อนเสิร์ฟรายการหลายชิ้น — ย้อนกี่ชิ้น เหลือเสิร์ฟแล้วกี่ชิ้น (log เก่า/รายการชิ้นเดียวไม่มี) */}
                 {l.action === "unserve_item" && typeof l.details?.unservedQty === "number" && (
                   <div className="mt-1 text-xs text-muted-foreground tabular-nums">

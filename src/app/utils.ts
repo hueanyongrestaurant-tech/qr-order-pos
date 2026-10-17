@@ -314,6 +314,91 @@ export function planUnserve(state: ServeState, ci: CartItem, want?: number): { b
   return { back, count: cur - back };
 }
 
+// ─── ยกเลิก (void) / ปรับจำนวน — คำนวณ items[] ใหม่จากข้อมูลล่าสุดใน transaction ─────────────
+// ผลที่ต้องเขียนเพิ่มนอกจาก items[]:
+// completeLine = บรรทัดเดิมกลายเป็นเสิร์ฟครบ (ยกเลิก/ลดเฉพาะชิ้นที่ยังไม่เสิร์ฟจนหมด) → จด servedAt ให้ (แอปเก่าเห็นตรงกัน)
+// status = "cancelled" (ไม่เหลือรายการเลย) | "awaiting-payment" (ที่เหลือเสิร์ฟครบหมดแล้ว) | undefined = ไม่เปลี่ยน
+export interface LineChangePlan {
+  items: CartItem[];
+  completeLine: boolean;
+  status?: "cancelled" | "awaiting-payment";
+}
+
+function settleAfterChange(state: ServeState, newItems: CartItem[], cartId: string): LineChangePlan {
+  const live = liveItems(newItems);
+  if (live.length === 0) return { items: newItems, completeLine: false, status: "cancelled" };
+  const line = live.find((ci) => ci.cartId === cartId);
+  const completeLine =
+    state.status === "in-progress" && !!line && !state.servedAt?.[cartId] && lineServedQty(state, line) > 0 && lineFullyServed(state, line);
+  const allServed = state.status === "in-progress" && live.every((ci) => lineFullyServed(state, ci));
+  return { items: newItems, completeLine, ...(allServed ? { status: "awaiting-payment" as const } : {}) };
+}
+
+export interface VoidPlan extends LineChangePlan {
+  n: number;              // ยกเลิกกี่ชิ้น
+  quantityBefore: number; // จำนวนของบรรทัดก่อนยกเลิก
+  voidedCartId: string;   // cartId ของรายการที่ถูก void (ใช้คืนรายการ) — แยกบรรทัด = splitId
+  target: CartItem;
+}
+
+// ยกเลิก want ชิ้นของรายการ cartId
+// - ปกติ (ปุ่ม ✕ / ยกเลิกรายการค้างในหน้าจ่ายเงิน): ยกเลิกได้เฉพาะชิ้นที่ยังไม่เสิร์ฟ — ชิ้นที่เสิร์ฟแล้วยังคิดเงินเสมอ
+//   ยกเลิกไม่หมดบรรทัด = แยกบรรทัด: บรรทัดเดิมเหลือ quantity - n (ข้อมูลเสิร์ฟคงเดิม) + บรรทัดใหม่ (splitId)
+//   จำนวน n ที่ voided ต่อท้ายบรรทัดเดิม — items[] ไม่มีอะไรถูกลบออก ยอดบิลลดตาม n พอดี
+// - wholeLine (กด − จนเหลือ 0 ในหน้าจ่ายเงิน): ยกเลิกทั้งบรรทัด รวมชิ้นที่เสิร์ฟแล้ว (ลดจานที่เสิร์ฟแล้วได้ตามเดิม)
+// null = ไม่มีอะไรให้ยกเลิก (บิลปิดแล้ว / void ไปแล้ว / ไม่มีชิ้นที่ยังไม่เสิร์ฟ)
+export function planVoid(
+  state: ServeState,
+  items: CartItem[],
+  cartId: string,
+  want: number,
+  opts: { wholeLine?: boolean; splitId: string; reason: string; now: Date },
+): VoidPlan | null {
+  if (state.status !== "in-progress" && state.status !== "awaiting-payment") return null;
+  const target = items.find((ci) => ci.cartId === cartId);
+  if (!target || target.voided) return null;
+  const q = target.quantity;
+  const served = servedQtyOf(state, target);
+  const voidable = opts.wholeLine ? q : q - served;
+  if (voidable <= 0) return null;
+  const n = opts.wholeLine ? q : Math.max(1, Math.min(Math.floor(want) || 1, voidable));
+  const voidFields = {
+    voided: true as const,
+    ...(opts.reason ? { voidReason: opts.reason } : {}),
+    voidedAt: opts.now,
+  };
+  let newItems: CartItem[];
+  let voidedCartId = cartId;
+  if (n === q) {
+    newItems = items.map((ci) =>
+      ci.cartId === cartId
+        ? stripItemPhoto({ ...ci, ...voidFields, ...(state.status === "in-progress" && served < q ? { voidedWhileUnserved: true } : {}) })
+        : ci,
+    );
+  } else {
+    voidedCartId = opts.splitId;
+    newItems = items.flatMap((ci) =>
+      ci.cartId === cartId
+        ? [{ ...ci, quantity: q - n }, stripItemPhoto({ ...ci, cartId: opts.splitId, quantity: n, ...voidFields, voidedWhileUnserved: true })]
+        : [ci],
+    );
+  }
+  return { ...settleAfterChange(state, newItems, cartId), n, quantityBefore: q, voidedCartId, target };
+}
+
+// ปรับจำนวน +/− (ไม่ถึง 0) จากหน้าจ่ายเงิน — ลดได้ทั้งชิ้นที่เสิร์ฟแล้วและยังไม่เสิร์ฟ (ตามเดิม)
+// ลดจนที่เหลือเสิร์ฟครบ → completeLine/status ตามกฎเดียวกับการเสิร์ฟ ไม่ให้การ์ดค้างในโซนกำลังเตรียม
+export function planAdjustQty(state: ServeState, items: CartItem[], cartId: string, delta: number):
+  (LineChangePlan & { oldQty: number; newQty: number; target: CartItem }) | null {
+  if (state.status !== "in-progress" && state.status !== "awaiting-payment") return null;
+  const target = items.find((ci) => ci.cartId === cartId);
+  if (!target || target.voided) return null;
+  const newQty = target.quantity + delta;
+  if (newQty <= 0 || delta === 0) return null;
+  const newItems = items.map((ci) => (ci.cartId === cartId ? { ...ci, quantity: newQty } : ci));
+  return { ...settleAfterChange(state, newItems, cartId), oldQty: target.quantity, newQty, target };
+}
+
 // รายการที่ยังไม่เสิร์ฟ (ไม่นับที่ void แล้ว) — ออเดอร์ที่พ้น in-progress ไปแล้วถือว่าเสิร์ฟครบทุกรายการ
 // (รวมออเดอร์เก่าที่กด "เสิร์ฟทั้งหมด" ซึ่งไม่มี servedAt เลย)
 // quantity ของแต่ละตัว = จำนวนที่ "ยังไม่เสิร์ฟ" (เสิร์ฟไปแล้วบางส่วนจะเหลือน้อยกว่าที่สั่ง) — เป็นสำเนา

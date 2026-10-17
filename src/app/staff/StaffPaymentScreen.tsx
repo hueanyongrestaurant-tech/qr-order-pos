@@ -7,6 +7,7 @@ import { cartItemKey, cartItemTotal, compareTables, formatClock, formatOptionDet
 import { StaffHeader } from "./StaffHeader";
 import type { ReceiptData } from "./ticket";
 import { useSelectedPrinterAddress } from "./printerStore";
+import { QtyPickerModal, qtyInfo } from "./QtyPickerModal";
 
 // ─── Staff Payment Screen ─────────────────────────────────────────────────────
 
@@ -17,7 +18,8 @@ interface StaffPaymentProps {
   onCloseTable: (n: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => void;
   onCloseTakeaway: (orderId: string, payment: PaymentInput) => void;
   onServeItem: (orderId: string, cartId: string, qty?: number) => Promise<number>;
-  onRemoveItem: (orderId: string, cartId: string) => void; // App ถามยืนยัน/เหตุผลเอง แล้ว void รายการ
+  // App ถามยืนยัน/เหตุผลเอง แล้ว void qty ชิ้น (เฉพาะที่ยังไม่เสิร์ฟ) — picked = เลือกจำนวนจากหน้าต่างแล้ว ไม่ต้องยืนยันซ้ำ
+  onRemoveItem: (orderId: string, cartId: string, qty: number, picked: boolean) => void;
   onAdjustItem: (contributingOrders: Order[], key: string, delta: number) => void;
   onAdjustTakeawayItem: (orderId: string, key: string, delta: number) => void;
   onCancelOrder: (orderId: string) => void;
@@ -481,6 +483,14 @@ export function StaffPaymentScreen({
     );
   };
 
+  // ยกเลิกรายการค้าง — กติกาเดียวกับปุ่ม ✕ หน้าออเดอร์: ยกเลิกได้เฉพาะชิ้นที่ยังไม่เสิร์ฟ (ci.quantity = ที่ยังไม่เสิร์ฟ)
+  // เหลือหลายชิ้น = หน้าต่างเลือกจำนวน (ค่าเริ่มต้น = ทั้งหมดที่เหลือ) เหลือ 1 = หน้าต่างยืนยันแบบเดิมของ App
+  const [voidAsk, setVoidAsk] = useState<{ order: Order; ci: CartItem } | null>(null);
+  const askVoidPending = (order: Order, ci: CartItem) => {
+    if (ci.quantity > 1) setVoidAsk({ order, ci });
+    else onRemoveItem(order.id, ci.cartId, 1, false);
+  };
+
   const select = (key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
     setPaymentMethod("cash");
@@ -556,7 +566,7 @@ export function StaffPaymentScreen({
                         }
                         pending={g.pending}
                         onServePending={askServePending}
-                        onVoidPending={(order, ci) => onRemoveItem(order.id, ci.cartId)}
+                        onVoidPending={askVoidPending}
                         billName={`${t.tableLabel} ${g.tableNumber}`}
                         onAskConfirm={onAskConfirm}
                         restoreAction={(ci) => {
@@ -647,6 +657,30 @@ export function StaffPaymentScreen({
           )}
         </div>
       </div>
+      {voidAsk && (() => {
+        const { order, ci } = voidAsk;
+        const en = lang === "en";
+        const ordered = order.items.find((x) => x.cartId === ci.cartId)?.quantity ?? ci.quantity;
+        const left = ci.quantity;
+        const head = `${en ? ci.item.name.en || ci.item.name.th : ci.item.name.th} (${t.tableLabel} ${order.tableNumber})`;
+        return (
+          <QtyPickerModal
+            lang={lang}
+            tone="danger"
+            title={en ? `Cancel ${head}?` : `ยกเลิก ${head} กี่ชิ้น?`}
+            info={qtyInfo(lang, ordered, ordered - left) + (ordered > left ? (en ? " — served ones stay on the bill" : " — ชิ้นที่เสิร์ฟแล้วยังคิดเงิน") : "")}
+            max={left}
+            initial={left}
+            allLabel={en ? `All not served (${left})` : `ทั้งหมดที่เหลือ (${left})`}
+            confirmLabel={(n) => (en ? `Cancel ${n}` : `ยกเลิก ${n}`)}
+            onCancel={() => setVoidAsk(null)}
+            onConfirm={(n) => {
+              setVoidAsk(null);
+              onRemoveItem(order.id, ci.cartId, n, true);
+            }}
+          />
+        );
+      })()}
     </>
   );
 }

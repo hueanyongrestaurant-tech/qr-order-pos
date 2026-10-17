@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath } from "firebase/firestore";
+import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 
@@ -84,6 +84,9 @@ import {
   lineFullyServed,
   planServe,
   planUnserve,
+  planVoid,
+  planAdjustQty,
+  type LineChangePlan,
   type ServeState,
   orderSendOutcome,
   cartTotal,
@@ -1018,6 +1021,12 @@ export default function App() {
       confirmLabel: T[lang].voidItemConfirmYes,
     });
   };
+  // ยกเลิกบางชิ้น: picked = พนักงานเลือกจำนวนจากหน้าต่างเลือกจำนวนแล้ว (นับเป็นการยืนยันแล้ว) → ถามแค่เหตุผล
+  // ตอน flag เปิด / ไม่ได้ผ่านหน้าต่างเลือกจำนวน (เหลือ 1 ชิ้น) → askVoidItem แบบเดิม
+  const askVoidQty = (item: CartItem, picked: boolean, onConfirm: (reason: string) => void) => {
+    if (!picked) { askVoidItem(item, onConfirm); return; }
+    askReason(T[lang].voidItemReasonTitle, onConfirm);
+  };
   const [busyTables, setBusyTables] = useState(0);
   const [busyItems, setBusyItems] = useState(0);
 
@@ -1589,59 +1598,92 @@ export default function App() {
     }
   };
 
-  // mark 1 รายการใน order เป็น voided — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array)
-  // + ตัดรูปทิ้ง + เขียน log void_item ถ้าทุกรายการถูก void หมด เปลี่ยน status เป็น "cancelled" (ไม่ลบ doc)
-  // billTotalBefore: ส่งมาเฉพาะตอน void จากหน้าชำระเงิน — ยอดบิลที่พนักงานเห็นบนการ์ดก่อนกด
-  // (โต๊ะ = รวมทุกออเดอร์ของโต๊ะ) ใช้บันทึก "ยอดเดิม → ยอดใหม่" ลง log
-  const voidOrderItem = async (order: Order, cartId: string, reason: string, billTotalBefore?: number) => {
-    const target = order.items.find((ci) => ci.cartId === cartId);
-    if (!target || target.voided) return;
-    const amount = cartItemUnitPrice(target) * target.quantity;
-    const newItems = order.items.map((ci) =>
-      ci.cartId === cartId
-        ? stripItemPhoto({
-            ...ci,
-            voided: true,
-            ...(reason ? { voidReason: reason } : {}),
-            voidedAt: new Date(),
-            ...(order.status === "in-progress" && !lineFullyServed(order, ci) ? { voidedWhileUnserved: true } : {}),
-          })
-        : ci
-    );
-    const allVoided = newItems.every((ci) => ci.voided);
-    // void รายการสุดท้ายที่ยังไม่เสิร์ฟ แล้วที่เหลือเสิร์ฟครบหมดแล้ว — ออเดอร์ต้องย้ายไปรอชำระ ไม่งั้นจะค้าง
-    // อยู่ในโซนกำลังเตรียมแบบไม่มีรายการให้กด
-    const allServedNow =
-      !allVoided &&
-      order.status === "in-progress" &&
-      liveItems(newItems).every((ci) => lineFullyServed(order, ci));
-    await logActivity({
-      action: "void_item",
-      orderId: order.id,
-      tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
-      itemName: target.item.name.th,
-      amount,
-      reason,
-      ...(billTotalBefore !== undefined
-        ? { details: { billTotalBefore, billTotalAfter: billTotalBefore - amount } }
-        : {}),
-    });
-    await addVoidReason(reason);
-    await updateDoc(doc(db, "orders", order.id), {
-      items: newItems,
-      ...(allVoided
-        ? { status: "cancelled", ...(reason ? { cancelReason: reason } : {}), cancelledAt: new Date() }
-        : allServedNow
-          ? { status: "awaiting-payment" }
-          : {}),
-    });
+  // ยอดบิลที่พนักงานเห็น ณ ตอนกด — โต๊ะ = รวมทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) / กลับบ้าน = ใบเดียว
+  // ใช้บันทึก "ยอดบิลเดิม → ใหม่" ลง log ของการยกเลิก/ปรับจำนวน
+  const billTotalOf = (orderId: string): number | undefined => {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return undefined;
+    if (order.isTakeaway) return orderTotal(order);
+    return orders
+      .filter((o) => !o.isTakeaway && o.tableNumber === order.tableNumber && (o.status === "in-progress" || o.status === "awaiting-payment"))
+      .reduce((s, o) => s + orderTotal(o), 0);
   };
 
-  const handleRemoveOrderItem = async (orderId: string, cartId: string, reason: string) => {
-    const order = orders.find((o) => o.id === orderId);
-    if (!order) return;
-    await voidOrderItem(order, cartId, reason);
+  // เขียนผลของ planVoid/planAdjustQty — items[] ใหม่ + จด servedAt ถ้าบรรทัดเดิมเสิร์ฟครบ + เปลี่ยน status ตามกฎเดิม
+  const applyLineChange = (
+    tx: Transaction, ref: DocumentReference, raw: ServeState, cartId: string, plan: LineChangePlan, reason: string,
+  ) => {
+    const units = raw.servedUnits?.[cartId];
+    tx.update(
+      ref,
+      "items", plan.items,
+      ...(plan.completeLine
+        ? [new FieldPath("servedAt", cartId), serverTimestamp(), new FieldPath("servedUnits", cartId), { last: units?.last ?? units?.count ?? 1 }]
+        : []),
+      ...(plan.status === "cancelled"
+        ? ["status", "cancelled", ...(reason ? ["cancelReason", reason] : []), "cancelledAt", new Date()]
+        : plan.status === "awaiting-payment" ? ["status", "awaiting-payment"] : []),
+    );
   };
+
+  // ยกเลิก (void) รายการ — ยังคงอยู่ใน items[] เสมอ (ห้ามลบออกจาก array) + ตัดรูปทิ้ง + log void_item
+  // qty = จำนวนที่ยกเลิก (ค่าเริ่มต้น = ทั้งหมดที่ยังไม่เสิร์ฟ) ยกเลิกได้เฉพาะชิ้นที่ยังไม่เสิร์ฟ — ไม่หมดบรรทัดจะแยกเป็น
+  // บรรทัด voided ใหม่ (ดู planVoid) wholeLine = กด − จนเหลือ 0 ในหน้าจ่ายเงิน: ยกเลิกทั้งบรรทัดแม้เสิร์ฟแล้ว
+  // ทำใน transaction (นับจากข้อมูลล่าสุด กันสองเครื่องกดพร้อมกัน) ไม่เหลือรายการเลย = ยกเลิกทั้งใบ ("cancelled")
+  // คืน cartId ของรายการที่ถูก void (ใช้คืนรายการจากแถบย้อนกลับ)
+  // billTotalBefore: ยอดบิลบนการ์ดหน้าจ่ายเงินตอนกด — ไม่ส่ง = คิดจากออเดอร์ค้างของโต๊ะ (billTotalOf)
+  const voidOrderItem = async (
+    orderId: string,
+    cartId: string,
+    reason: string,
+    opts: { qty?: number; wholeLine?: boolean; billTotalBefore?: number } = {},
+  ): Promise<string | null> => {
+    const billTotalBefore = opts.billTotalBefore ?? billTotalOf(orderId);
+    const ref = doc(db, "orders", orderId);
+    const done = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return null;
+      const raw = snap.data();
+      const items: CartItem[] = raw.items || [];
+      const plan = planVoid(raw, items, cartId, opts.qty ?? Number.MAX_SAFE_INTEGER, {
+        wholeLine: opts.wholeLine,
+        splitId: `${cartId}-x${uid()}`,
+        reason,
+        now: new Date(),
+      });
+      if (!plan) {
+        const target = items.find((ci) => ci.cartId === cartId);
+        if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
+        if (target && !target.voided) {
+          throw new Error(lang === "en" ? "Every piece of this item is already served" : "รายการนี้เสิร์ฟครบทุกชิ้นแล้ว ยกเลิกไม่ได้");
+        }
+        return null; // ถูกยกเลิกไปแล้ว (เช่นจากอีกเครื่อง)
+      }
+      applyLineChange(tx, ref, raw, cartId, plan, reason);
+      return { raw, plan };
+    });
+    if (!done) return null;
+    const { raw, plan } = done;
+    const amount = cartItemUnitPrice(plan.target) * plan.n;
+    await logActivity({
+      action: "void_item",
+      orderId,
+      tableNumber: logTableOf(raw),
+      itemName: plan.target.item.name.th,
+      amount,
+      reason,
+      details: {
+        voidedQty: plan.n,
+        quantityBefore: plan.quantityBefore,
+        ...(billTotalBefore !== undefined ? { billTotalBefore, billTotalAfter: billTotalBefore - amount } : {}),
+      },
+    });
+    await addVoidReason(reason);
+    return plan.voidedCartId;
+  };
+
+  const handleRemoveOrderItem = (orderId: string, cartId: string, reason: string, qty?: number) =>
+    voidOrderItem(orderId, cartId, reason, { qty });
 
   const handleCancelOrder = async (orderId: string, reason: string) => {
     const order = orders.find((o) => o.id === orderId);
@@ -1889,41 +1931,56 @@ export default function App() {
     });
   };
 
-  // ปรับจำนวนรายการตอนชำระเงิน — ลดจนเหลือ 0 = void (ต้องกรอกเหตุผลก่อน) แทนการลบออกจาก array
+  // ปรับจำนวนรายการตอนชำระเงิน — ลดจนเหลือ 0 = void ทั้งบรรทัด (ต้องกรอกเหตุผลก่อน) แทนการลบออกจาก array
   // ปรับ +1/-1 แบบไม่ถึง void ก็ต้องกรอกเหตุผลก่อนเช่นกัน แล้วบันทึก log adjust_item_qty
+  // ปุ่ม − ลดได้ทั้งจานที่เสิร์ฟแล้วและยังไม่เสิร์ฟ (ตามเดิม) — ทำใน transaction เหมือนการยกเลิก (planAdjustQty)
   // (ตอน AUDIT_UI_ENABLED = false askReason จะข้ามหน้าต่างแล้วทำงานทันที — ดู askReason)
+  const adjustLine = (order: Order, target: CartItem, delta: number, billTotalBefore: number) => {
+    const failNotice = (err: any) =>
+      setNotice((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err)));
+    if (target.quantity + delta <= 0) {
+      askVoidItem(target, (reason) => {
+        voidOrderItem(order.id, target.cartId, reason, { wholeLine: true, billTotalBefore }).catch(failNotice);
+      });
+      return;
+    }
+    askReason(T[lang].adjustItemReasonTitle, (reason) => {
+      void (async () => {
+        const ref = doc(db, "orders", order.id);
+        const done = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return null;
+          const raw = snap.data();
+          const plan = planAdjustQty(raw, raw.items || [], target.cartId, delta);
+          if (!plan) {
+            if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
+            return null;
+          }
+          applyLineChange(tx, ref, raw, target.cartId, plan, reason);
+          return { raw, plan };
+        });
+        if (!done) return;
+        const amount = delta * cartItemUnitPrice(done.plan.target);
+        await logActivity({
+          action: "adjust_item_qty",
+          orderId: order.id,
+          tableNumber: logTableOf(done.raw),
+          itemName: done.plan.target.item.name.th,
+          amount,
+          reason,
+          details: { oldQty: done.plan.oldQty, newQty: done.plan.newQty, billTotalBefore, billTotalAfter: billTotalBefore + amount },
+        });
+      })().catch(failNotice);
+    });
+  };
+
   const handleAdjustPaymentItem = async (contributingOrders: Order[], key: string, delta: number) => {
     // ยอดบิลของทั้งโต๊ะ (ตรงกับตัวเลขบนการ์ดหน้าชำระเงิน) ณ ตอนกด
     const billTotalBefore = contributingOrders.reduce((s, o) => s + orderTotal(o), 0);
     for (const order of contributingOrders) {
       const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
       if (!target) continue;
-      const newQty = target.quantity + delta;
-      if (newQty > 0) {
-        const oldQty = target.quantity;
-        askReason(T[lang].adjustItemReasonTitle, (reason) => {
-          void (async () => {
-            const newItems = order.items.map((ci) =>
-              ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
-            );
-            await updateDoc(doc(db, "orders", order.id), { items: newItems });
-            const amount = delta * cartItemUnitPrice(target);
-            await logActivity({
-              action: "adjust_item_qty",
-              orderId: order.id,
-              tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
-              itemName: target.item.name.th,
-              amount,
-              reason,
-              details: { oldQty, newQty, billTotalBefore, billTotalAfter: billTotalBefore + amount },
-            });
-          })();
-        });
-      } else {
-        askVoidItem(target, (reason) => {
-          void voidOrderItem(order, target.cartId, reason, billTotalBefore);
-        });
-      }
+      adjustLine(order, target, delta, billTotalBefore);
       return;
     }
   };
@@ -1933,33 +1990,7 @@ export default function App() {
     if (!order) return;
     const target = order.items.find((ci) => !ci.voided && cartItemKey(ci) === key);
     if (!target) return;
-    const newQty = target.quantity + delta;
-    const billTotalBefore = orderTotal(order);
-    if (newQty > 0) {
-      const oldQty = target.quantity;
-      askReason(T[lang].adjustItemReasonTitle, (reason) => {
-        void (async () => {
-          const newItems = order.items.map((ci) =>
-            ci.cartId === target.cartId ? { ...ci, quantity: newQty } : ci
-          );
-          await updateDoc(doc(db, "orders", orderId), { items: newItems });
-          const amount = delta * cartItemUnitPrice(target);
-          await logActivity({
-            action: "adjust_item_qty",
-            orderId,
-            tableNumber: order.isTakeaway ? order.takeawayLabel ?? order.tableNumber : order.tableNumber,
-            itemName: target.item.name.th,
-            amount,
-            reason,
-            details: { oldQty, newQty, billTotalBefore, billTotalAfter: billTotalBefore + amount },
-          });
-        })();
-      });
-    } else {
-      askVoidItem(target, (reason) => {
-        void voidOrderItem(order, target.cartId, reason, billTotalBefore);
-      });
-    }
+    adjustLine(order, target, delta, orderTotal(order));
   };
 
   const handleStaffTabChange = (tab: StaffTab) => {
@@ -2360,9 +2391,9 @@ export default function App() {
             onServeItem={handleServeItem}
             onUnserveItem={handleUnserveItem}
             onRestoreItem={handleRestoreItem}
-            onRemoveItem={(orderId, cartId, onVoided) => {
+            onRemoveItem={(orderId, cartId, qty, picked, onVoided) => {
               const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
-              if (target) askVoidItem(target, (reason) => onVoided(handleRemoveOrderItem(orderId, cartId, reason)));
+              if (target) askVoidQty(target, picked, (reason) => onVoided(handleRemoveOrderItem(orderId, cartId, reason, qty)));
             }}
             onCancelOrder={(orderId) =>
               askCancelOrder((reason) => handleCancelOrder(orderId, reason))
@@ -2389,11 +2420,11 @@ export default function App() {
             onCloseTable={closeTableWithNotice}
             onCloseTakeaway={handleCloseTakeawayOrder}
             onServeItem={handleServeItem}
-            onRemoveItem={(orderId, cartId) => {
+            onRemoveItem={(orderId, cartId, qty, picked) => {
               const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
               if (target) {
-                askVoidItem(target, (reason) =>
-                  handleRemoveOrderItem(orderId, cartId, reason).catch((err) =>
+                askVoidQty(target, picked, (reason) =>
+                  handleRemoveOrderItem(orderId, cartId, reason, qty).catch((err) =>
                     setNotice((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err))),
                   ),
                 );

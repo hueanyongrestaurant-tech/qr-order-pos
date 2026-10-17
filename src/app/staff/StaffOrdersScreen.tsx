@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowRightLeft, Check, Clock, Minus, Plus, Printer, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Check, Clock, Plus, Printer, RotateCcw, Trash2, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
@@ -30,6 +30,7 @@ function useMinuteClock(): number {
   return now;
 }
 import { kitchenOptionSummary } from "./ticket";
+import { QtyPickerModal, qtyInfo } from "./QtyPickerModal";
 import { usePrintRole, useSelectedPrinterAddress } from "./printerStore";
 import { noItemsForRoleMessage } from "./stationTickets";
 
@@ -46,7 +47,9 @@ interface StaffOrdersProps {
   onUnserveItem: (orderId: string, cartId: string, qty?: number) => Promise<void>;
   onRestoreItem: (orderId: string, cartId: string) => Promise<void>;
   // App ถามยืนยัน/เหตุผลเอง — onVoided ถูกเรียกพร้อม promise ของการ void เมื่อพนักงานยืนยันแล้วเท่านั้น
-  onRemoveItem: (orderId: string, cartId: string, onVoided: (voiding: Promise<void>) => void) => void;
+  // qty = จำนวนที่ยกเลิก (เฉพาะชิ้นที่ยังไม่เสิร์ฟ), picked = เลือกจากหน้าต่างเลือกจำนวนแล้ว (App ไม่ต้องยืนยันซ้ำ)
+  // voiding resolve เป็น cartId ของรายการที่ถูก void (ใช้คืนรายการ) null = ไม่ได้ยกเลิกอะไร
+  onRemoveItem: (orderId: string, cartId: string, qty: number, picked: boolean, onVoided: (voiding: Promise<string | null>) => void) => void;
   onCancelOrder: (orderId: string) => void;
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
@@ -184,13 +187,14 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     });
   };
 
-  // เหลือ 1 ชิ้น (รวมรายการที่สั่ง 1) = หน้าต่างยืนยันแบบเดิม / เหลือหลายชิ้น = หน้าต่างเลือกจำนวน (ServeQtyModal)
-  const [serveAsk, setServeAsk] = useState<{ order: Order; ci: CartItem } | null>(null);
+  // เหลือ 1 ชิ้น (รวมรายการที่สั่ง 1) = หน้าต่างยืนยันแบบเดิม / เหลือหลายชิ้น = หน้าต่างเลือกจำนวน (QtyPickerModal)
+  // kind: serve = เสิร์ฟทีละจำนวน, void = ยกเลิกเฉพาะชิ้นที่ยังไม่เสิร์ฟ
+  const [qtyAsk, setQtyAsk] = useState<{ kind: "serve" | "void"; order: Order; ci: CartItem } | null>(null);
   const handleServeItem = (order: Order, ci: CartItem) => {
     const left = ci.quantity - servedQty(order, ci);
     if (left <= 0) return;
     if (left > 1) {
-      setServeAsk({ order, ci });
+      setQtyAsk({ kind: "serve", order, ci });
       return;
     }
     const what = ci.quantity > 1 ? `${itemName(ci)} ×1 (${ci.quantity}/${ci.quantity})` : itemText(ci);
@@ -218,14 +222,28 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     );
   };
 
-  // ยกเลิกรายการ — App ถามยืนยันเอง ยืนยันแล้วขึ้นแถบย้อนกลับ (คืนรายการ)
+  // ยกเลิกรายการ (ปุ่ม ✕) — ยกเลิกได้เฉพาะชิ้นที่ยังไม่เสิร์ฟ ยังไม่เสิร์ฟเหลือหลายชิ้น = หน้าต่างเลือกจำนวน
+  // (ค่าเริ่มต้น = ทั้งหมดที่ยังไม่เสิร์ฟ) เหลือ 1 = หน้าต่างยืนยันแบบเดิมของ App
   const handleRemoveItem = (order: Order, ci: CartItem) => {
-    onRemoveItem(order.id, ci.cartId, (p) => {
-      const voiding = settle(p);
-      // รายการสุดท้ายของออเดอร์ → ออเดอร์ถูกยกเลิกทั้งใบ ซึ่งไม่ทำย้อนกลับให้ — ไม่ขึ้นแถบเลย (ยกเลิกเงียบๆ)
-      if (liveItems(order.items).length <= 1) return;
-      showToast(en ? `Cancelled ${itemText(ci)} (${tableText(order)})` : `ยกเลิก ${itemText(ci)} (${tableText(order)}) แล้ว`, () =>
-        voiding.then((ok) => (ok ? onRestoreItem(order.id, ci.cartId) : undefined)),
+    const left = ci.quantity - servedQty(order, ci);
+    if (left <= 0) return;
+    if (left > 1) setQtyAsk({ kind: "void", order, ci });
+    else voidItem(order, ci, 1, false);
+  };
+
+  // App ถามเหตุผล/ยืนยันเอง (picked = เลือกจำนวนจากหน้าต่างแล้ว ไม่ต้องยืนยันซ้ำ) ยืนยันแล้วขึ้นแถบย้อนกลับ
+  // ย้อนกลับ = คืนรายการที่เพิ่งถูก void (ยกเลิกบางส่วน = บรรทัดที่แยกออกมา จำนวนเท่าที่เพิ่งยกเลิกพอดี)
+  const voidItem = (order: Order, ci: CartItem, qty: number, picked: boolean) => {
+    onRemoveItem(order.id, ci.cartId, qty, picked, (p) => {
+      const voiding = p.then((id) => id, (err) => {
+        failAlert(err);
+        return null;
+      });
+      // ยกเลิกรายการสุดท้ายของออเดอร์หมดทั้งบรรทัด → ออเดอร์ถูกยกเลิกทั้งใบ ไม่ทำย้อนกลับให้ — ไม่ขึ้นแถบ (ยกเลิกเงียบๆ)
+      if (liveItems(order.items).length <= 1 && qty >= ci.quantity) return;
+      const what = qty < ci.quantity ? `${itemName(ci)} ×${qty}` : itemText(ci);
+      showToast(en ? `Cancelled ${what} (${tableText(order)})` : `ยกเลิก ${what} (${tableText(order)}) แล้ว`, () =>
+        voiding.then((id) => (id ? onRestoreItem(order.id, id) : undefined)),
       );
     });
   };
@@ -761,20 +779,46 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
         </div>
       </div>
 
-      {serveAsk && (
-        <ServeQtyModal
-          lang={lang}
-          title={`${itemName(serveAsk.ci)} (${tableText(serveAsk.order)})`}
-          served={servedQty(serveAsk.order, serveAsk.ci)}
-          quantity={serveAsk.ci.quantity}
-          onCancel={() => setServeAsk(null)}
-          onConfirm={(qty) => {
-            const { order, ci } = serveAsk;
-            setServeAsk(null);
-            serveItem(order, ci, qty);
-          }}
-        />
-      )}
+      {/* เสิร์ฟทีละจำนวน: ค่าเริ่มต้น 1 / ยกเลิกเฉพาะชิ้นที่ยังไม่เสิร์ฟ: ค่าเริ่มต้น = ทั้งหมดที่ยังไม่เสิร์ฟ */}
+      {qtyAsk && (() => {
+        const { kind, order, ci } = qtyAsk;
+        const served = servedQty(order, ci);
+        const left = ci.quantity - served;
+        const head = `${itemName(ci)} (${tableText(order)})`;
+        return kind === "serve" ? (
+          <QtyPickerModal
+            lang={lang}
+            tone="success"
+            title={en ? `Serve ${head}` : `เสิร์ฟ ${head}`}
+            info={qtyInfo(lang, ci.quantity, served)}
+            max={left}
+            initial={1}
+            allLabel={en ? `All (${left})` : `ทั้งหมด (${left})`}
+            confirmLabel={(n) => (en ? `Serve ${n}` : `เสิร์ฟ ${n}`)}
+            onCancel={() => setQtyAsk(null)}
+            onConfirm={(n) => {
+              setQtyAsk(null);
+              serveItem(order, ci, n);
+            }}
+          />
+        ) : (
+          <QtyPickerModal
+            lang={lang}
+            tone="danger"
+            title={en ? `Cancel ${head}?` : `ยกเลิก ${head} กี่ชิ้น?`}
+            info={qtyInfo(lang, ci.quantity, served) + (served > 0 ? (en ? " — served ones stay on the bill" : " — ชิ้นที่เสิร์ฟแล้วยังคิดเงิน") : "")}
+            max={left}
+            initial={left}
+            allLabel={en ? `All not served (${left})` : `ทั้งหมดที่เหลือ (${left})`}
+            confirmLabel={(n) => (en ? `Cancel ${n}` : `ยกเลิก ${n}`)}
+            onCancel={() => setQtyAsk(null)}
+            onConfirm={(n) => {
+              setQtyAsk(null);
+              voidItem(order, ci, n, true);
+            }}
+          />
+        );
+      })()}
 
       {/* แถบย้อนกลับ — ด้านล่างจอ ตัวใหญ่ สีเข้มตัดกับพื้น ปุ่มสีเหลืองใหญ่กดง่าย ค้าง UNDO_MS */}
       {toast && (
@@ -796,64 +840,5 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
         </div>
       )}
     </>
-  );
-}
-
-// ─── หน้าต่างเลือกจำนวนที่เสิร์ฟ (รายการที่ยังเหลือมากกว่า 1 ชิ้น) ───────────────────
-// ค่าเริ่มต้น 1 ปรับ −/+ ได้ไม่เกินที่เหลือ ปุ่มลัด "ทั้งหมด (N)" เสิร์ฟที่เหลือทั้งหมดทันที
-// หน้าตา/ปุ่มเหมือน ConfirmModal ใน App (ปุ่มสูง 44px กดง่ายบนแท็บเล็ต)
-function ServeQtyModal({ lang, title, served, quantity, onCancel, onConfirm }: {
-  lang: Language;
-  title: string;
-  served: number;
-  quantity: number;
-  onCancel: () => void;
-  onConfirm: (qty: number) => void;
-}) {
-  const en = lang === "en";
-  const left = Math.max(1, quantity - served);
-  const [qty, setQty] = useState(1);
-  const n = Math.min(qty, left);
-  const stepBtn = "w-12 h-12 rounded-xl bg-muted text-foreground flex items-center justify-center active:scale-95 transition-all disabled:opacity-30";
-  return (
-    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onCancel}>
-      <div className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <p className="text-foreground text-sm font-semibold leading-relaxed">{en ? `Serve ${title}` : `เสิร์ฟ ${title}`}</p>
-        <p className="text-muted-foreground text-xs mt-1 tabular-nums">
-          {en
-            ? `Ordered ${quantity} · served ${served} · ${left} left`
-            : `สั่ง ${quantity} · เสิร์ฟแล้ว ${served} · เหลือ ${left}`}
-        </p>
-        <div className="flex items-center justify-center gap-4 my-5">
-          <button onClick={() => setQty(Math.max(1, n - 1))} disabled={n <= 1} className={stepBtn} aria-label="-1">
-            <Minus size={20} />
-          </button>
-          <div className="min-w-[64px] text-center font-display font-bold text-3xl tabular-nums text-foreground">{n}</div>
-          <button onClick={() => setQty(Math.min(left, n + 1))} disabled={n >= left} className={stepBtn} aria-label="+1">
-            <Plus size={20} />
-          </button>
-        </div>
-        <button
-          onClick={() => onConfirm(left)}
-          className="w-full min-h-[44px] mb-2.5 rounded-xl text-sm font-semibold border-2 border-secondary text-secondary hover:bg-secondary/10 active:scale-95 transition-all"
-        >
-          {en ? `All (${left})` : `ทั้งหมด (${left})`}
-        </button>
-        <div className="flex gap-2.5">
-          <button
-            onClick={onCancel}
-            className="flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/70 transition-all"
-          >
-            {en ? "No" : "ไม่"}
-          </button>
-          <button
-            onClick={() => onConfirm(n)}
-            className="flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-all"
-          >
-            {en ? `Serve ${n}` : `เสิร์ฟ ${n}`}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
