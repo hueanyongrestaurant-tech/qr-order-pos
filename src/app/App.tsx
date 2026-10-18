@@ -45,7 +45,6 @@ import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, whe
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 import { shouldTrackStock, soldOutAfterStockSet, stockLevel, stockNeeds, type StockEntry } from "./stock";
-import { StockPromptModal } from "./staff/StockPromptModal";
 import type { StockFormValue } from "./staff/StaffMenuEditScreen";
 import { createOrderTakingStock, runStockTransaction, STOCK_CONFIG_REF, StockShortError } from "./stockStore";
 
@@ -2191,33 +2190,21 @@ export default function App() {
   };
 
   // เขียนทั้งสองฟิลด์ทุกครั้ง สถานะจะได้ไม่ค้างข้ามกัน (เช่นซ่อนเมนูที่หมดอยู่ แล้วเปิดกลับมากลายเป็นหมดเอง)
-  // เปิดขายเมนูที่สต็อกเหลือ ≤ 0 → ถามจำนวนใหม่ก่อน (StockPromptModal) ไม่งั้นจะถูกกดหมดกลับทันที
+  // กด "ขาย" ที่เมนูที่สต็อกเหลือ ≤ 0 → เปิดขายทันทีแบบไม่จำกัด (ลบสต็อกทิ้ง) ไม่งั้นจะถูกกดหมดกลับเอง
+  // อยากจำกัดจำนวนอีก พนักงานใส่ใหม่ที่หน้าแก้เมนู
   const handleSetAvailability = async (item: MenuItem, availability: MenuAvailability) => {
     const entry = stockMap.get(item.id);
-    if (availability === "available" && stockEnabled && entry && entry.remaining <= 0) {
-      setStockPrompt({ item, current: entry.remaining });
+    if (availability === "available" && entry && entry.remaining <= 0) {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "stock", item.id));
+      batch.update(doc(db, "menuItems", item.id), { active: true, soldOut: false, stockTracked: false });
+      await batch.commit();
       return;
     }
     await updateDoc(doc(db, "menuItems", item.id), {
       active: availability !== "hidden",
       soldOut: availability === "soldOut",
     });
-  };
-
-  const [stockPrompt, setStockPrompt] = useState<{ item: MenuItem; current: number } | null>(null);
-  // remaining: จำนวนใหม่ (> 0) | null = ไม่จำกัด (ลบ doc สต็อก) — ทั้งสองแบบเปิดขายทันที
-  const handleReopenWithStock = async (item: MenuItem, remaining: number | null) => {
-    const batch = writeBatch(db);
-    const stockRef = doc(db, "stock", item.id);
-    const alertAt = stockMap.get(item.id)?.alertAt;
-    if (remaining === null) batch.delete(stockRef);
-    else batch.set(stockRef, { remaining, ...(alertAt !== undefined ? { alertAt } : {}) });
-    batch.update(doc(db, "menuItems", item.id), {
-      active: true,
-      soldOut: false,
-      stockTracked: shouldTrackStock(stockEnabled, remaining !== null),
-    });
-    await batch.commit();
   };
 
   // สวิตช์ระบบสต็อกทั้งร้าน — ปิด = ทุกออเดอร์กลับไปส่งแบบเดิม (ไม่ตัดสต็อก) แต่จำนวนที่ตั้งไว้ยังเก็บอยู่
@@ -2689,6 +2676,7 @@ export default function App() {
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}
+            menuItems={allMenuItems}
           />
         </Suspense>
       );
@@ -2861,19 +2849,6 @@ export default function App() {
         />
       )}
       {notice && <NoticeModal message={notice} lang={lang} onClose={() => setNotice(null)} />}
-      {stockPrompt && (
-        <StockPromptModal
-          lang={lang}
-          itemName={lang === "en" ? stockPrompt.item.name.en || stockPrompt.item.name.th : stockPrompt.item.name.th}
-          current={stockPrompt.current}
-          onCancel={() => setStockPrompt(null)}
-          onConfirm={(remaining) => {
-            const item = stockPrompt.item;
-            setStockPrompt(null);
-            handleReopenWithStock(item, remaining).catch((err) => setNotice(String(err?.message || err)));
-          }}
-        />
-      )}
       {moveFromTable && (
         <Suspense fallback={null}>
           <MoveTableModal

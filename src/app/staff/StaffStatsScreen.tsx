@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList } from "recharts";
+import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
-import type { CartItem, Language, Order, StaffTab } from "../types";
+import type { CartItem, Language, MenuItem, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { ADD_ONS } from "../constants";
 import {
@@ -16,64 +16,22 @@ import {
   orderPaymentBreakdown,
 } from "../utils";
 import { StaffHeader } from "./StaffHeader";
-import { billsByHour, billsByWeekday, formatMinutes, groupBills, seatingSummary, SEATING_MAX_MINUTES, tableStats, topItems } from "../statsInsights";
-
-type RangePreset = "today" | "7d" | "30d" | "custom";
-const PRESET_DAYS: Record<Exclude<RangePreset, "custom">, number> = { today: 1, "7d": 7, "30d": 30 };
-
-// ช่วงวันที่ของปุ่มลัด: ย้อนหลัง n-1 วัน + วันนี้
-function presetStart(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - (days - 1));
-  return formatDateInput(d);
-}
-
-// ชื่อยาวตัดท้าย — แกนชื่อของกราฟแท่งแนวนอนกว้างจำกัดบนมือถือ (ตัวเต็มอยู่ใน tooltip)
-const shortName = (s: string, max = 14) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
-
-// กราฟแท่งแนวนอนสำหรับอันดับ (โต๊ะ/เมนู) — ชื่ออ่านได้ไม่โดนตัดเอียง, ตัวเลขกำกับท้ายแท่ง, แตะดู tooltip ได้
-function RankBars({ data, label, format }: {
-  data: { name: string; value: number }[];
-  label: string;
-  format: (v: number) => string;
-}) {
-  const config = { value: { label, color: "var(--primary)" } } satisfies ChartConfig;
-  return (
-    <ChartContainer config={config} className="w-full aspect-auto" style={{ height: data.length * 34 + 8 }}>
-      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 56, bottom: 0, left: 0 }} barCategoryGap={6}>
-        <XAxis type="number" dataKey="value" hide />
-        <YAxis
-          type="category"
-          dataKey="name"
-          width={112}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: string) => shortName(v)}
-        />
-        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-        <Bar dataKey="value" fill="var(--color-value)" radius={4} maxBarSize={22}>
-          <LabelList dataKey="value" position="right" offset={6} className="fill-foreground" fontSize={12} formatter={(v: number) => format(v)} />
-        </Bar>
-      </BarChart>
-    </ChartContainer>
-  );
-}
+import { StatsInsights } from "./StatsInsights";
 
 interface StaffStatsProps {
   lang: Language;
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
+  menuItems: MenuItem[]; // รูปเมนูในรายการขายดี
 }
 
-export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
+export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle, menuItems }: StaffStatsProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
-  // เปิดหน้ามาแสดง "วันนี้" ก่อน — ปุ่มลัด วันนี้ / 7 วัน / 30 วัน / เลือกเอง (เลือกเอง = ช่องวันที่สองช่อง)
-  const [preset, setPreset] = useState<RangePreset>("today");
+  // เปิดหน้ามาแสดง "วันนี้" ก่อน
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
-  const [tableSort, setTableSort] = useState<"bills" | "revenue">("bills");
   const [searchQuery, setSearchQuery] = useState("");
 
   // ดึงออเดอร์ที่ชำระแล้วเฉพาะช่วงวันที่ที่เลือก (ไม่ใช่ listener ถาวร) — bin ตาม createdAt เหมือนเดิม
@@ -227,19 +185,6 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
     },
   } satisfies ChartConfig;
 
-  // ─── สถิติเพิ่ม (ใต้ส่วนรายได้) — คิดจาก filtered ชุดเดียวกัน ไม่มี read เพิ่ม ───
-  const bills = groupBills(filtered);
-  const seating = seatingSummary(bills);
-  const tables = tableStats(bills, tableSort);
-  const hourly = billsByHour(bills);
-  const rangeDays = Math.round((new Date(`${endDate}T00:00:00`).getTime() - new Date(`${startDate}T00:00:00`).getTime()) / 86400000) + 1;
-  const weekdays = rangeDays >= 7 ? billsByWeekday(bills, rangeStart, rangeEnd) : null;
-  const bestSellers = topItems(filtered);
-  const weekdayNames = lang === "en" ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] : ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
-  const billsChartConfig = { bills: { label: lang === "en" ? "Bills" : "บิล", color: "var(--primary)" } } satisfies ChartConfig;
-  const avgChartConfig = { avg: { label: lang === "en" ? "Bills per day (avg)" : "บิลเฉลี่ยต่อวัน", color: "var(--primary)" } } satisfies ChartConfig;
-  const fmtDate = (d: Date) => d.toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { day: "numeric", month: "short", year: "numeric" });
-
   const allTopMenus = Object.values(menuCounts).sort((a, b) => b.qty - a.qty);
   // กรองด้วยชื่อเมนู (ทั้งไทย/อังกฤษ, ไม่สนตัวพิมพ์, ค้นหาบางส่วนได้) — กระทบเฉพาะการแสดงผล ไม่แตะยอดขาย/รายได้
   const menuSearch = searchQuery.trim().toLowerCase();
@@ -256,27 +201,29 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
       <StaffHeader lang={lang} activeTab="stats" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-        <div className="flex items-stretch gap-2 mb-3">
-          <div className="flex-1 flex rounded-xl bg-muted p-1" role="radiogroup">
-            {(["today", "7d", "30d", "custom"] as RangePreset[]).map((p) => (
-              <button
-                key={p}
-                role="radio"
-                aria-checked={preset === p}
-                onClick={() => {
-                  setPreset(p);
-                  if (p !== "custom") { setStartDate(presetStart(PRESET_DAYS[p])); setEndDate(today); }
-                  resetRetry();
-                }}
-                className={`flex-1 min-h-[36px] rounded-lg text-xs font-semibold transition-colors ${preset === p ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
-              >
-                {p === "today" ? (lang === "en" ? "Today" : "วันนี้")
-                  : p === "7d" ? (lang === "en" ? "7 days" : "7 วัน")
-                  : p === "30d" ? (lang === "en" ? "30 days" : "30 วัน")
-                  : (lang === "en" ? "Custom" : "เลือกเอง")}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-stretch gap-2 mb-5">
+          <input
+            type="date"
+            value={startDate}
+            max={endDate}
+            onChange={(e) => { setStartDate(e.target.value); resetRetry(); }}
+            className="flex-1 min-w-0 h-11 bg-card border-2 border-border rounded-xl px-2 sm:px-3 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
+          />
+          <span className="text-muted-foreground text-sm self-center">–</span>
+          <input
+            type="date"
+            value={endDate}
+            min={startDate}
+            max={today}
+            onChange={(e) => { setEndDate(e.target.value); resetRetry(); }}
+            className="flex-1 min-w-0 h-11 bg-card border-2 border-border rounded-xl px-2 sm:px-3 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
+          />
+          <button
+            onClick={() => { setStartDate(today); setEndDate(today); resetRetry(); }}
+            className="h-11 px-3 rounded-xl text-xs font-medium bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all whitespace-nowrap flex items-center justify-center flex-shrink-0"
+          >
+            {lang === "en" ? "Today" : "วันนี้"}
+          </button>
           <button
             onClick={() => { forceRefreshRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
             disabled={loading || retrying}
@@ -286,26 +233,6 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
             <RefreshCw size={16} />
           </button>
         </div>
-        {preset === "custom" && (
-        <div className="flex items-stretch gap-2 mb-5">
-          <input
-            type="date"
-            value={startDate}
-            max={endDate}
-            onChange={(e) => { setStartDate(e.target.value); resetRetry(); }}
-            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
-          />
-          <span className="text-muted-foreground text-sm self-center">–</span>
-          <input
-            type="date"
-            value={endDate}
-            min={startDate}
-            max={today}
-            onChange={(e) => { setEndDate(e.target.value); resetRetry(); }}
-            className="flex-1 h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary"
-          />
-        </div>
-        )}
         {fetchedAt !== null && !loading && !retrying && (
           <div className="text-muted-foreground text-xs -mt-3 mb-4">
             {lang === "en" ? "As of" : "ข้อมูล ณ"} {formatClock(new Date(fetchedAt))}
@@ -376,98 +303,7 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
           </div>
         )}
 
-        {/* ─── เวลานั่ง / โต๊ะ / ช่วงคนเยอะ / เมนูขายดี ─── */}
-        <div className="bg-card rounded-2xl border border-border p-4 mb-6">
-          <div className="text-muted-foreground text-xs mb-1">{lang === "en" ? "Average time at table" : "เวลานั่งเฉลี่ยต่อโต๊ะ"}</div>
-          <div className="font-display font-bold text-2xl text-foreground">
-            {seating.avgMinutes !== null ? formatMinutes(seating.avgMinutes, lang) : "–"}
-          </div>
-          <div className="text-muted-foreground text-[11px] mt-1 leading-relaxed">
-            {seating.avgMinutes !== null && (
-              <span className="block">{lang === "en" ? `First order → bill closed · ${seating.count} bills` : `ออเดอร์แรก → ปิดบิล · จาก ${seating.count} บิล`}</span>
-            )}
-            {seating.trackedSince && seating.missingPaidAt > 0 && (
-              <span className="block">{lang === "en" ? `Data collected since ${fmtDate(seating.trackedSince)}` : `เริ่มเก็บข้อมูลวันที่ ${fmtDate(seating.trackedSince)}`}</span>
-            )}
-            {!seating.trackedSince && bills.some((b) => !b.isTakeaway && !b.backfilled) && (
-              <span className="block">{lang === "en" ? "Not collected yet for this period (starts with this app update)" : "ช่วงนี้ยังไม่มีข้อมูล (เริ่มเก็บหลังอัปเดตแอปเวอร์ชันนี้)"}</span>
-            )}
-            {seating.avgMinutes !== null && (
-              <span className="block">{lang === "en" ? `Takeaway, backfilled bills and bills open over ${SEATING_MAX_MINUTES / 60} h are not counted` : `ไม่นับกลับบ้าน บิลย้อนหลัง และบิลที่ค้างเกิน ${SEATING_MAX_MINUTES / 60} ชม.`}</span>
-            )}
-          </div>
-        </div>
-
-        {tables.length > 0 && (
-          <div className="bg-card rounded-2xl border border-border p-4 mb-6">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <h3 className="font-semibold text-foreground text-sm">{lang === "en" ? "Top tables" : "โต๊ะยอดนิยม"}</h3>
-              <div className="flex rounded-full bg-muted p-0.5" role="radiogroup">
-                {(["bills", "revenue"] as const).map((k) => (
-                  <button
-                    key={k}
-                    role="radio"
-                    aria-checked={tableSort === k}
-                    onClick={() => setTableSort(k)}
-                    className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${tableSort === k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
-                  >
-                    {k === "bills" ? (lang === "en" ? "Most used" : "ใช้บ่อย") : (lang === "en" ? "Top revenue" : "ทำเงินมากสุด")}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <RankBars
-              data={tables.map((r) => ({ name: `${t.tableLabel} ${r.table}`, value: tableSort === "bills" ? r.bills : r.revenue }))}
-              label={tableSort === "bills" ? (lang === "en" ? "Bills" : "บิล") : (lang === "en" ? "Revenue" : "ยอดขาย")}
-              format={(v) => (tableSort === "bills" ? `${v}` : `${t.thb}${v.toLocaleString()}`)}
-            />
-          </div>
-        )}
-
-        {hourly.length > 0 && (
-          <div className="bg-card rounded-2xl border border-border p-4 mb-6">
-            <h3 className="font-semibold text-foreground text-sm">{lang === "en" ? "Busy hours" : "ช่วงเวลาคนเยอะ"}</h3>
-            <p className="text-muted-foreground text-[11px] mb-3">
-              {lang === "en" ? "Bills by the hour of the first order" : "จำนวนบิล ตามชั่วโมงที่เริ่มสั่ง"}
-            </p>
-            <ChartContainer config={billsChartConfig} className="aspect-[16/9] w-full">
-              <BarChart data={hourly.map((h) => ({ ...h, label: `${h.hour}:00` }))} margin={{ top: 16, right: 4, bottom: 0, left: 4 }}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="bills" fill="var(--color-bills)" radius={4} />
-              </BarChart>
-            </ChartContainer>
-          </div>
-        )}
-
-        {weekdays && bills.length > 0 && (
-          <div className="bg-card rounded-2xl border border-border p-4 mb-6">
-            <h3 className="font-semibold text-foreground text-sm">{lang === "en" ? "Busy days" : "วันที่คนเยอะ"}</h3>
-            <p className="text-muted-foreground text-[11px] mb-3">
-              {lang === "en" ? "Average bills per day of the week" : "บิลเฉลี่ยต่อวัน แยกตามวันในสัปดาห์"}
-            </p>
-            <ChartContainer config={avgChartConfig} className="aspect-[16/9] w-full">
-              <BarChart data={weekdays.map((w) => ({ ...w, label: weekdayNames[w.weekday] }))} margin={{ top: 16, right: 4, bottom: 0, left: 4 }}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="avg" fill="var(--color-avg)" radius={4} />
-              </BarChart>
-            </ChartContainer>
-          </div>
-        )}
-
-        {bestSellers.length > 0 && (
-          <div className="bg-card rounded-2xl border border-border p-4 mb-6">
-            <h3 className="font-semibold text-foreground text-sm mb-3">{lang === "en" ? "Best sellers" : "เมนูขายดี"}</h3>
-            <RankBars
-              data={bestSellers.map((m) => ({ name: lang === "en" ? m.nameEn || m.nameTh : m.nameTh, value: m.qty }))}
-              label={lang === "en" ? "Sold" : "ขายได้"}
-              format={(v) => `${v}`}
-            />
-          </div>
-        )}
+        <StatsInsights lang={lang} orders={filtered} rangeStart={rangeStart} rangeEnd={rangeEnd} menuItems={menuItems} />
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
           {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}
