@@ -1,0 +1,14 @@
+{
+  "name": "firestore-rules-tests",
+  "private": true,
+  "type": "module",
+  "description": "Firestore rules + stockStore tests against the emulator (never production). Separate from the app build. Run: npm install, then npm test. Needs Java 21+ (Android Studio jbr works).",
+  "scripts": {
+    "test": "node build-store-test.mjs && firebase emulators:exec --only firestore --project demo-rules-test --config ../../firebase.json \"node --test --test-concurrency=1 rules.test.mjs out/stockStore.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.0.0",
+    "firebase-tools": "^14.0.0"
+  }
+}

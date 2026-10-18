@@ -20,17 +20,20 @@ interface CartProps {
   isTakeaway?: boolean;
   submitting?: boolean;
   unavailableCartIds?: string[]; // รายการที่เช็คตอนกดยืนยันแล้วพบว่าสั่งไม่ได้ — ขึ้นป้าย "หมด" + ข้อความเตือน
+  shortCartIds?: string[]; // สต็อกยังเหลือแต่ไม่พอจำนวนที่สั่ง — ป้าย "เหลือไม่พอ" (ไม่บอกตัวเลข)
   confirmLabel?: string; // staff-only: ข้อความปุ่มยืนยันแทน "ยืนยันสั่ง" (บิลย้อนหลังไปขั้นเลือกวิธีจ่ายต่อ)
   notice?: string;       // staff-only: แถบข้อความเหนือรายการ (บอกว่าเป็นบิลย้อนหลัง)
   sendError?: string;    // ส่งออเดอร์ไม่สำเร็จ/รอนานเกิน — ข้อความเหนือปุ่มยืนยัน (ตะกร้ายังอยู่ กดส่งใหม่ได้)
 }
 
-export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [], confirmLabel, notice, sendError }: CartProps) {
+export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRemove, onConfirm, onLangToggle, isTakeaway, submitting, unavailableCartIds = [], shortCartIds = [], confirmLabel, notice, sendError }: CartProps) {
   const t = T[lang];
   const total = cartTotal(cart);
   // คิดจากตะกร้าปัจจุบัน — ลบรายการที่หมดออกแล้วข้อความเตือนหายเอง ไม่ต้อง reset state
   // ชื่อในข้อความต่อท้ายด้วยเนื้อสัตว์ที่เลือก (เช่น "ข้าวผัด (แหนม)") ให้รู้ว่าตัวไหนหมด ถ้าเป็นเนื้อหมด
   const isUnavailable = (ci: CartItem) => unavailableCartIds.includes(ci.cartId);
+  const isShort = (ci: CartItem) => !isUnavailable(ci) && shortCartIds.includes(ci.cartId);
+  const shortNames = [...new Set(cart.filter(isShort).map((ci) => (lang === "en" ? ci.item.name.en : ci.item.name.th)))];
   const unavailableNames = [...new Set(cart.filter(isUnavailable).map((ci) => {
     const name = lang === "en" ? ci.item.name.en : ci.item.name.th;
     const meat = cartItemMeatLabel(ci, lang);
@@ -107,7 +110,7 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
         ) : (
           <div className="space-y-3">
             {cart.map((ci) => (
-              <div key={ci.cartId} className={`bg-card rounded-2xl p-4 border ${isUnavailable(ci) ? "border-destructive/50" : "border-border"}`}>
+              <div key={ci.cartId} className={`bg-card rounded-2xl p-4 border ${isUnavailable(ci) || isShort(ci) ? "border-destructive/50" : "border-border"}`}>
                 <div className="flex gap-3">
                   {ci.item.photo && (
                     <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted flex-shrink-0">
@@ -125,6 +128,11 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
                         {isUnavailable(ci) && (
                           <span className="ml-1.5 align-middle bg-[#3C2414] text-[#FFF8F0] text-[10px] font-bold px-2 py-0.5 rounded-full">
                             {t.soldOut}
+                          </span>
+                        )}
+                        {isShort(ci) && (
+                          <span className="ml-1.5 align-middle bg-[#3C2414] text-[#FFF8F0] text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            {t.notEnoughLeft}
                           </span>
                         )}
                       </div>
@@ -186,6 +194,12 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
             <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium">
               <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
               <span>{t.soldOutInCart(unavailableNames.join(", "))}</span>
+            </div>
+          )}
+          {shortNames.length > 0 && (
+            <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-medium">
+              <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{t.notEnoughInCart(shortNames.join(", "))}</span>
             </div>
           )}
           <div className="flex items-center justify-between mb-3">

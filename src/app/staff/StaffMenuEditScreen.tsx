@@ -4,14 +4,25 @@ import type { Category, Language, MeatChoice, MenuItem } from "../types";
 import { T } from "../translations";
 import { compressImage, resolvePhoto, uid } from "../utils";
 import { LannaBorder } from "../shared";
+import { parseStockInput, type StockEntry } from "../stock";
+
+// ค่าสต็อกจากฟอร์ม — remaining null = ไม่จำกัด | remainingChanged = พนักงานแก้ช่องจำนวนจริง
+// (ไม่แก้ = ไม่เขียนทับ remaining ที่ลูกค้าอาจเพิ่งตัดไประหว่างเปิดหน้านี้ค้างไว้)
+export interface StockFormValue {
+  remaining: number | null;
+  alertAt: number | null;
+  remainingChanged: boolean;
+}
 
 interface StaffMenuEditProps {
   lang: Language;
   item: MenuItem;
-  onSave: (item: MenuItem) => Promise<void>;
+  onSave: (item: MenuItem, stock: StockFormValue) => Promise<void>;
   onCancel: () => void;
   onLangToggle: () => void;
   categories: Category[];
+  stock?: StockEntry; // สต็อกปัจจุบันของเมนูนี้ (ไม่มี = ไม่จำกัด)
+  stockEnabled: boolean;
 }
 
 // ปุ่มแสดง/ซ่อนตัวเลือกในหน้านี้ = ซ่อนจากลูกค้า ไม่ใช่ "หมด" (หมดชั่วคราวให้กดที่หน้าจัดการเมนู)
@@ -25,19 +36,30 @@ function HiddenOptionHint({ lang }: { lang: Language }) {
   );
 }
 
-export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categories, }: StaffMenuEditProps) {
+export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle, categories, stock, stockEnabled }: StaffMenuEditProps) {
   const t = T[lang];
   const [form, setForm] = useState<MenuItem>(item);
+  const initialRemaining = stock ? String(stock.remaining) : "";
+  const [remainingInput, setRemainingInput] = useState(initialRemaining);
+  const [alertInput, setAlertInput] = useState(stock?.alertAt !== undefined ? String(stock.alertAt) : "");
 
   const update = (patch: Partial<MenuItem>) => setForm((prev) => ({ ...prev, ...patch }));
   // บันทึกไม่สำเร็จ (เช่น session หลุด/เน็ตหลุด/rules ปฏิเสธ) เดิมเงียบหายไปเลย — ตอนนี้แสดงข้อความค้างไว้ให้เห็น
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const handleSave = async () => {
+    const remainingChanged = remainingInput.trim() !== initialRemaining;
+    // จำนวนติดลบที่ค้างอยู่ (จากคืนรายการ) ยังบันทึกต่อได้ถ้าไม่ได้แก้ช่องนี้
+    const remaining = remainingChanged ? parseStockInput(remainingInput) : stock ? stock.remaining : null;
+    const alertAt = parseStockInput(alertInput);
+    if (remaining === "invalid" || alertAt === "invalid") {
+      setSaveError(lang === "en" ? "Stock must be a whole number (leave blank for unlimited)" : "สต็อกต้องเป็นจำนวนเต็ม (เว้นว่าง = ไม่จำกัด)");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave(form);
+      await onSave(form, { remaining, alertAt, remainingChanged });
     } catch (err) {
       console.error("save menu item failed", err);
       const code = (err as { code?: string })?.code ?? (err as Error)?.message ?? String(err);
@@ -164,6 +186,39 @@ export function StaffMenuEditScreen({ lang, item, onSave, onCancel, onLangToggle
             placeholder="0"
             className="w-full bg-card border-2 border-border rounded-xl px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary"
           />
+        </div>
+
+        <div className="mb-4">
+          <label className="text-sm font-semibold text-foreground block mb-1.5">
+            {lang === "en" ? "Stock (plates/pieces left)" : "สต็อก (จาน/ชิ้น ที่เหลือ)"}
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={remainingInput}
+              onChange={(e) => setRemainingInput(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder={lang === "en" ? "Unlimited" : "ไม่จำกัด"}
+              className="flex-1 min-w-0 bg-card border-2 border-border rounded-xl px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary"
+            />
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">{lang === "en" ? "Warn at ≤" : "เตือนเมื่อเหลือ ≤"}</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={alertInput}
+                onChange={(e) => setAlertInput(e.target.value.replace(/[^0-9]/g, ""))}
+                placeholder="-"
+                className="w-full min-w-0 bg-card border-2 border-border rounded-xl px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            {lang === "en"
+              ? "Blank = unlimited. Each order takes from it; at 0 the item shows Sold out. Entering a new number puts it back on sale."
+              : "เว้นว่าง = ไม่จำกัด ตัดทุกครั้งที่สั่ง เหลือ 0 ขึ้น \"หมด\" เอง ใส่จำนวนใหม่ = เปิดขายอีกครั้ง"}
+            {!stockEnabled && (lang === "en" ? " (Stock system is OFF — the number is kept but not used.)" : " (ระบบสต็อกปิดอยู่ — เก็บจำนวนไว้แต่ยังไม่ตัด)")}
+          </p>
         </div>
 
         <div className="h-px bg-border my-5" />

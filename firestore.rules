@@ -54,6 +54,31 @@ service cloud.firestore {
       allow write: if request.auth != null;
     }
 
+    // ─── สต็อกต่อเมนู (stock/{itemId}) — ไม่มี doc = ขายไม่จำกัด ───
+    // พนักงานแก้ได้ทุกอย่าง | ลูกค้า (ไม่ได้ล็อกอิน) "ลด remaining" ได้อย่างเดียว และต้องเป็นการเขียน
+    // ใน commit เดียวกับการสร้างออเดอร์ใหม่ (lastOrderId = id ออเดอร์นั้น: ก่อน commit ต้องยังไม่มี
+    // หลัง commit ต้องมีและเป็น in-progress) — ออเดอร์ที่ไม่มีเมนูติดสต็อกไม่ผ่าน rule นี้เลย
+    match /stock/{itemId} {
+      allow read: if true;
+      allow create, delete: if request.auth != null;
+      allow update: if request.auth != null || customerTakesStock();
+
+      function customerTakesStock() {
+        let before = resource.data;
+        let after = request.resource.data;
+        let orderPath = /databases/$(database)/documents/orders/$(after.lastOrderId);
+        return after.diff(before).affectedKeys().hasOnly(["remaining", "lastOrderId"])
+          && before.remaining is int
+          && after.remaining is int
+          && after.remaining >= 0
+          && after.remaining < before.remaining
+          && before.remaining - after.remaining <= 50
+          && after.lastOrderId is string
+          && !exists(orderPath)
+          && getAfter(orderPath).data.status == "in-progress";
+      }
+    }
+
     match /categories/{categoryId} {
       allow read: if true;
       allow write: if request.auth != null;

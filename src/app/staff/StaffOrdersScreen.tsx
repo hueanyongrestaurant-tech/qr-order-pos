@@ -59,9 +59,11 @@ interface StaffOrdersProps {
   onStartManualOrder: () => void;
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
+  // เมนูที่สต็อกใกล้หมด (≤ ที่ตั้งเตือนไว้) หรือติดลบ — App คำนวณจาก stock/* ให้ ว่าง = ไม่ขึ้นแถบ
+  stockAlerts: { id: string; name: string; remaining: number }[];
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories, stockAlerts }: StaffOrdersProps) {
   const t = T[lang];
 
   // กดเสิร์ฟแล้วนับ/ย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลา
@@ -459,6 +461,22 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
           className={`flex-1 px-4 py-5 overflow-y-auto ${toast ? "pb-28" : ""}`}
           style={{ scrollbarWidth: "none" }}
         >
+
+          {stockAlerts.length > 0 && (
+            <div role="status" className="mb-4 px-3 py-2.5 rounded-xl border border-[#D07E35]/40 bg-[#D07E35]/10 text-sm">
+              <div className="font-semibold text-foreground mb-1">{lang === "en" ? "Running low" : "สต็อกใกล้หมด"}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {stockAlerts.map((a) => (
+                  <span
+                    key={a.id}
+                    className={`px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums ${a.remaining < 0 ? "bg-destructive text-destructive-foreground" : "bg-card text-foreground border border-border"}`}
+                  >
+                    {a.name} · {lang === "en" ? "left" : "เหลือ"} {a.remaining}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button
             onClick={onStartManualOrder}

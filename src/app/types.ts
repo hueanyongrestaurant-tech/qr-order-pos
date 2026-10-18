@@ -119,6 +119,8 @@ export interface MenuItem {
   // สถานะการขาย 3 แบบ (ดู menuAvailability ใน utils.ts) — ทั้งสองฟิลด์ไม่มีค่า = ขายปกติ ไม่ต้อง migrate เมนูเดิม
   active?: boolean;  // false = ซ่อน หายไปจากหน้าสั่งเลย (เมนูตามฤดูกาล)
   soldOut?: boolean; // true = หมด ยังแสดงแต่เป็นสีเทา กดสั่งไม่ได้ (มีผลเฉพาะตอน active ไม่ใช่ false)
+  // true = ตั้งจำนวนสต็อกไว้ (stock/{id}) และระบบสต็อกเปิดอยู่ → ส่งออเดอร์แบบ transaction ตัดสต็อก (ดู stock.ts)
+  stockTracked?: boolean;
 }
 
 export type MenuAvailability = "available" | "soldOut" | "hidden";

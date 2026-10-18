@@ -41,9 +41,13 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
+import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
+import { shouldTrackStock, soldOutAfterStockSet, stockLevel, stockNeeds, type StockEntry } from "./stock";
+import { StockPromptModal } from "./staff/StockPromptModal";
+import type { StockFormValue } from "./staff/StaffMenuEditScreen";
+import { createOrderTakingStock, readStockForOrderChange, runStockTransaction, STOCK_CONFIG_REF, StockShortError, writeStockForOrderChange } from "./stockStore";
 
 import type {
   Language,
@@ -595,6 +599,41 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  // ─── สต็อก (ฝั่งพนักงานที่ล็อกอินแล้ว) — ดู stock.ts / stockStore.ts ───
+  // stockMap = stock/* ทั้งหมด (เฉพาะเมนูที่ตั้งจำนวนไว้ มีไม่กี่ doc) | stockEnabled = สวิตช์ทั้งร้าน (ไม่มี doc = เปิด)
+  const [stockMap, setStockMap] = useState<Map<string, StockEntry>>(new Map());
+  const [stockEnabled, setStockEnabled] = useState(true);
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !everAuthed) return;
+    const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
+      const next = new Map<string, StockEntry>();
+      snapshot.docs.forEach((d) => {
+        const data = d.data();
+        if (typeof data.remaining !== "number") return;
+        next.set(d.id, { remaining: data.remaining, ...(typeof data.alertAt === "number" ? { alertAt: data.alertAt } : {}) });
+      });
+      setStockMap(next);
+    });
+    const unsubConfig = onSnapshot(STOCK_CONFIG_REF(), (snap) => setStockEnabled(snap.data()?.enabled !== false));
+    return () => { unsubStock(); unsubConfig(); };
+  }, [everAuthed]);
+
+  // สต็อกเหลือ ≤ 0 → กด "หมด" ให้ (ลูกค้าเขียน menuItems ไม่ได้ เครื่องพนักงานที่เปิดอยู่ทำแทน — หลายเครื่องเขียนค่าเดียวกันซ้ำได้ ไม่เป็นไร)
+  // ไม่เปิดขายกลับเองเด็ดขาด — คืนสต็อกแล้วก็ยังหมดจนกว่าพนักงานจะกดเปิดขาย/ใส่จำนวนใหม่
+  const autoSoldOutPendingRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !staffLoggedIn || !stockEnabled) return;
+    allMenuItems.forEach((m) => {
+      const entry = stockMap.get(m.id);
+      if (!entry || entry.remaining > 0 || !m.stockTracked || m.soldOut || m.active === false) return;
+      if (autoSoldOutPendingRef.current.has(m.id)) return;
+      autoSoldOutPendingRef.current.add(m.id);
+      updateDoc(doc(db, "menuItems", m.id), { soldOut: true })
+        .catch((err) => console.error("auto sold-out failed", err))
+        .finally(() => autoSoldOutPendingRef.current.delete(m.id));
+    });
+  }, [stockMap, allMenuItems, stockEnabled, staffLoggedIn]);
 
   // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน localStorage แทน realtime listener
   // ลด Firestore reads ต่อการเปิด/รีเฟรชหน้าเมนู 1 ครั้ง (ก่อนหน้านี้ทุกครั้งที่เปิดหน้า = subscribe
@@ -1148,6 +1187,7 @@ export default function App() {
     } else {
       setCart((prev) => prev.map((ci) => (ci.cartId === cartId ? { ...ci, quantity: qty } : ci)));
     }
+    setCartShortCartIds((prev) => prev.filter((id) => id !== cartId)); // แก้จำนวนแล้ว ลองส่งใหม่ได้
   };
 
   const handleRemoveItem = (cartId: string) => {
@@ -1160,17 +1200,11 @@ export default function App() {
   // CartScreen ใช้ขึ้นป้าย "หมด" + ข้อความเตือน — ใช้ร่วมกันทั้งตะกร้าลูกค้าและตะกร้าพนักงานสั่งแทน
   // (คนละเครื่องกันอยู่แล้ว) เขียนทับทุกครั้งที่กดยืนยัน
   const [cartUnavailableCartIds, setCartUnavailableCartIds] = useState<string[]>([]);
+  // cartId ที่สต็อกเหลือไม่พอจำนวนที่สั่ง (ยังเหลืออยู่บ้าง) — ป้าย "เหลือไม่พอ" ลูกค้าไม่เห็นตัวเลข
+  const [cartShortCartIds, setCartShortCartIds] = useState<string[]>([]);
 
-  // true = มีรายการที่สั่งไม่ได้ในตะกร้า ห้ามส่ง | false = ส่งได้ (รวมกรณีเช็คไม่สำเร็จ/ช้าเกิน — ไม่ให้ลูกค้าติดส่งไม่ได้)
-  // เจอแล้วเอาข้อมูลเมนูล่าสุดทับในเครื่อง + cache ฝั่งลูกค้าด้วย ไม่ต้องรอ cache 15 นาทีหมดอายุ
-  const cartHasUnavailableItems = async (items: CartItem[]): Promise<boolean> => {
-    const fresh = await fetchFreshMenuItems(items.map((ci) => ci.item.id), SOLD_OUT_CHECK_TIMEOUT_MS);
-    const unavailable = items.filter((ci) => {
-      const f = fresh.get(ci.item.id);
-      return f ? isCartItemUnavailable(ci, f) : false;
-    });
-    setCartUnavailableCartIds(unavailable.map((ci) => ci.cartId));
-    if (unavailable.length === 0) return false;
+  // เอาข้อมูลเมนูล่าสุดทับในเครื่อง + cache ฝั่งลูกค้าด้วย ไม่ต้องรอ cache 15 นาทีหมดอายุ
+  const patchLocalMenu = (fresh: Map<string, Partial<MenuItem>>) => {
     const patch = <M extends MenuItem>(m: M): M => {
       const f = fresh.get(m.id);
       return f ? { ...m, ...f } : m;
@@ -1179,7 +1213,30 @@ export default function App() {
     setMenuItems((prev) => prev.map(patch).filter((m) => m.active !== false));
     const cached = readMenuCache<{ categories: Category[]; menuItems: MenuItem[]; timestamp: number }>();
     if (cached) writeMenuCache({ ...cached, menuItems: cached.menuItems.map(patch) });
-    return true;
+  };
+
+  // blocked = มีรายการที่สั่งไม่ได้ในตะกร้า ห้ามส่ง | false = ส่งได้ (รวมกรณีเช็คไม่สำเร็จ/ช้าเกิน — ไม่ให้ลูกค้าติดส่งไม่ได้)
+  // fresh = ข้อมูลเมนูล่าสุดจาก server (ว่าง = เช็คไม่ได้) — ใช้ต่อว่าเมนูไหนติดสต็อก
+  const cartHasUnavailableItems = async (items: CartItem[]): Promise<{ blocked: boolean; fresh: Map<string, MenuItem> }> => {
+    const fresh = await fetchFreshMenuItems(items.map((ci) => ci.item.id), SOLD_OUT_CHECK_TIMEOUT_MS);
+    const unavailable = items.filter((ci) => {
+      const f = fresh.get(ci.item.id);
+      return f ? isCartItemUnavailable(ci, f) : false;
+    });
+    setCartUnavailableCartIds(unavailable.map((ci) => ci.cartId));
+    setCartShortCartIds([]);
+    if (unavailable.length === 0) return { blocked: false, fresh };
+    patchLocalMenu(fresh);
+    return { blocked: true, fresh };
+  };
+
+  // ตัดสต็อกไม่ผ่าน: เหลือ 0 = ป้าย "หมด" (+ ทำเมนูในเครื่องเป็นหมดทันที) / ยังเหลือแต่ไม่พอ = ป้าย "เหลือไม่พอ"
+  const showStockShort = (items: CartItem[], err: StockShortError) => {
+    const outIds = err.shortIds.filter((id) => (err.current.get(id) ?? 0) <= 0);
+    const lowIds = err.shortIds.filter((id) => !outIds.includes(id));
+    setCartUnavailableCartIds(items.filter((ci) => outIds.includes(ci.item.id)).map((ci) => ci.cartId));
+    setCartShortCartIds(items.filter((ci) => lowIds.includes(ci.item.id)).map((ci) => ci.cartId));
+    if (outIds.length > 0) patchLocalMenu(new Map(outIds.map((id) => [id, { soldOut: true }])));
   };
 
   // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 3 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
@@ -1212,6 +1269,7 @@ export default function App() {
     setOrderSendFailed(false);
     setCart([]);
     setCartUnavailableCartIds([]);
+    setCartShortCartIds([]);
     setView("order-sent");
   };
 
@@ -1224,7 +1282,8 @@ export default function App() {
     setIsSubmittingOrder(true);
     setOrderSendFailed(false);
     try {
-      if (await cartHasUnavailableItems(cart)) return;
+      const { blocked, fresh } = await cartHasUnavailableItems(cart);
+      if (blocked) return;
       if (await tableSessionExpiredBeforeOrder()) return;
       // JSON round-trip: ตัดฟิลด์ undefined ให้ Firestore | .map(stripItemPhoto): ตัดรูป base64 ที่ทำ doc บวม
       const cleanItems = (JSON.parse(JSON.stringify(cart)) as CartItem[]).map(stripItemPhoto);
@@ -1235,12 +1294,14 @@ export default function App() {
         orderAttemptRef.current = { id: doc(collection(db, "orders")).id, signature, uncertain: false };
       }
       const attempt = orderAttemptRef.current;
-      const writing = setDoc(doc(db, "orders", attempt.id), {
-        tableNumber,
-        items: cleanItems,
-        status: "in-progress",
-        createdAt: serverTimestamp(),
-      });
+      const orderRef = doc(db, "orders", attempt.id);
+      const orderData = { tableNumber, items: cleanItems, status: "in-progress", createdAt: serverTimestamp() };
+      // เมนูติดสต็อกดูจากข้อมูลล่าสุดที่เพิ่งเช็ค (ไม่ได้ = จากเมนูในเครื่อง) — ไม่มีเลย = ส่งแบบเดิมทุกอย่าง
+      const needs = stockNeeds(cart, (id) => (fresh.get(id) ?? allMenuItems.find((m) => m.id === id))?.stockTracked === true);
+      const writing: Promise<unknown> = needs.size === 0
+        ? setDoc(orderRef, orderData)
+        : runStockTransaction((tx) => createOrderTakingStock(tx, { orderRef, orderData, needs, guest: true }))
+          .then((r) => { if (r.soldOutIds.length > 0) patchLocalMenu(new Map(r.soldOutIds.map((id) => [id, { soldOut: true }]))); });
       // หมดเวลาแล้ว SDK ยังพยายามส่งต่อเองเบื้องหลัง — ถ้าส่งถึงทีหลังและตะกร้ายังเหมือนเดิม พาไปหน้าส่งสำเร็จเอง
       writing.then(() => {
         if (orderAttemptRef.current === attempt && orderSignature(cartRef.current) === attempt.signature) finishOrderSent();
@@ -1253,6 +1314,10 @@ export default function App() {
             window.setTimeout(() => reject(Object.assign(new Error("timeout"), { code: "timeout" })), ORDER_SEND_TIMEOUT_MS)),
         ]);
       } catch (err: any) {
+        if (err instanceof StockShortError) {
+          showStockShort(cart, err);
+          return;
+        }
         errCode = typeof err?.code === "string" ? err.code : "unknown";
         console.error("send order failed", err);
       }
@@ -1319,6 +1384,7 @@ export default function App() {
   };
 
   const handleManualUpdateQty = (cartId: string, qty: number) => {
+    setCartShortCartIds((prev) => prev.filter((id) => id !== cartId));
     if (qty <= 0) {
       setManualCart((prev) => prev.filter((ci) => ci.cartId !== cartId));
     } else {
@@ -1356,9 +1422,34 @@ export default function App() {
     isSubmittingManualOrderRef.current = true;
     setIsSubmittingManualOrder(true);
     try {
-      if (await cartHasUnavailableItems(manualCart)) return;
+      if ((await cartHasUnavailableItems(manualCart)).blocked) return;
       const cleanItems = (JSON.parse(JSON.stringify(manualCart)) as CartItem[]).map(stripItemPhoto);
-      if (manualIsTakeaway) {
+      // มีเมนูติดสต็อก → สร้างออเดอร์ (+ ตัวนับคิวกลับบ้าน) + ตัดสต็อก ใน transaction เดียว
+      const needs = stockNeeds(manualCart, (id) => stockEnabled && stockMap.has(id));
+      if (needs.size > 0) {
+        const orderRef = doc(collection(db, "orders"));
+        const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
+        try {
+          await runStockTransaction((tx) => createOrderTakingStock(tx, {
+            orderRef,
+            orderData: manualIsTakeaway
+              ? { tableNumber: "0", isTakeaway: true, items: cleanItems, status: "in-progress", createdAt: serverTimestamp() }
+              : { tableNumber: manualTable, items: cleanItems, status: "in-progress", createdAt: serverTimestamp() },
+            needs,
+            guest: false,
+            prepare: manualIsTakeaway
+              ? async (t) => {
+                const snap = await t.get(counterRef);
+                const next = (snap.exists() ? (snap.data().count || 0) : 0) + 1;
+                return { fields: { takeawayLabel: `T-${next}` }, write: () => t.set(counterRef, { count: next }) };
+              }
+              : undefined,
+          }));
+        } catch (err) {
+          if (err instanceof StockShortError) { showStockShort(manualCart, err); return; }
+          throw err;
+        }
+      } else if (manualIsTakeaway) {
         const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
         const nextNumber = await runTransaction(db, async (transaction) => {
           const snap = await transaction.get(counterRef);
@@ -1385,6 +1476,7 @@ export default function App() {
       }
       setManualCart([]);
       setCartUnavailableCartIds([]);
+      setCartShortCartIds([]);
       setManualTable(null);
       setManualIsTakeaway(false);
       setView("staff-orders");
@@ -1580,14 +1672,18 @@ export default function App() {
         const { voided: _v, voidReason: _r, voidedAt: _a, voidedWhileUnserved: _u, ...rest } = ci;
         return rest;
       });
+      // คืนรายการ = ตัดสต็อกกลับ (ไม่พอก็ยอมให้ติดลบ แล้วเตือนพนักงาน)
+      const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, new Map([[target.item.id, -target.quantity]]));
+      writeStockForOrderChange(tx, stockNext);
       if (raw.status === "awaiting-payment" && target.voidedWhileUnserved && !lineFullyServed(raw, target)) {
         tx.update(ref, "items", newItems, "status", "in-progress", ...keepServedArgs(raw, items, cartId));
       } else {
         tx.update(ref, { items: newItems });
       }
-      return { raw, target };
+      return { raw, target, stockNext };
     });
     if (done) {
+      warnNegativeStock(done.stockNext);
       await logActivity({
         action: "restore_item",
         orderId,
@@ -1596,6 +1692,26 @@ export default function App() {
         amount: cartItemUnitPrice(done.target) * done.target.quantity,
       });
     }
+  };
+
+  // แถบเตือนหน้าออเดอร์: ใกล้หมด (≤ ที่ตั้งไว้ ยังไม่ถึง 0) และติดลบ — ที่เหลือ 0 พอดีขึ้น "หมด" ที่เมนูอยู่แล้ว
+  const stockAlerts = !stockEnabled ? [] : [...stockMap]
+    .filter(([, e]) => { const lv = stockLevel(e); return lv === "low" || lv === "negative"; })
+    .map(([id, e]) => {
+      const m = allMenuItems.find((x) => x.id === id);
+      return { id, name: m ? (lang === "en" ? m.name.en || m.name.th : m.name.th) : id, remaining: e.remaining };
+    })
+    .sort((a, b) => a.remaining - b.remaining);
+
+  // สต็อกติดลบหลังคืนรายการ/เพิ่มจำนวน — แจ้งพนักงานทันที (แถบหน้าออเดอร์ก็เตือนค้างไว้)
+  const warnNegativeStock = (next: Map<string, number>) => {
+    const neg = [...next].filter(([, r]) => r < 0);
+    if (neg.length === 0) return;
+    const names = neg.map(([id, r]) => {
+      const m = allMenuItems.find((x) => x.id === id);
+      return `${m ? (lang === "en" ? m.name.en || m.name.th : m.name.th) : id} (${r})`;
+    }).join(", ");
+    setNotice(lang === "en" ? `Stock is now negative: ${names}. Please check the stock count.` : `สต็อกติดลบ: ${names} ตรวจจำนวนสต็อกด้วย`);
   };
 
   // ยอดบิลที่พนักงานเห็น ณ ตอนกด — โต๊ะ = รวมทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) / กลับบ้าน = ใบเดียว
@@ -1659,7 +1775,10 @@ export default function App() {
         }
         return null; // ถูกยกเลิกไปแล้ว (เช่นจากอีกเครื่อง)
       }
+      // ยกเลิก = คืนสต็อกเท่าจำนวนที่ยกเลิก (เมนูที่ขึ้นหมดไปแล้วไม่เปิดขายเอง)
+      const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, new Map([[plan.target.item.id, plan.n]]));
       applyLineChange(tx, ref, raw, cartId, plan, reason);
+      writeStockForOrderChange(tx, stockNext);
       return { raw, plan };
     });
     if (!done) return null;
@@ -1706,11 +1825,25 @@ export default function App() {
       },
     });
     await addVoidReason(reason);
-    await updateDoc(doc(db, "orders", orderId), {
-      status: "cancelled",
-      ...(reason ? { cancelReason: reason } : {}),
-      cancelledAt: new Date(),
-      items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      // ยกเลิกไปแล้ว (เช่นจากอีกเครื่อง) — ห้ามคืนสต็อกซ้ำ
+      if (!snap.exists() || snap.data().status === "cancelled") return;
+      const raw = snap.data();
+      // คืนสต็อกเฉพาะรายการที่ยังไม่ถูกยกเลิก (ที่ยกเลิกทีละรายการไปก่อนหน้า คืนไปแล้วตอนนั้น)
+      const returns = new Map<string, number>();
+      ((raw.items || []) as CartItem[]).forEach((ci) => {
+        if (!ci.voided) returns.set(ci.item.id, (returns.get(ci.item.id) ?? 0) + ci.quantity);
+      });
+      const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, returns);
+      tx.update(ref, {
+        status: "cancelled",
+        ...(reason ? { cancelReason: reason } : {}),
+        cancelledAt: new Date(),
+        items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
+      });
+      writeStockForOrderChange(tx, stockNext);
     });
   };
 
@@ -1956,10 +2089,14 @@ export default function App() {
             if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
             return null;
           }
+          // ลด = คืนสต็อก / เพิ่ม = ตัดเพิ่ม (ไม่พอก็ยอมติดลบ แล้วเตือน)
+          const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, new Map([[plan.target.item.id, -delta]]));
           applyLineChange(tx, ref, raw, target.cartId, plan, reason);
-          return { raw, plan };
+          writeStockForOrderChange(tx, stockNext);
+          return { raw, plan, stockNext };
         });
         if (!done) return;
+        warnNegativeStock(done.stockNext);
         const amount = delta * cartItemUnitPrice(done.plan.target);
         await logActivity({
           action: "adjust_item_qty",
@@ -2022,7 +2159,7 @@ export default function App() {
     setView("staff-menu-edit");
   };
 
-  const handleSaveItem = async (item: MenuItem) => {
+  const handleSaveItem = async (item: MenuItem, stockForm: StockFormValue) => {
     const prev = allMenuItems.find((m) => m.id === item.id);
     let photo = item.photo;
 
@@ -2055,7 +2192,25 @@ export default function App() {
     // กรณีอื่น (photo ไม่เปลี่ยน / ยังเป็น Unsplash ID เดิม) ไม่ต้องแตะ Storage เลย
 
     // setDoc เขียนทับทั้ง doc — สถานะการขายทั้งหมด (เมนู + ตัวเลือกเนื้อสัตว์) เอาจากค่าล่าสุด ดู withLiveAvailability
-    await setDoc(doc(db, "menuItems", item.id), { ...withLiveAvailability(item, prev), photo });
+    // สต็อก: เขียนพร้อมเมนูใน batch เดียว — ใส่จำนวนใหม่ = เปิดขาย (0 = หมด) | ลบจำนวนทิ้ง = ไม่จำกัด (สถานะขายคงเดิม)
+    const live = withLiveAvailability(item, prev);
+    const { remaining, alertAt, remainingChanged } = stockForm;
+    const batch = writeBatch(db);
+    batch.set(doc(db, "menuItems", item.id), {
+      ...live,
+      photo,
+      stockTracked: shouldTrackStock(stockEnabled, remaining !== null),
+      ...(remainingChanged && remaining !== null ? { soldOut: soldOutAfterStockSet(remaining) } : {}),
+    });
+    const stockRef = doc(db, "stock", item.id);
+    if (remaining === null) {
+      if (stockMap.has(item.id)) batch.delete(stockRef);
+    } else if (remainingChanged || !stockMap.has(item.id)) {
+      batch.set(stockRef, { remaining, ...(alertAt !== null ? { alertAt } : {}) });
+    } else {
+      batch.update(stockRef, { alertAt: alertAt ?? deleteField() });
+    }
+    await batch.commit();
     if (!prev) {
       await logActivity({ action: "menu_item_added", itemName: item.name.th, details: { price: item.price } });
     } else if (prev.price !== item.price) {
@@ -2070,11 +2225,45 @@ export default function App() {
   };
 
   // เขียนทั้งสองฟิลด์ทุกครั้ง สถานะจะได้ไม่ค้างข้ามกัน (เช่นซ่อนเมนูที่หมดอยู่ แล้วเปิดกลับมากลายเป็นหมดเอง)
+  // เปิดขายเมนูที่สต็อกเหลือ ≤ 0 → ถามจำนวนใหม่ก่อน (StockPromptModal) ไม่งั้นจะถูกกดหมดกลับทันที
   const handleSetAvailability = async (item: MenuItem, availability: MenuAvailability) => {
+    const entry = stockMap.get(item.id);
+    if (availability === "available" && stockEnabled && entry && entry.remaining <= 0) {
+      setStockPrompt({ item, current: entry.remaining });
+      return;
+    }
     await updateDoc(doc(db, "menuItems", item.id), {
       active: availability !== "hidden",
       soldOut: availability === "soldOut",
     });
+  };
+
+  const [stockPrompt, setStockPrompt] = useState<{ item: MenuItem; current: number } | null>(null);
+  // remaining: จำนวนใหม่ (> 0) | null = ไม่จำกัด (ลบ doc สต็อก) — ทั้งสองแบบเปิดขายทันที
+  const handleReopenWithStock = async (item: MenuItem, remaining: number | null) => {
+    const batch = writeBatch(db);
+    const stockRef = doc(db, "stock", item.id);
+    const alertAt = stockMap.get(item.id)?.alertAt;
+    if (remaining === null) batch.delete(stockRef);
+    else batch.set(stockRef, { remaining, ...(alertAt !== undefined ? { alertAt } : {}) });
+    batch.update(doc(db, "menuItems", item.id), {
+      active: true,
+      soldOut: false,
+      stockTracked: shouldTrackStock(stockEnabled, remaining !== null),
+    });
+    await batch.commit();
+  };
+
+  // สวิตช์ระบบสต็อกทั้งร้าน — ปิด = ทุกออเดอร์กลับไปส่งแบบเดิม (ไม่ตัดสต็อก) แต่จำนวนที่ตั้งไว้ยังเก็บอยู่
+  // เขียน stockTracked ของเมนูที่เกี่ยวข้องตามสวิตช์ (เครื่องลูกค้าดูจาก field นี้ ไม่ต้องอ่านอะไรเพิ่ม)
+  const handleSetStockEnabled = async (enabled: boolean) => {
+    const batch = writeBatch(db);
+    batch.set(STOCK_CONFIG_REF(), { enabled }, { merge: true });
+    allMenuItems.forEach((m) => {
+      const tracked = shouldTrackStock(enabled, stockMap.has(m.id));
+      if (!!m.stockTracked !== tracked) batch.update(doc(db, "menuItems", m.id), { stockTracked: tracked });
+    });
+    await batch.commit();
   };
 
   // สลับ หมด/ขาย ของตัวเลือกเนื้อสัตว์ 1 ตัว (ชิปในหน้าจัดการเมนู) — บันทึกทันที ไม่ผ่านหน้าแก้เมนู
@@ -2126,6 +2315,7 @@ export default function App() {
       }
     }
     await deleteDoc(doc(db, "menuItems", itemId));
+    if (stockMap.has(itemId)) await deleteDoc(doc(db, "stock", itemId)); // สต็อกของเมนูที่ลบไม่มีใครใช้แล้ว
   };
 
   const handleLogout = async () => {
@@ -2346,6 +2536,7 @@ export default function App() {
           onLangToggle={toggleLang}
           submitting={isSubmittingOrder}
           unavailableCartIds={cartUnavailableCartIds}
+          shortCartIds={cartShortCartIds}
           sendError={orderSendFailed ? T[lang].orderSendFailed : undefined}
         />
       );
@@ -2406,6 +2597,7 @@ export default function App() {
             onStartManualOrder={handleStartManualOrder}
             onMoveTable={setMoveFromTable}
             categories={allCategories}
+            stockAlerts={stockAlerts}
           />
         </Suspense>
       );
@@ -2475,6 +2667,15 @@ export default function App() {
             onReorderCategories={handleReorderCategories}
             onReorderMenuItems={handleReorderMenuItems}
             scrollTopRef={menuScrollTopRef}
+            stockMap={stockMap}
+            stockEnabled={stockEnabled}
+            onSetStockEnabled={(enabled) =>
+              askConfirm(
+                enabled
+                  ? (lang === "en" ? "Turn the stock system ON? Orders will take from stock again." : "เปิดระบบสต็อก? ออเดอร์จะกลับมาตัดสต็อก")
+                  : (lang === "en" ? "Turn the stock system OFF? Orders stop taking from stock (numbers are kept)." : "ปิดระบบสต็อก? ออเดอร์จะไม่ตัดสต็อก (จำนวนที่ตั้งไว้ยังเก็บอยู่)"),
+                () => { handleSetStockEnabled(enabled).catch((err) => setNotice(String(err?.message || err))); },
+              )}
           />
         </Suspense>
       );
@@ -2490,6 +2691,8 @@ export default function App() {
             onCancel={() => setView("staff-menu")}
             onLangToggle={toggleLang}
             categories={categories}
+            stock={stockMap.get(editingItem.id)}
+            stockEnabled={stockEnabled}
           />
         </Suspense>
       ) : null;
@@ -2626,6 +2829,7 @@ export default function App() {
             isTakeaway={manualIsTakeaway}
             submitting={isSubmittingManualOrder}
             unavailableCartIds={backfill ? [] : cartUnavailableCartIds}
+            shortCartIds={backfill ? [] : cartShortCartIds}
             confirmLabel={backfill ? (lang === "en" ? "Next: payment" : "ถัดไป: วิธีจ่าย") : undefined}
             notice={backfillNotice}
           />
@@ -2691,6 +2895,19 @@ export default function App() {
         />
       )}
       {notice && <NoticeModal message={notice} lang={lang} onClose={() => setNotice(null)} />}
+      {stockPrompt && (
+        <StockPromptModal
+          lang={lang}
+          itemName={lang === "en" ? stockPrompt.item.name.en || stockPrompt.item.name.th : stockPrompt.item.name.th}
+          current={stockPrompt.current}
+          onCancel={() => setStockPrompt(null)}
+          onConfirm={(remaining) => {
+            const item = stockPrompt.item;
+            setStockPrompt(null);
+            handleReopenWithStock(item, remaining).catch((err) => setNotice(String(err?.message || err)));
+          }}
+        />
+      )}
       {moveFromTable && (
         <Suspense fallback={null}>
           <MoveTableModal

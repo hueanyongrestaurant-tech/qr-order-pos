@@ -4,6 +4,7 @@ import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from ".
 import { allMeatsSoldOut, meatOptions, menuAvailabilitySetting, type MeatOption } from "../utils";
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
+import { stockLevel, type StockEntry } from "../stock";
 
 // ─── Drag-to-reorder (mouse + touch via Pointer Events) ──────────────────────
 // เดิมใช้ปุ่มลูกศรขึ้น/ลง เปลี่ยนมาใช้ "จับที่ไอคอน Grip แล้วลาก" แทน
@@ -107,11 +108,14 @@ interface StaffMenuProps {
   onReorderCategories: (orderedIds: string[]) => void;
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
   scrollTopRef: React.MutableRefObject<number>;
+  stockMap: Map<string, StockEntry>;
+  stockEnabled: boolean;
+  onSetStockEnabled: (enabled: boolean) => void; // App ถามยืนยันก่อน
 }
 
 export function StaffMenuScreen({
   lang, items, onAdd, onEdit, onSetAvailability, onToggleMeatSoldOut, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleRecommended, onReorderRecommended, onReorderCategories, onReorderMenuItems,
-  scrollTopRef,
+  scrollTopRef, stockMap, stockEnabled, onSetStockEnabled,
 }: StaffMenuProps) {
   const t = T[lang];
   const [newCatEn, setNewCatEn] = useState("");
@@ -152,6 +156,26 @@ export function StaffMenuScreen({
           <Plus size={16} />
           {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
         </button>
+
+        {/* สวิตช์ระบบสต็อกทั้งร้าน — ตั้งจำนวนสต็อกที่หน้าแก้เมนู (เว้นว่าง = ไม่จำกัด) */}
+        <div className="bg-card border border-border rounded-xl p-3 mb-4 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-foreground text-sm">{lang === "en" ? "Stock system" : "ระบบสต็อก"}</div>
+            <div className="text-[11px] text-muted-foreground">
+              {stockEnabled
+                ? (lang === "en" ? `On · ${stockMap.size} item(s) with stock set` : `เปิดอยู่ · ตั้งสต็อกไว้ ${stockMap.size} เมนู`)
+                : (lang === "en" ? "Off · orders don't take from stock" : "ปิดอยู่ · ออเดอร์ไม่ตัดสต็อก")}
+            </div>
+          </div>
+          <button
+            role="switch"
+            aria-checked={stockEnabled}
+            onClick={() => onSetStockEnabled(!stockEnabled)}
+            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${stockEnabled ? "bg-secondary" : "bg-muted"}`}
+          >
+            <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${stockEnabled ? "left-[22px]" : "left-0.5"}`} />
+          </button>
+        </div>
 
         {/* เมนูแนะนำ (แถบแรกของหน้าสั่ง) — ติดดาวที่เมนูด้านล่าง แล้วลาก Grip เรียงลำดับตรงนี้ */}
         <div className="bg-card border border-border rounded-xl p-3 mb-4">
@@ -279,6 +303,8 @@ export function StaffMenuScreen({
               onEdit={onEdit}
               onDelete={onDelete}
               onAskConfirm={onAskConfirm}
+              stockMap={stockMap}
+              stockEnabled={stockEnabled}
             />
           );
         })}
@@ -292,6 +318,24 @@ const AVAILABILITY_OPTIONS: { value: MenuAvailability; th: string; en: string; s
   { value: "soldOut", th: "หมด", en: "Sold out", selectedClass: "bg-primary text-primary-foreground shadow-sm" },
   { value: "hidden", th: "ซ่อน", en: "Hidden", selectedClass: "bg-[#3C2414]/70 text-[#FFF8F0] shadow-sm" },
 ];
+
+// ป้ายสต็อกใต้ราคา (เฉพาะเมนูที่ตั้งจำนวนไว้) — ส้ม = ใกล้หมด (≤ ที่ตั้งเตือน) / แดง = หมดหรือติดลบ / เทา = ระบบสต็อกปิด
+function StockBadge({ lang, entry, enabled }: { lang: Language; entry?: StockEntry; enabled: boolean }) {
+  if (!entry) return null;
+  const level = stockLevel(entry);
+  const cls = !enabled
+    ? "bg-muted text-muted-foreground"
+    : level === "negative" || level === "out"
+      ? "bg-destructive text-destructive-foreground"
+      : level === "low"
+        ? "bg-[#D07E35] text-white"
+        : "bg-secondary/15 text-secondary";
+  return (
+    <span className={`px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums ${cls}`}>
+      {lang === "en" ? `${entry.remaining} left` : `เหลือ ${entry.remaining}`}
+    </span>
+  );
+}
 
 // ดาว = อยู่ในแถบ "แนะนำ" — แตะครั้งเดียวสลับ บันทึกทันที (ใช้ทั้งในกล่องเมนูแนะนำและแถวเมนูในหมวด)
 function RecommendedStar({ lang, on, onClick }: { lang: Language; on: boolean; onClick: () => void }) {
@@ -311,6 +355,7 @@ function RecommendedStar({ lang, on, onClick }: { lang: Language; on: boolean; o
 // เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
 function CategoryMenuItemsList({
   lang, t, cat, catItems, onReorderMenuItems, onToggleRecommended, onSetAvailability, onToggleMeatSoldOut, onEdit, onDelete, onAskConfirm,
+  stockMap, stockEnabled,
 }: {
   lang: Language;
   t: (typeof T)["en"];
@@ -323,6 +368,8 @@ function CategoryMenuItemsList({
   onEdit: (item: MenuItem) => void;
   onDelete: (itemId: string) => void;
   onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
+  stockMap: Map<string, StockEntry>;
+  stockEnabled: boolean;
 }) {
   const itemDrag = useDragReorder(catItems, (orderedIds) => onReorderMenuItems(cat.id, orderedIds));
 
@@ -357,7 +404,10 @@ function CategoryMenuItemsList({
               <div className="font-medium text-foreground text-sm truncate">
                 {lang === "en" ? item.name.en : item.name.th}
               </div>
-              <div className="text-muted-foreground text-xs">{t.thb}{item.price}</div>
+              <div className="text-muted-foreground text-xs flex items-center gap-1.5 flex-wrap">
+                <span>{t.thb}{item.price}</span>
+                <StockBadge lang={lang} entry={stockMap.get(item.id)} enabled={stockEnabled} />
+              </div>
             </div>
             <RecommendedStar lang={lang} on={!!item.recommended} onClick={() => onToggleRecommended(item)} />
             {/* สลับสถานะการขายกดครั้งเดียว: ขาย (เขียว) / หมด (ส้ม — ลูกค้ายังเห็นแต่กดสั่งไม่ได้) / ซ่อน (เทา — หายจากหน้าสั่ง) */}
