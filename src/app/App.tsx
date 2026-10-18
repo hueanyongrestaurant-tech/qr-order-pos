@@ -47,7 +47,7 @@ import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSna
 import { shouldTrackStock, soldOutAfterStockSet, stockLevel, stockNeeds, type StockEntry } from "./stock";
 import { StockPromptModal } from "./staff/StockPromptModal";
 import type { StockFormValue } from "./staff/StaffMenuEditScreen";
-import { createOrderTakingStock, readStockForOrderChange, runStockTransaction, STOCK_CONFIG_REF, StockShortError, writeStockForOrderChange } from "./stockStore";
+import { createOrderTakingStock, runStockTransaction, STOCK_CONFIG_REF, StockShortError } from "./stockStore";
 
 import type {
   Language,
@@ -1672,18 +1672,14 @@ export default function App() {
         const { voided: _v, voidReason: _r, voidedAt: _a, voidedWhileUnserved: _u, ...rest } = ci;
         return rest;
       });
-      // คืนรายการ = ตัดสต็อกกลับ (ไม่พอก็ยอมให้ติดลบ แล้วเตือนพนักงาน)
-      const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, new Map([[target.item.id, -target.quantity]]));
-      writeStockForOrderChange(tx, stockNext);
       if (raw.status === "awaiting-payment" && target.voidedWhileUnserved && !lineFullyServed(raw, target)) {
         tx.update(ref, "items", newItems, "status", "in-progress", ...keepServedArgs(raw, items, cartId));
       } else {
         tx.update(ref, { items: newItems });
       }
-      return { raw, target, stockNext };
+      return { raw, target };
     });
     if (done) {
-      warnNegativeStock(done.stockNext);
       await logActivity({
         action: "restore_item",
         orderId,
@@ -1702,17 +1698,6 @@ export default function App() {
       return { id, name: m ? (lang === "en" ? m.name.en || m.name.th : m.name.th) : id, remaining: e.remaining };
     })
     .sort((a, b) => a.remaining - b.remaining);
-
-  // สต็อกติดลบหลังคืนรายการ/เพิ่มจำนวน — แจ้งพนักงานทันที (แถบหน้าออเดอร์ก็เตือนค้างไว้)
-  const warnNegativeStock = (next: Map<string, number>) => {
-    const neg = [...next].filter(([, r]) => r < 0);
-    if (neg.length === 0) return;
-    const names = neg.map(([id, r]) => {
-      const m = allMenuItems.find((x) => x.id === id);
-      return `${m ? (lang === "en" ? m.name.en || m.name.th : m.name.th) : id} (${r})`;
-    }).join(", ");
-    setNotice(lang === "en" ? `Stock is now negative: ${names}. Please check the stock count.` : `สต็อกติดลบ: ${names} ตรวจจำนวนสต็อกด้วย`);
-  };
 
   // ยอดบิลที่พนักงานเห็น ณ ตอนกด — โต๊ะ = รวมทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) / กลับบ้าน = ใบเดียว
   // ใช้บันทึก "ยอดบิลเดิม → ใหม่" ลง log ของการยกเลิก/ปรับจำนวน
@@ -1775,10 +1760,7 @@ export default function App() {
         }
         return null; // ถูกยกเลิกไปแล้ว (เช่นจากอีกเครื่อง)
       }
-      // ยกเลิก = คืนสต็อกเท่าจำนวนที่ยกเลิก (เมนูที่ขึ้นหมดไปแล้วไม่เปิดขายเอง)
-      const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, new Map([[plan.target.item.id, plan.n]]));
       applyLineChange(tx, ref, raw, cartId, plan, reason);
-      writeStockForOrderChange(tx, stockNext);
       return { raw, plan };
     });
     if (!done) return null;
@@ -1825,25 +1807,11 @@ export default function App() {
       },
     });
     await addVoidReason(reason);
-    const ref = doc(db, "orders", orderId);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      // ยกเลิกไปแล้ว (เช่นจากอีกเครื่อง) — ห้ามคืนสต็อกซ้ำ
-      if (!snap.exists() || snap.data().status === "cancelled") return;
-      const raw = snap.data();
-      // คืนสต็อกเฉพาะรายการที่ยังไม่ถูกยกเลิก (ที่ยกเลิกทีละรายการไปก่อนหน้า คืนไปแล้วตอนนั้น)
-      const returns = new Map<string, number>();
-      ((raw.items || []) as CartItem[]).forEach((ci) => {
-        if (!ci.voided) returns.set(ci.item.id, (returns.get(ci.item.id) ?? 0) + ci.quantity);
-      });
-      const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, returns);
-      tx.update(ref, {
-        status: "cancelled",
-        ...(reason ? { cancelReason: reason } : {}),
-        cancelledAt: new Date(),
-        items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
-      });
-      writeStockForOrderChange(tx, stockNext);
+    await updateDoc(doc(db, "orders", orderId), {
+      status: "cancelled",
+      ...(reason ? { cancelReason: reason } : {}),
+      cancelledAt: new Date(),
+      items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
     });
   };
 
@@ -2091,14 +2059,10 @@ export default function App() {
             if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw notUndoableError(raw.status);
             return null;
           }
-          // ลด = คืนสต็อก / เพิ่ม = ตัดเพิ่ม (ไม่พอก็ยอมติดลบ แล้วเตือน)
-          const stockNext = await readStockForOrderChange(tx, raw.stockItemIds, new Map([[plan.target.item.id, -delta]]));
           applyLineChange(tx, ref, raw, target.cartId, plan, reason);
-          writeStockForOrderChange(tx, stockNext);
-          return { raw, plan, stockNext };
+          return { raw, plan };
         });
         if (!done) return;
-        warnNegativeStock(done.stockNext);
         const amount = delta * cartItemUnitPrice(done.plan.target);
         await logActivity({
           action: "adjust_item_qty",

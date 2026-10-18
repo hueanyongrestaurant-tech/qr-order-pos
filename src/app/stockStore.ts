@@ -1,5 +1,7 @@
 // ─── สต็อกต่อเมนู: ส่วนที่คุยกับ Firestore (logic ล้วนอยู่ใน stock.ts) ─────────────────────
 // ตัดสต็อก = ทำใน transaction เดียวกับการสร้างออเดอร์ (อ่าน stock → เหลือไม่พอ = ไม่สร้างออเดอร์เลย)
+// หักสต็อกตอนกดสั่งเท่านั้น — ยกเลิก/คืนรายการ/ปรับจำนวน/ย้ายโต๊ะ/บิลย้อนหลัง ไม่แตะสต็อกเลย
+// (ต้องคืน พนักงานใส่จำนวนใหม่ที่หน้าแก้เมนู หรือกดเปิดขายแล้วกรอกจำนวนเอง)
 // ลูกค้าเขียน stock ได้เฉพาะ "ลด remaining" ที่ผูกกับออเดอร์ใหม่ใน commit เดียวกัน (ดู firestore.rules)
 
 import { doc, runTransaction, type DocumentReference, type Transaction } from "firebase/firestore";
@@ -64,12 +66,7 @@ export async function createOrderTakingStock(
   const plan = planStockTake(opts.needs, current, { guest: opts.guest });
   if (!plan.ok) throw new StockShortError(plan.shortIds, current);
   prepared?.write();
-  const stockItemIds = [...plan.updates.keys()];
-  tx.set(opts.orderRef, {
-    ...opts.orderData,
-    ...(prepared?.fields ?? {}),
-    ...(stockItemIds.length > 0 ? { stockItemIds } : {}),
-  });
+  tx.set(opts.orderRef, { ...opts.orderData, ...(prepared?.fields ?? {}) });
   plan.updates.forEach((remaining, id) => {
     tx.update(stockDocRef(id), { remaining, lastOrderId: opts.orderRef.id });
   });
@@ -77,28 +74,4 @@ export async function createOrderTakingStock(
     plan.soldOutIds.forEach((id) => tx.update(doc(db, "menuItems", id), { soldOut: true }));
   }
   return { remaining: plan.updates, soldOutIds: plan.soldOutIds };
-}
-
-// พนักงานแก้รายการในออเดอร์ที่ตัดสต็อกไปแล้ว: deltas = จำนวนที่ "คืน" ต่อเมนู (ติดลบ = ตัดเพิ่ม เช่นคืนรายการ)
-// แตะเฉพาะเมนูใน order.stockItemIds ที่ยังมี doc stock อยู่ — ขั้นอ่าน (เรียกก่อนเขียนอะไรใน transaction)
-export async function readStockForOrderChange(
-  tx: Transaction,
-  stockItemIds: unknown,
-  deltas: Map<string, number>,
-): Promise<Map<string, number>> {
-  const allowed = new Set(Array.isArray(stockItemIds) ? stockItemIds.filter((x): x is string => typeof x === "string") : []);
-  const ids = [...deltas.keys()].filter((id) => allowed.has(id) && deltas.get(id) !== 0);
-  if (ids.length === 0) return new Map();
-  const current = await readStock(tx, ids);
-  const next = new Map<string, number>();
-  ids.forEach((id) => {
-    const r = current.get(id);
-    if (r !== undefined) next.set(id, r + deltas.get(id)!);
-  });
-  return next;
-}
-
-// ขั้นเขียน — next มาจาก readStockForOrderChange (ค่าใหม่แบบตัวเลขตรงๆ ปลอดภัยเพราะอ่านใน transaction เดียวกัน)
-export function writeStockForOrderChange(tx: Transaction, next: Map<string, number>) {
-  next.forEach((remaining, id) => tx.update(stockDocRef(id), { remaining }));
 }

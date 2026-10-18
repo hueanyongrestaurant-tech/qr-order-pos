@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { deleteDoc, doc, getDoc, setDoc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { setTestDb } from "./shim/firebase.mjs";
-import { createOrderTakingStock, readStockForOrderChange, runStockTransaction, writeStockForOrderChange, StockShortError } from "../../src/app/stockStore";
+import { createOrderTakingStock, runStockTransaction, StockShortError } from "../../src/app/stockStore";
 
 let env;
 before(async () => {
@@ -44,12 +44,12 @@ const guestOrder = (id, needs) => {
   return runStockTransaction((tx) => createOrderTakingStock(tx, { orderRef: doc(db, "orders", id), orderData: orderData(), needs, guest: true }));
 };
 
-test("guest takes the last one → 0, order has stockItemIds", async () => {
+test("guest takes the last one → 0, order created", async () => {
   const r = await guestOrder("o1", new Map([["padthai", 1], ["somtam", 2]]));
   assert.deepEqual(r.soldOutIds, ["padthai"]);
   assert.equal((await read("stock/padthai")).remaining, 0);
   assert.equal((await read("stock/somtam")).remaining, 8);
-  assert.deepEqual((await read("orders/o1")).stockItemIds, ["padthai", "somtam"]);
+  assert.equal((await read("orders/o1")).status, "in-progress");
 });
 
 test("two guests order the last one at the same time → exactly one wins", async () => {
@@ -85,10 +85,10 @@ test("re-sending the same order id after success is rejected (no double take)", 
   assert.equal((await read("stock/somtam")).remaining, 9);
 });
 
-test("stock doc deleted meanwhile (unlimited) → order goes through without stockItemIds", async () => {
+test("stock doc deleted meanwhile (unlimited) → order goes through", async () => {
   await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore(), "stock", "padthai")));
   await guestOrder("o4", new Map([["padthai", 5]]));
-  assert.equal((await read("orders/o4")).stockItemIds, undefined);
+  assert.equal((await read("orders/o4")).status, "in-progress");
 });
 
 test("staff order taking the last one marks the menu sold out in the same commit", async () => {
@@ -113,33 +113,13 @@ test("staff takeaway: queue counter read+write via prepare in the same transacti
   assert.equal((await read("counters/takeaway-test")).count, 1);
 });
 
-test("staff void / restore: only items in stockItemIds, restore may go negative, guests then refused", async () => {
+test("staff cancelling an order (plain update, as the app does) leaves stock untouched", async () => {
   await guestOrder("o5", new Map([["padthai", 1]]));
   const db = staffDb();
-  await runTransaction(db, async (tx) => {
-    const raw = (await tx.get(doc(db, "orders", "o5"))).data();
-    const next = await readStockForOrderChange(tx, raw.stockItemIds, new Map([["padthai", 1], ["somtam", 4]]));
-    assert.deepEqual([...next], [["padthai", 1]]);
-    writeStockForOrderChange(tx, next);
-  });
-  assert.equal((await read("stock/padthai")).remaining, 1);
-  assert.equal((await read("stock/somtam")).remaining, 10);
-  await runTransaction(db, async (tx) => {
-    const raw = (await tx.get(doc(db, "orders", "o5"))).data();
-    writeStockForOrderChange(tx, await readStockForOrderChange(tx, raw.stockItemIds, new Map([["padthai", -3]])));
-  });
-  assert.equal((await read("stock/padthai")).remaining, -2);
+  const { updateDoc } = await import("firebase/firestore");
+  await updateDoc(doc(db, "orders", "o5"), { status: "cancelled" });
+  assert.equal((await read("stock/padthai")).remaining, 0);
   await assert.rejects(guestOrder("o6", new Map([["padthai", 1]])), (e) => e instanceof StockShortError);
-});
-
-test("order without stockItemIds (older order / backfill) → stock untouched", async () => {
-  const db = staffDb();
-  await runTransaction(db, async (tx) => {
-    const next = await readStockForOrderChange(tx, undefined, new Map([["padthai", 1]]));
-    assert.equal(next.size, 0);
-    writeStockForOrderChange(tx, next);
-  });
-  assert.equal((await read("stock/padthai")).remaining, 1);
 });
 
 test("10 guests order a busy item at once (plenty left) → all 10 succeed, stock exact", async () => {
