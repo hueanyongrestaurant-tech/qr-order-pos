@@ -1978,6 +1978,7 @@ export default function App() {
         tx.update(doc(db, "orders", o.id), {
           status: "paid",
           paymentBatchId: batchId,
+          paidAt: serverTimestamp(),
           ...paymentFields(payment, transferShares[i]),
         }),
       );
@@ -2060,6 +2061,7 @@ export default function App() {
   const handleCloseTakeawayOrder = async (orderId: string, payment: PaymentInput) => {
     await updateDoc(doc(db, "orders", orderId), {
       status: "paid",
+      paidAt: serverTimestamp(),
       ...paymentFields(payment, payment.transferAmount),
     });
   };

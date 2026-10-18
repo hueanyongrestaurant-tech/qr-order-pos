@@ -171,6 +171,8 @@ export interface Order {
   isTakeaway?: boolean;
   takeawayLabel?: string;
   paymentBatchId?: string;
+  // เวลาปิดบิลบน server (เริ่มเก็บตั้งแต่เวอร์ชันที่มีสถิติเวลานั่ง — บิลเก่าไม่มี) ใช้คิดเวลานั่งต่อโต๊ะ
+  paidAt?: Date;
   cancelReason?: string;
   cancelledAt?: Date;
   // บิลขายย้อนหลัง (ลืมลงระบบ เพิ่มทีหลัง) — สร้างเป็น "paid" ตรงๆ createdAt = เวลาที่กรอก (จัดเข้าวันขายจริง)

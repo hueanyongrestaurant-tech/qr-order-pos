@@ -552,6 +552,7 @@ export function mapOrderDoc(id: string, raw: any): Order {
     isTakeaway: raw.isTakeaway,
     takeawayLabel: raw.takeawayLabel,
     paymentBatchId: raw.paymentBatchId,
+    paidAt: raw.paidAt?.toDate ? raw.paidAt.toDate() : undefined,
     cancelReason: raw.cancelReason,
     cancelledAt: raw.cancelledAt?.toDate ? raw.cancelledAt.toDate() : undefined,
     backfilled: raw.backfilled === true ? true : undefined,
