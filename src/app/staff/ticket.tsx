@@ -1,4 +1,4 @@
-import type { CartItem, Language, PaymentMethod } from "../types";
+import type { CartItem, Language } from "../types";
 import { T } from "../translations";
 
 // ─── Shared ticket helpers ───────────────────────────────────────────────────
@@ -25,7 +25,4 @@ export interface ReceiptData {
   label: string;
   items: CartItem[];
   total: number;
-  paymentMethod: PaymentMethod;
-  cashReceived?: number;
-  transferAmount?: number; // split เท่านั้น: ยอดโอนของทั้งบิล — ส่วนเงินสด = total - transferAmount
 }

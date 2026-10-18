@@ -729,7 +729,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // เปิดหน้าค้างไว้เกิน 4 ชม. แล้วกลับมาดู → หน้าให้สแกนใหม่ทันที (ไม่ต้องรอกดสั่ง)
+  // เปิดหน้าค้างไว้เกิน 3 ชม. แล้วกลับมาดู → หน้าให้สแกนใหม่ทันที (ไม่ต้องรอกดสั่ง)
   useEffect(() => {
     if (!initialSessionStart) return;
     const onVisible = () => {
@@ -1182,7 +1182,7 @@ export default function App() {
     return true;
   };
 
-  // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 4 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
+  // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 3 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
   // อ่านเวลาปิดบิลไม่ได้/ไม่ทัน → ปล่อยสั่งได้ตามปกติ (ไม่ให้ปัญหาเน็ตทำให้ลูกค้าจริงสั่งไม่ได้)
   const tableSessionExpiredBeforeOrder = async (): Promise<boolean> => {
     const session = tableSessionRef.current;

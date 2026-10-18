@@ -374,10 +374,6 @@ export async function printReceiptNative(data: ReceiptData, lang: Language): Pro
   const t = T[lang];
   await ensurePrinterConnected();
   const now = new Date();
-  // ส่วนที่ต้องจ่ายเป็นเงินสด — split คิดเงินทอนจากส่วนเงินสดเท่านั้น ไม่ใช่จากยอดทั้งบิล
-  const transferPart = data.paymentMethod === "split" ? data.transferAmount ?? 0 : 0;
-  const cashDue = data.total - transferPart;
-  const change = data.paymentMethod !== "transfer" && data.cashReceived != null ? data.cashReceived - cashDue : undefined;
 
   // ใบเสร็จทั้งใบใช้ขนาดปกติ GS! 0x00 เท่ากันหมด ไม่ขยายเลยแม้แต่บรรทัดเดียว — ส่ง SIZE_NORMAL
   // ไว้ตอนต้นเผื่อ session ก่อนหน้า (เช่นพิมพ์ตั๋วครัวที่ตั้ง GS!0x11 ไว้บนการเชื่อมต่อเดิม)
@@ -414,24 +410,7 @@ export async function printReceiptNative(data: ReceiptData, lang: Language): Pro
   builder.raw(boldCmd(true));
   thaiText(builder, padLine(lang === "en" ? "Total" : "รวมทั้งหมด", `${data.total}${t.thb}`) + "\n");
   builder.raw(boldCmd(false));
-
-  const cashLabel = lang === "en" ? "Cash" : "เงินสด";
-  const transferLabel = lang === "en" ? "Transfer" : "เงินโอน";
-  const paymentLabel = data.paymentMethod === "cash" ? cashLabel
-    : data.paymentMethod === "transfer" ? transferLabel
-    : `${cashLabel} + ${transferLabel}`;
-  thaiText(builder, `${lang === "en" ? "Payment" : "ชำระโดย"}: ${paymentLabel}\n`);
-
-  // จ่ายแยก: แสดงยอดแต่ละฝั่งก่อน แล้วค่อยรับเงิน/เงินทอน (ของส่วนเงินสด) — รูปแบบเดียวกับบรรทัดอื่นในส่วนนี้
-  if (data.paymentMethod === "split") {
-    thaiText(builder, `${transferLabel}: ${transferPart}${t.thb}\n`);
-    thaiText(builder, `${cashLabel}: ${cashDue}${t.thb}\n`);
-  }
-
-  if (data.paymentMethod !== "transfer" && data.cashReceived != null) {
-    thaiText(builder, `${lang === "en" ? "Received" : "รับเงิน"}: ${data.cashReceived}${t.thb}\n`);
-    thaiText(builder, `${lang === "en" ? "Change" : "เงินทอน"}: ${change}${t.thb}\n`);
-  }
+  // ไม่พิมพ์ส่วนการชำระเงิน (ชำระโดย/รับเงิน/เงินทอน/ยอดเงินสด-โอน) — ใบเสร็จมีแค่รายการ + ยอดรวม
 
   thaiText(builder, "-".repeat(LINE_WIDTH) + "\n");
   builder.align("center");

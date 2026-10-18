@@ -61,7 +61,7 @@ interface PaymentCardProps {
   restoreAction?: (ci: CartItem) => void; // แตะรายการที่ยกเลิกแล้ว → ปุ่มคืนรายการ
   cancelAction?: () => void;
   moveAction?: () => void;
-  printReceiptAction?: (payment: PaymentInput) => void;
+  printReceiptAction?: () => void;
   printDisabled: boolean;
   expandedKey: string | null;
   select: (key: string) => void;
@@ -398,8 +398,8 @@ function PaymentCard({
           <div className="flex gap-2">
             {printReceiptAction && (
               <button
-                onClick={() => printReceiptAction(payment)}
-                disabled={printDisabled || !canClose}
+                onClick={printReceiptAction}
+                disabled={printDisabled || hasPending}
                 className="flex-shrink-0 bg-muted text-foreground px-4 py-3 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Printer size={16} />
@@ -573,14 +573,11 @@ export function StaffPaymentScreen({
                           const order = g.orders.find((o) => o.items.some((x) => x.cartId === ci.cartId));
                           if (order) askRestore(order, ci, `${t.tableLabel} ${g.tableNumber}`);
                         }}
-                        printReceiptAction={(payment) =>
+                        printReceiptAction={() =>
                           handlePrintReceipt({
                             label: `${t.tableLabel} ${g.tableNumber}`,
                             items: g.items,
                             total: g.total,
-                            paymentMethod: payment.method,
-                            cashReceived: payment.cashReceived,
-                            transferAmount: payment.transferAmount,
                           })
                         }
                         printDisabled={printDisabled}
@@ -626,14 +623,11 @@ export function StaffPaymentScreen({
                         billName={order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")}
                         onAskConfirm={onAskConfirm}
                         restoreAction={(ci) => askRestore(order, ci, order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"))}
-                        printReceiptAction={(payment) =>
+                        printReceiptAction={() =>
                           handlePrintReceipt({
                             label: order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"),
                             items: order.items.filter((ci) => !ci.voided),
                             total: orderTotal(order),
-                            paymentMethod: payment.method,
-                            cashReceived: payment.cashReceived,
-                            transferAmount: payment.transferAmount,
                           })
                         }
                         printDisabled={printDisabled}

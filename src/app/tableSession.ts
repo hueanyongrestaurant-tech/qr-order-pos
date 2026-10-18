@@ -16,7 +16,7 @@
 // เทียบเวลาปิดบิลด้วยค่าจาก server ทั้งสองฝั่ง (baseline = closedAt ที่อ่านได้ตอนเริ่มรอบ) ไม่ใช้นาฬิกามือถือ
 // ลูกค้า — มือถือที่นาฬิกาเพี้ยนจึงไม่ทำให้ลูกค้าใหม่โดนบล็อกผิดๆ
 
-export const TABLE_SESSION_MAX_MS = 4 * 60 * 60 * 1000; // หน้าเว็บลูกค้าหมดอายุเองหลังเปิดไว้ 4 ชม.
+export const TABLE_SESSION_MAX_MS = 3 * 60 * 60 * 1000; // หน้าเว็บลูกค้าหมดอายุเองหลังเปิดไว้ 3 ชม.
 export const CLOSURE_CHECK_TIMEOUT_MS = 4000; // อ่านเวลาปิดบิลไม่ทันในเวลานี้ = ปล่อยสั่งได้ตามปกติ
 
 export type ExpiredReason = "closed" | "timeout" | "unknown";
@@ -24,7 +24,7 @@ export type ExpiredReason = "closed" | "timeout" | "unknown";
 export interface TableSession {
   id: string;
   table: string;
-  startedAt: number; // Date.now() ของมือถือ — ใช้แค่นับ 4 ชม. (ระยะเวลา) ไม่ใช้เทียบกับเวลา server
+  startedAt: number; // Date.now() ของมือถือ — ใช้แค่นับ 3 ชม. (ระยะเวลา) ไม่ใช้เทียบกับเวลา server
   // closedAt (ms) ของโต๊ะนี้ตอนเริ่มรอบ: 0 = ไม่เคยปิดบิล, undefined = อ่านไม่สำเร็จ (ปล่อยผ่านจนกว่าจะอ่านได้)
   baselineClosedAt?: number;
   expired?: ExpiredReason;

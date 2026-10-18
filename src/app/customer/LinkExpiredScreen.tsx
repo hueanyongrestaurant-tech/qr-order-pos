@@ -3,7 +3,7 @@ import type { Language } from "../types";
 import type { ExpiredReason } from "../tableSession";
 import { T } from "../translations";
 
-// closed = โต๊ะถูกปิดบิลไปหลังเปิดหน้านี้ · timeout = เปิดค้างเกิน 4 ชม. · unknown = ลิงก์ไม่ตรงกับแท็บนี้ (แชร์/คัดลอกมา)
+// closed = โต๊ะถูกปิดบิลไปหลังเปิดหน้านี้ · timeout = เปิดค้างเกิน 3 ชม. · unknown = ลิงก์ไม่ตรงกับแท็บนี้ (แชร์/คัดลอกมา)
 export function LinkExpiredScreen({ lang, reason }: { lang: Language; reason: ExpiredReason }) {
   const t = T[lang];
   const closed = reason === "closed";
