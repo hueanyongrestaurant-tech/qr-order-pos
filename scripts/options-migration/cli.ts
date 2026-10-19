@@ -1,8 +1,8 @@
 // คำสั่งแปลงตัวเลือก (รันกับ production) — ดูวิธีใช้ใน README.md ข้างๆ ไฟล์นี้
 //   backup   : สำรองเมนูทั้งหมดลงไฟล์ (อ่านอย่างเดียว ไม่ต้องล็อกอิน)
 //   dry-run  : สำรอง + แสดงว่าจะเปลี่ยนอะไร (ไม่เขียนอะไรลง DB ไม่ต้องล็อกอิน)
-//   apply    : สำรอง + แสดงแผน + ถามยืนยัน + ล็อกอินพนักงาน + แปลงจริง
-//   rollback : คืนค่าจากไฟล์สำรอง (ล่าสุด หรือระบุชื่อไฟล์) — ล็อกอินพนักงาน + ถามยืนยัน
+//   apply    : สำรอง + แสดงแผน + ถามยืนยัน + ถามรหัสพนักงาน + แปลงจริง
+//   rollback : คืนค่าจากไฟล์สำรอง (ล่าสุด หรือระบุชื่อไฟล์) — ถามยืนยัน + ถามรหัสพนักงาน
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -12,6 +12,7 @@ import { getFirestore } from "firebase/firestore";
 import {
   applyMigration, checkBackup, planMigration, rollbackMigration, takeBackup, type BackupFile, type MigrationPlan,
 } from "./core";
+import { STAFF_EMAIL } from "../../src/app/constants";
 
 // ค่าเดียวกับ src/lib/firebase.ts (ค่า public ของเว็บแอป ไม่ใช่ความลับ) — แยกไว้เพราะไฟล์นั้นผูกกับ Vite
 const firebaseConfig = {
@@ -68,12 +69,21 @@ function printPlan(plan: MigrationPlan) {
   }
 }
 
+// บัญชีเดียวกับหน้าล็อกอินพนักงานในแอป (STAFF_EMAIL) — ถามแค่รหัสผ่าน ผิดพิมพ์ใหม่ได้ 3 ครั้ง
 async function login() {
-  console.log("\nล็อกอินด้วยบัญชีพนักงาน (อีเมล/รหัสเดียวกับที่ใช้ในแอป)");
-  const email = await ask("อีเมล: ");
-  const password = await ask("รหัสผ่าน (พิมพ์แล้วไม่ขึ้นบนจอ): ", true);
-  await signInWithEmailAndPassword(getAuth(app), email, password);
-  console.log("ล็อกอินแล้ว");
+  for (let attempt = 1; ; attempt++) {
+    const password = await ask("\nรหัสผ่านพนักงาน (รหัสเดียวกับหน้าล็อกอินในแอป — พิมพ์แล้วไม่ขึ้นบนจอ): ", true);
+    try {
+      await signInWithEmailAndPassword(getAuth(app), STAFF_EMAIL, password);
+      console.log("ล็อกอินแล้ว");
+      return;
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? "";
+      const wrong = ["auth/invalid-credential", "auth/wrong-password", "auth/invalid-login-credentials", "auth/missing-password"].includes(code);
+      if (!wrong || attempt >= 3) throw err;
+      console.log("รหัสผ่านไม่ถูกต้อง ลองใหม่");
+    }
+  }
 }
 
 async function main() {

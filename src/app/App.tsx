@@ -71,7 +71,7 @@ import type {
   Category,
   ConfirmOptions,
 } from "./types";
-import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED } from "./constants";
+import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED, STAFF_EMAIL } from "./constants";
 import { T } from "./translations";
 import {
   resolvePhoto,
@@ -1520,8 +1520,6 @@ export default function App() {
   const takeawayCounterRef = { current: 0 };
 
   // Staff handlers
-  const STAFF_EMAIL = "admin@hueanyong.local";
-
   const handleStaffLogin = async (pw: string) => {
     try {
       await signInWithEmailAndPassword(getAuthInstance(), STAFF_EMAIL, pw);
