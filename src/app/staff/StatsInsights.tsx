@@ -1,38 +1,14 @@
-import { useState } from "react";
 import { Clock, Crown, Receipt, Utensils } from "lucide-react";
-import type { Language, MenuItem, Order } from "../types";
+import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
+import type { Language, Order } from "../types";
 import { T } from "../translations";
 import { TABLE_FLOORS } from "../constants";
-import { resolvePhoto } from "../utils";
-import { billsHeatmap, formatMinutes, groupBills, parseTableNumber, seatingSummary, tableStats, topItems } from "../statsInsights";
+import { billsPerHour, formatMinutes, groupBills, parseTableNumber, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
 
-// ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / ผังโต๊ะระบายสี / heatmap วัน×ชั่วโมง / เมนูขายดี ─────────────
+// ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
 // คิดจากออเดอร์ที่จ่ายแล้วชุดเดียวกับส่วนรายได้ (ไม่อ่าน Firestore เพิ่ม) — ดู statsInsights.ts
-// สีความเข้ม = primary ผสมกับพื้นการ์ด (เฉดเดียว อ่อน → เข้ม) ใช้ได้ทั้งธีมสว่าง/มืด
-
-// ความเข้ม 0..1 → สีพื้นช่อง (0 = ไม่มีข้อมูล ใช้พื้นจางแยกให้เห็นว่าว่าง)
-function heat(ratio: number): { background: string; color: string } {
-  if (ratio <= 0) return { background: "color-mix(in srgb, var(--muted) 45%, var(--card))", color: "var(--muted-foreground)" };
-  const pct = Math.round(14 + ratio * 78);
-  return {
-    background: `color-mix(in srgb, var(--primary) ${pct}%, var(--card))`,
-    color: pct >= 55 ? "var(--primary-foreground)" : "var(--foreground)",
-  };
-}
-
-function HeatLegend({ lang }: { lang: Language }) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-      <span>{lang === "en" ? "Less" : "น้อย"}</span>
-      <div className="flex gap-[2px]">
-        {[0.08, 0.3, 0.55, 0.8, 1].map((r) => (
-          <span key={r} className="w-4 h-3 rounded-[3px]" style={{ background: heat(r).background }} />
-        ))}
-      </div>
-      <span>{lang === "en" ? "More" : "มาก"}</span>
-    </div>
-  );
-}
+// ตัวเลขเขียนให้อ่านตรงๆ ทุกจุด แถบ/เส้นเป็นแค่ตัวช่วยเทียบ ไม่ต้องตีความสี
 
 function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string; sub?: string }) {
   return (
@@ -47,40 +23,56 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
   );
 }
 
-export function StatsInsights({ lang, orders, rangeStart, rangeEnd, menuItems }: {
+export function StatsInsights({ lang, orders, rangeStart, rangeEnd }: {
   lang: Language;
   orders: Order[];
   rangeStart: Date;
   rangeEnd: Date;
-  menuItems: MenuItem[]; // ใช้แค่หารูปเมนู (ออเดอร์ไม่เก็บรูป)
 }) {
   const t = T[lang];
   const en = lang === "en";
-  const [tableMetric, setTableMetric] = useState<"bills" | "revenue">("bills");
-
   const bills = groupBills(orders);
   if (bills.length === 0) return null;
 
   const seating = seatingSummary(bills);
-  const tables = tableStats(bills, tableMetric);
-  const topTable = tableStats(bills, "bills", 1)[0];
+  const tables = tableStats(bills, "bills");
+  const topTable = tables[0];
   const takeaway = bills.filter((b) => b.isTakeaway);
   const dineInCount = bills.length - takeaway.length;
-  const items = topItems(orders, 10);
-  const totalQty = topItems(orders, Infinity).reduce((s, m) => s + m.qty, 0);
-  const map = billsHeatmap(bills, rangeStart, rangeEnd);
-  const weekdayShort = en ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] : ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
-  const weekdayLong = en
-    ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-    : ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+  const items = topItems(orders, 1);
+  const days = rangeDayCount(rangeStart, rangeEnd);
+  const perHour = billsPerHour(bills, days);
+  const peaks = topHours(perHour, 3);
+  // วันเดียว = จำนวนบิลจริง | หลายวัน = เฉลี่ยต่อวัน
+  const perDayLabel = (h: { total: number; avg: number }) =>
+    days === 1 ? (en ? `${h.total} bills` : `${h.total} บิล`) : (en ? `avg ${h.avg} bills/day` : `เฉลี่ย ${h.avg} บิล/วัน`);
+  const hourConfig = {
+    value: { label: days === 1 ? (en ? "Bills" : "บิล") : (en ? "Bills per day (avg)" : "บิลเฉลี่ยต่อวัน"), color: "var(--primary)" },
+  } satisfies ChartConfig;
   const shortDate = (d: Date) => d.toLocaleDateString(en ? "en-US" : "th-TH", { day: "numeric", month: "short" });
   const money = (v: number) => (v >= 10000 ? `${t.thb}${(v / 1000).toFixed(1)}k` : `${t.thb}${v.toLocaleString()}`);
   const itemName = (m: { nameTh: string; nameEn: string }) => (en ? m.nameEn || m.nameTh : m.nameTh);
-  const photoOf = (id: string) => menuItems.find((m) => m.id === id)?.photo || "";
 
-  // ผังโต๊ะ: ค่าตามตัวเลือก (บิล/ยอดเงิน) ของทุกโต๊ะในผัง
+  // โต๊ะแยกตามชั้น: แถวเฉพาะโต๊ะที่มีบิล เรียงจากบิลมากไปน้อย — โต๊ะที่ไม่มีบิลรวมไว้บรรทัดเดียวใต้ตาราง
   const byTable = new Map(tables.map((r) => [r.table, r]));
-  const tableMax = Math.max(1, ...tables.map((r) => r[tableMetric]));
+  const dineInRevenue = tables.reduce((s, r) => s + r.revenue, 0);
+  const floors = TABLE_FLOORS.map((f) => {
+    const rows = Array.from({ length: f.tables }, (_, i) => byTable.get(`${f.floor}-${i + 1}`) ?? { table: `${f.floor}-${i + 1}`, bills: 0, revenue: 0 })
+      .sort((a, b) => b.bills - a.bills || a.revenue - b.revenue || a.table.localeCompare(b.table, undefined, { numeric: true }));
+    return {
+      floor: f.floor,
+      rows: rows.filter((r) => r.bills > 0),
+      unused: rows.filter((r) => r.bills === 0).map((r) => r.table.split("-")[1]).sort((a, b) => Number(a) - Number(b)),
+      bills: rows.reduce((s, r) => s + r.bills, 0),
+      revenue: rows.reduce((s, r) => s + r.revenue, 0),
+      max: Math.max(1, ...rows.map((r) => r.bills)),
+    };
+  });
+  // โต๊ะที่ไม่อยู่ในผัง (เลขโต๊ะเก่า/รูปแบบอื่น) — ยังนับในยอดรวม แค่ไม่มีแถวของตัวเอง
+  const unmappedBills = tables.filter((r) => {
+    const p = parseTableNumber(r.table);
+    return !p || !TABLE_FLOORS.some((f) => f.floor === p.floor && p.table >= 1 && p.table <= f.tables);
+  }).reduce((s, r) => s + r.bills, 0);
 
   // เวลานั่ง: ข้อความเล็กบรรทัดเดียว เฉพาะตอนข้อมูลยังเก็บไม่ครบช่วง
   const seatingSub = seating.trackedSince && seating.missingPaidAt > 0
@@ -119,148 +111,81 @@ export function StatsInsights({ lang, orders, rangeStart, rangeEnd, menuItems }:
         />
       </div>
 
-      {/* ─── ผังโต๊ะ ─── */}
+      {/* ─── โต๊ะแยกตามชั้น ─── */}
       {dineInCount > 0 && (
         <div className="bg-card rounded-2xl border border-border p-4">
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <h3 className="font-semibold text-foreground text-sm">{en ? "Table map" : "ผังโต๊ะ"}</h3>
-            <div className="flex rounded-full bg-muted p-0.5" role="radiogroup">
-              {(["bills", "revenue"] as const).map((k) => (
-                <button
-                  key={k}
-                  role="radio"
-                  aria-checked={tableMetric === k}
-                  onClick={() => setTableMetric(k)}
-                  className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${tableMetric === k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
-                >
-                  {k === "bills" ? (en ? "Bills" : "จำนวนบิล") : (en ? "Revenue" : "ยอดเงิน")}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-x-6 gap-y-5">
-            {TABLE_FLOORS.map((f) => (
-              <div key={f.floor}>
-                <div className="text-xs font-semibold text-muted-foreground mb-2">{en ? `Floor ${f.floor}` : `ชั้น ${f.floor}`}</div>
-                <div className="grid grid-cols-4 gap-2">
-                  {Array.from({ length: f.tables }, (_, i) => i + 1).map((n) => {
-                    const stat = byTable.get(`${f.floor}-${n}`);
-                    const v = stat ? stat[tableMetric] : 0;
-                    const style = heat(v / tableMax);
-                    return (
-                      <div
-                        key={n}
-                        title={stat ? `${t.tableLabel} ${f.floor}-${n}: ${stat.bills} ${en ? "bills" : "บิล"} · ${t.thb}${stat.revenue.toLocaleString()}` : undefined}
-                        className="aspect-square rounded-2xl flex flex-col items-center justify-center"
-                        style={style}
-                      >
-                        <span className="font-display font-bold text-lg leading-none">{n}</span>
-                        <span className="text-[10px] mt-1 tabular-nums opacity-90">
-                          {v > 0 ? (tableMetric === "bills" ? `${v} ${en ? "bills" : "บิล"}` : money(v)) : "–"}
-                        </span>
-                      </div>
-                    );
-                  })}
+          <h3 className="font-semibold text-foreground text-sm mb-3">{en ? "Tables by floor" : "โต๊ะแยกตามชั้น"}</h3>
+          <div className="grid sm:grid-cols-2 gap-4">
+            {floors.map((f) => (
+              <div key={f.floor} className="rounded-xl bg-background border border-border p-3">
+                <div className="flex items-baseline justify-between gap-2 mb-2">
+                  <span className="font-semibold text-foreground">{en ? `Floor ${f.floor}` : `ชั้น ${f.floor}`}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {f.bills} {en ? "bills" : "บิล"} · {money(f.revenue)} · {Math.round((f.bills / dineInCount) * 100)}%
+                  </span>
                 </div>
+                {f.rows.length > 0 && <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-3 gap-y-1.5 items-center text-sm">
+                  <span className="text-[11px] text-muted-foreground">{en ? "Table" : "โต๊ะ"}</span>
+                  <span />
+                  <span className="text-[11px] text-muted-foreground text-right">{en ? "Bills" : "บิล"}</span>
+                  <span className="text-[11px] text-muted-foreground text-right">{en ? "Revenue" : "ยอดเงิน"}</span>
+                  {f.rows.map((r) => (
+                    <div key={r.table} className="contents">
+                      <span className="font-semibold text-foreground tabular-nums">{r.table.split("-")[1]}</span>
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${(r.bills / f.max) * 100}%` }} />
+                      </div>
+                      <span className="text-right tabular-nums font-semibold text-foreground">{r.bills}</span>
+                      <span className="text-right tabular-nums text-muted-foreground">{money(r.revenue)}</span>
+                    </div>
+                  ))}
+                </div>}
+                {f.rows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{en ? "No bills yet" : "ยังไม่มีบิล"}</p>
+                ) : f.unused.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-2">{en ? `No bills: table ${f.unused.join(", ")}` : `ไม่มีบิล: โต๊ะ ${f.unused.join(", ")}`}</p>
+                )}
               </div>
             ))}
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 mt-4">
-            <HeatLegend lang={lang} />
-            {takeaway.length > 0 && (
-              <span className="text-[11px] text-muted-foreground">
-                {en ? "Takeaway" : "กลับบ้าน"} · {takeaway.length} {en ? "bills" : "บิล"} · {money(takeaway.reduce((s, b) => s + b.revenue, 0))}
-              </span>
-            )}
-          </div>
+          <p className="text-[11px] text-muted-foreground mt-3">
+            {en ? `Dine-in total ${money(dineInRevenue)}` : `ยอดรวมทานที่ร้าน ${money(dineInRevenue)}`}
+            {takeaway.length > 0 && (en
+              ? ` · Takeaway ${takeaway.length} bills · ${money(takeaway.reduce((s, b) => s + b.revenue, 0))}`
+              : ` · กลับบ้าน ${takeaway.length} บิล · ${money(takeaway.reduce((s, b) => s + b.revenue, 0))}`)}
+            {unmappedBills > 0 && (en ? ` · ${unmappedBills} bills at other tables` : ` · โต๊ะอื่นนอกผัง ${unmappedBills} บิล`)}
+          </p>
         </div>
       )}
 
-      {/* ─── heatmap วัน × ชั่วโมง ─── */}
+      {/* ─── ช่วงเวลาที่คนเยอะสุด ─── */}
       <div className="bg-card rounded-2xl border border-border p-4">
-        <h3 className="font-semibold text-foreground text-sm">{en ? "Busy times" : "ช่วงเวลาคนเยอะ"}</h3>
-        {map.peak && (
-          <p className="text-xs text-muted-foreground mt-0.5 mb-3">
-            {en ? "Busiest: " : "คนเยอะสุด: "}
-            <span className="font-semibold text-foreground">
-              {map.weekdays.length > 1 ? `${weekdayLong[map.peak.weekday]} ` : ""}{map.peak.hour}:00–{map.peak.hour + 1}:00
-            </span>
-            {` · ${map.peak.count} ${en ? "bills" : "บิล"}`}
-          </p>
-        )}
-        <div
-          className="grid gap-[3px] items-center"
-          // ช่องกว้างสุด ~4rem — ช่วงที่มีไม่กี่ชั่วโมง (เช่นวันนี้) จะไม่ยืดเป็นแถบยาวเต็มจอ
-          style={{ gridTemplateColumns: `2.25rem repeat(${map.hours.length}, minmax(0, 1fr))`, maxWidth: `calc(2.25rem + ${map.hours.length} * 4rem)` }}
-        >
-          <span />
-          {map.hours.map((h) => (
-            <span key={h} className="text-[10px] text-muted-foreground text-center tabular-nums">{h}</span>
-          ))}
-          {map.weekdays.map((w) => (
-            <div key={w} className="contents">
-              <span className="text-[11px] text-muted-foreground pr-1">{weekdayShort[w]}</span>
-              {map.hours.map((h) => {
-                const c = map.counts[`${w}-${h}`] ?? 0;
-                const style = heat(c / Math.max(1, map.max));
-                return (
-                  <div
-                    key={h}
-                    title={`${weekdayLong[w]} ${h}:00 · ${c} ${en ? "bills" : "บิล"}`}
-                    className="h-7 sm:h-9 rounded-md flex items-center justify-center text-[10px] font-semibold tabular-nums"
-                    style={style}
-                  >
-                    <span className="hidden sm:inline">{c > 0 ? c : ""}</span>
-                  </div>
-                );
-              })}
+        <h3 className="font-semibold text-foreground text-sm mb-3">{en ? "Busiest times" : "ช่วงที่คนเยอะสุด"}</h3>
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {peaks.map((h, i) => (
+            <div key={h.hour} className={`rounded-xl p-2.5 sm:p-3 border min-w-0 ${i === 0 ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-foreground"}`}>
+              <div className={`text-[11px] font-semibold ${i === 0 ? "opacity-90" : "text-muted-foreground"}`}>{en ? `#${i + 1}` : `อันดับ ${i + 1}`}</div>
+              <div className="font-display font-bold text-sm sm:text-lg leading-tight mt-0.5 tabular-nums whitespace-nowrap">{h.hour}:00–{h.hour + 1}:00</div>
+              <div className={`text-[11px] sm:text-xs mt-1 whitespace-nowrap ${i === 0 ? "opacity-90" : "text-muted-foreground"}`}>{perDayLabel(h)}</div>
             </div>
           ))}
         </div>
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <HeatLegend lang={lang} />
-          <span className="text-[11px] text-muted-foreground">{en ? "Bills by first-order hour" : "นับบิลตามชั่วโมงที่เริ่มสั่ง"}</span>
-        </div>
+        {perHour.length > 1 && (
+          <>
+            <div className="text-xs text-muted-foreground mb-1">
+              {days === 1 ? (en ? "Through the day (bills)" : "ทั้งวัน (จำนวนบิล)") : (en ? "Through the day (bills per day, avg)" : "ทั้งวัน (บิลเฉลี่ยต่อวัน)")}
+            </div>
+            <ChartContainer config={hourConfig} className="aspect-[3/1] sm:aspect-[4/1] w-full">
+              <AreaChart data={perHour.map((h) => ({ label: `${h.hour}:00`, value: days === 1 ? h.total : h.avg }))} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                <CartesianGrid vertical={false} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={6} interval="preserveStartEnd" />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Area dataKey="value" type="monotone" stroke="var(--color-value)" strokeWidth={2} fill="var(--color-value)" fillOpacity={0.15} />
+              </AreaChart>
+            </ChartContainer>
+          </>
+        )}
       </div>
-
-      {/* ─── เมนูขายดี ─── */}
-      {items.length > 0 && (
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <h3 className="font-semibold text-foreground text-sm mb-3">{en ? "Best sellers" : "เมนูขายดี"}</h3>
-          <ol className="space-y-3">
-            {items.map((m, i) => {
-              const photo = photoOf(m.id);
-              const share = totalQty > 0 ? Math.round((m.qty / totalQty) * 100) : 0;
-              return (
-                <li key={m.id} className="flex items-center gap-3">
-                  <span className={`w-5 text-center font-display font-bold text-sm flex-shrink-0 ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>{i + 1}</span>
-                  {photo ? (
-                    <img src={resolvePhoto(photo, 96, 96)} alt="" className="w-11 h-11 rounded-xl object-cover bg-muted flex-shrink-0" loading="lazy" />
-                  ) : (
-                    <div className="w-11 h-11 rounded-xl bg-muted flex items-center justify-center text-muted-foreground flex-shrink-0">
-                      <Utensils size={16} />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-sm font-medium text-foreground truncate">{itemName(m)}</span>
-                      <span className="text-sm font-semibold text-foreground tabular-nums flex-shrink-0">{m.qty}</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                        <div className="h-full rounded-full bg-primary" style={{ width: `${(m.qty / items[0].qty) * 100}%` }} />
-                      </div>
-                      <span className="text-[11px] text-muted-foreground tabular-nums w-20 text-right flex-shrink-0">
-                        {share}% · {money(m.revenue)}
-                      </span>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-      )}
     </div>
   );
 }

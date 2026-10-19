@@ -86,39 +86,32 @@ export function tableStats(bills: Bill[], by: "bills" | "revenue", top = Infinit
     .slice(0, top);
 }
 
-// ช่วงเวลาคนเยอะ: heatmap วันในสัปดาห์ × ชั่วโมงที่เริ่มสั่ง (นับจำนวนบิลรวมทั้งช่วงที่เลือก)
-// แถว = วันที่มีอยู่จริงในช่วง (เรียงจันทร์ → อาทิตย์) | คอลัมน์ = ชั่วโมงแรกสุดถึงท้ายสุดที่มีบิล (เติมชั่วโมงว่างให้ครบ)
-export interface BillsHeatmap {
-  weekdays: number[]; // 0 = อาทิตย์ ตาม Date.getDay()
-  hours: number[];
-  counts: Record<string, number>; // key `${weekday}-${hour}`
-  max: number;
-  peak: { weekday: number; hour: number; count: number } | null;
+// จำนวนวันในช่วงที่เลือก (นับทั้งวันแรกและวันสุดท้าย) — ใช้หาค่าเฉลี่ยต่อวัน
+export function rangeDayCount(rangeStart: Date, rangeEnd: Date): number {
+  const a = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate()).getTime();
+  const b = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), rangeEnd.getDate()).getTime();
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
 }
 
-export function billsHeatmap(bills: Bill[], rangeStart: Date, rangeEnd: Date): BillsHeatmap {
-  const present = new Set<number>();
-  const cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate());
-  const last = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), rangeEnd.getDate());
-  while (cursor <= last && present.size < 7) { present.add(cursor.getDay()); cursor.setDate(cursor.getDate() + 1); }
-  const weekdays = [1, 2, 3, 4, 5, 6, 0].filter((w) => present.has(w));
-  const counts: Record<string, number> = {};
-  let max = 0;
-  let peak: BillsHeatmap["peak"] = null;
-  let minHour = 24;
-  let maxHour = -1;
-  bills.forEach((b) => {
-    const w = b.firstOrderAt.getDay();
-    const h = b.firstOrderAt.getHours();
-    const key = `${w}-${h}`;
-    counts[key] = (counts[key] ?? 0) + 1;
-    if (counts[key] > max) { max = counts[key]; peak = { weekday: w, hour: h, count: counts[key] }; }
-    minHour = Math.min(minHour, h);
-    maxHour = Math.max(maxHour, h);
-  });
-  const hours: number[] = [];
-  for (let h = minHour; h <= maxHour; h++) hours.push(h);
-  return { weekdays, hours, counts, max, peak };
+export interface HourStat { hour: number; total: number; avg: number }
+
+// ช่วงเวลาคนเยอะ: จำนวนบิลตามชั่วโมงที่เริ่มสั่ง + เฉลี่ยต่อวัน (ทศนิยม 1 ตำแหน่ง)
+// ชั่วโมงแรกสุดถึงท้ายสุดที่มีบิล เติมชั่วโมงว่างให้ครบ (เส้นเวลาไม่กระโดด)
+export function billsPerHour(bills: Bill[], days: number): HourStat[] {
+  if (bills.length === 0) return [];
+  const counts = new Array<number>(24).fill(0);
+  bills.forEach((b) => { counts[b.firstOrderAt.getHours()]++; });
+  const used = counts.map((c, h) => (c > 0 ? h : -1)).filter((h) => h >= 0);
+  const out: HourStat[] = [];
+  for (let h = used[0]; h <= used[used.length - 1]; h++) {
+    out.push({ hour: h, total: counts[h], avg: Math.round((counts[h] / Math.max(1, days)) * 10) / 10 });
+  }
+  return out;
+}
+
+// ชั่วโมงที่คนเยอะสุด n อันดับ (เท่ากันให้ชั่วโมงที่เร็วกว่ามาก่อน) ไม่นับชั่วโมงที่ไม่มีบิล
+export function topHours(perHour: HourStat[], n = 3): HourStat[] {
+  return perHour.filter((h) => h.total > 0).sort((a, b) => b.total - a.total || a.hour - b.hour).slice(0, n);
 }
 
 // "1-3" → ชั้น 1 โต๊ะ 3 (ตามผังใน TABLE_FLOORS) — รูปแบบอื่นคืน null

@@ -2676,7 +2676,6 @@ export default function App() {
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}
-            menuItems={allMenuItems}
           />
         </Suspense>
       );
