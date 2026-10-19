@@ -32,8 +32,8 @@ export interface CustomChoice {
   labelTh: string;
   labelEn: string;
   priceDelta: number;
-  active?: boolean;   // false = ซ่อนตัวเลือกนี้
-  soldOut?: boolean;  // true = หมด (ใช้เฉพาะกลุ่มเนื้อสัตว์ ดู isMeatGroup) ยังแสดงแต่เลือกไม่ได้
+  active?: boolean;   // เลิกใช้แล้ว (ปุ่ม "ซ่อน" เดิม แอปเก่ายังเขียนได้) — false นับเป็น "ปิด" เหมือน soldOut ดู isChoiceClosed
+  soldOut?: boolean;  // true = ปิด: ลูกค้ายังเห็นเป็นสีเทา "หมด" เลือกไม่ได้ (ทุกกลุ่ม)
 }
 export interface CustomGroup {
   id: string;
@@ -42,8 +42,10 @@ export interface CustomGroup {
   type: "single" | "multi"; // single = เลือกได้ 1, multi = เลือกได้หลายอย่าง
   choices: CustomChoice[];
   required?: boolean;
-  // ตัวเลือกที่ถูกเลือกไว้ให้ตอนเปิดหน้าเมนู (เฉพาะ type single) — ไม่มี = ไม่เลือกอะไรไว้
-  // ถ้าตัวเลือกนี้ถูกลบ/ซ่อน/หมด จะกลับไปเป็นไม่เลือก (ดู defaultCustomSelections ใน utils.ts)
+  // true = ตัวเลือกของกลุ่มนี้ขึ้นเป็นปุ่มเปิด/ปิดด่วนในหน้าจัดการเมนู
+  // ไม่มีค่า (ข้อมูลเก่า) = ใช้ชื่อกลุ่มตัดสิน (มีคำว่า "เนื้อสัตว์") ดู isQuickToggleGroup ใน menuOptions.ts
+  quickToggle?: boolean;
+  // เลิกใช้แล้ว — ลูกค้าต้องเลือกเองทุกกลุ่ม ค่านี้ (ถ้ายังค้างอยู่ใน doc เก่า) ไม่มีผล
   defaultChoiceId?: string;
 }
 export type OrderStatus = "in-progress" | "awaiting-payment" | "paid" | "cancelled";
@@ -95,6 +97,9 @@ export interface ActivityLog {
   details?: Record<string, any>;
 }
 
+// ตัวเลือกในตัว (hasMeatChoice/meatPriceDeltas/hasSpice/hasPortion/portionPriceDelta/hasEggAddon/hasPlainAddOns/
+// disabledMeats/soldOutMeats) เลิกใช้แล้ว — เหลือไว้ให้อ่านเมนู/ออเดอร์เก่าได้ ตัวเลือกทั้งหมดอยู่ใน customGroups
+// (เมนูที่ยังเป็นแบบเดิมถูกแปลงตอนอ่านด้วย normalizeMenuItem ใน menuOptions.ts)
 export interface MenuItem {
   id: string;
   categoryId: string;

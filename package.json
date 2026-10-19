@@ -8,7 +8,11 @@
     "dev": "vite",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
-    "build:android": "vite build --mode capacitor && npx cap sync android"
+    "build:android": "vite build --mode capacitor && npx cap sync android",
+    "options:backup": "node scripts/options-migration/run.mjs backup",
+    "options:dry-run": "node scripts/options-migration/run.mjs dry-run",
+    "options:apply": "node scripts/options-migration/run.mjs apply",
+    "options:rollback": "node scripts/options-migration/run.mjs rollback"
   },
   "dependencies": {
     "@capacitor/android": "7.6.9",

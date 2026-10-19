@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { GripVertical, Plus, Star, Trash2, Utensils } from "lucide-react";
 import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from "../types";
-import { allMeatsSoldOut, meatOptions, menuAvailabilitySetting, type MeatOption } from "../utils";
+import { menuAvailabilitySetting } from "../utils";
+import { isChoiceClosed, isQuickToggleGroup, requiredGroupAllClosed } from "../menuOptions";
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
 import { stockLevel, type StockEntry } from "../stock";
@@ -94,7 +95,8 @@ interface StaffMenuProps {
   onAdd: () => void;
   onEdit: (item: MenuItem) => void;
   onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
-  onToggleMeatSoldOut: (item: MenuItem, option: MeatOption) => void;
+  // ปุ่มเปิด/ปิดด่วนของตัวเลือก (กลุ่มที่ติ๊ก "แสดงในหน้าจัดการเมนู") — items ที่ส่งมาต้องผ่าน normalizeMenuItem แล้ว
+  onSetChoiceClosed: (item: MenuItem, groupId: string, choiceId: string, closed: boolean) => void;
   onDelete: (itemId: string) => void;
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
@@ -114,7 +116,7 @@ interface StaffMenuProps {
 }
 
 export function StaffMenuScreen({
-  lang, items, onAdd, onEdit, onSetAvailability, onToggleMeatSoldOut, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleRecommended, onReorderRecommended, onReorderCategories, onReorderMenuItems,
+  lang, items, onAdd, onEdit, onSetAvailability, onSetChoiceClosed, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleRecommended, onReorderRecommended, onReorderCategories, onReorderMenuItems,
   scrollTopRef, stockMap, stockEnabled, onSetStockEnabled,
 }: StaffMenuProps) {
   const t = T[lang];
@@ -299,7 +301,7 @@ export function StaffMenuScreen({
               onReorderMenuItems={onReorderMenuItems}
               onToggleRecommended={onToggleRecommended}
               onSetAvailability={onSetAvailability}
-              onToggleMeatSoldOut={onToggleMeatSoldOut}
+              onSetChoiceClosed={onSetChoiceClosed}
               onEdit={onEdit}
               onDelete={onDelete}
               onAskConfirm={onAskConfirm}
@@ -354,7 +356,7 @@ function RecommendedStar({ lang, on, onClick }: { lang: Language; on: boolean; o
 // รายการเมนูภายในหมวดหมู่เดียว แยกเป็นคอมโพเนนต์ต่างหาก
 // เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
 function CategoryMenuItemsList({
-  lang, t, cat, catItems, onReorderMenuItems, onToggleRecommended, onSetAvailability, onToggleMeatSoldOut, onEdit, onDelete, onAskConfirm,
+  lang, t, cat, catItems, onReorderMenuItems, onToggleRecommended, onSetAvailability, onSetChoiceClosed, onEdit, onDelete, onAskConfirm,
   stockMap, stockEnabled,
 }: {
   lang: Language;
@@ -364,7 +366,8 @@ function CategoryMenuItemsList({
   onReorderMenuItems: (categoryId: string, orderedIds: string[]) => void;
   onToggleRecommended: (item: MenuItem) => void;
   onSetAvailability: (item: MenuItem, availability: MenuAvailability) => void;
-  onToggleMeatSoldOut: (item: MenuItem, option: MeatOption) => void;
+  // ปุ่มเปิด/ปิดด่วนของตัวเลือก (กลุ่มที่ติ๊ก "แสดงในหน้าจัดการเมนู") — items ที่ส่งมาต้องผ่าน normalizeMenuItem แล้ว
+  onSetChoiceClosed: (item: MenuItem, groupId: string, choiceId: string, closed: boolean) => void;
   onEdit: (item: MenuItem) => void;
   onDelete: (itemId: string) => void;
   onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
@@ -380,11 +383,11 @@ function CategoryMenuItemsList({
       </h3>
       <div className="space-y-2">
         {itemDrag.orderedList.map((item) => {
-          const meats = meatOptions(item);
-          // ปุ่ม ขาย/หมด/ซ่อน แสดงค่าที่ "ตั้งไว้" — เนื้อหมดทุกตัวทำให้ลูกค้าเห็นว่าหมดก็จริง แต่ไม่เปลี่ยนปุ่ม
-          // (คิดตอนแสดงผล ไม่เขียน DB) แค่บอกเหตุผลไว้ใต้ราคาแทน เปิดเนื้อกลับมาขาย เมนูก็กลับมาขายเอง
+          const quickGroups = (item.customGroups || []).filter((g) => isQuickToggleGroup(g) && g.choices.length > 0);
+          // ปุ่ม ขาย/หมด/ซ่อน แสดงค่าที่ "ตั้งไว้" — กลุ่มที่ต้องเลือกถูกปิดหมดทุกตัวทำให้ลูกค้าเห็นว่าหมดก็จริง แต่ไม่เปลี่ยนปุ่ม
+          // (คิดตอนแสดงผล ไม่เขียน DB) แค่บอกเหตุผลไว้ใต้ปุ่มด่วนแทน เปิดตัวเลือกกลับมา เมนูก็กลับมาขายเอง
           const setting = menuAvailabilitySetting(item);
-          const meatsOut = setting === "available" && allMeatsSoldOut(item);
+          const choicesOut = setting === "available" && requiredGroupAllClosed(item);
           return (
           <div
             key={item.id}
@@ -442,31 +445,33 @@ function CategoryMenuItemsList({
             >
               <Trash2 size={16} />
             </button>
-            {/* ชิปตัวเลือกเนื้อสัตว์ (แสดงตลอด เฉพาะเมนูที่มี) — แตะครั้งเดียวสลับ ขาย/หมด บันทึกทันที
-                ตัวเลือกที่ถูกซ่อนไว้ไม่แสดง (meatOptions กรองออกแล้ว) */}
-            {meats.length > 0 && (
-              <div className="basis-full flex flex-wrap items-center gap-1.5 pl-7">
-                <span className="text-[11px] text-muted-foreground mr-0.5">{lang === "en" ? "Meat:" : "เนื้อ:"}</span>
-                {meats.map((o) => (
-                  <button
-                    key={o.key}
-                    onClick={() => onToggleMeatSoldOut(item, o)}
-                    aria-pressed={o.soldOut}
-                    className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-colors active:scale-95 ${o.soldOut
-                      ? "bg-primary/10 border-primary/50 text-primary"
-                      : "bg-secondary/10 border-secondary/30 text-secondary"
-                      }`}
-                  >
-                    <span className={o.soldOut ? "line-through" : ""}>{lang === "en" ? o.labelEn : o.labelTh}</span>
-                    {o.soldOut && <span className="ml-1 no-underline">{lang === "en" ? "out" : "หมด"}</span>}
-                  </button>
-                ))}
-                {/* อยู่แถวชิป (เต็มความกว้าง) ไม่ใช่ใต้ชื่อ — คอลัมน์ชื่อแคบมากบนมือถือ */}
-                {meatsOut && (
-                  <span className="text-[11px] font-medium text-primary ml-0.5">
-                    {lang === "en" ? "· all out, shown as sold out" : "· เนื้อหมดทุกตัว ลูกค้าเห็นว่าหมด"}
-                  </span>
-                )}
+            {/* ปุ่มเปิด/ปิดด่วน: แถวละกลุ่ม (เฉพาะกลุ่มที่ติ๊ก "แสดงในหน้าจัดการเมนู") — แตะครั้งเดียวสลับ เปิด/ปิด บันทึกทันที */}
+            {quickGroups.map((g) => (
+              <div key={g.id} className="basis-full flex flex-wrap items-center gap-1.5 pl-7">
+                <span className="text-[11px] text-muted-foreground mr-0.5">{(lang === "en" ? g.nameEn || g.nameTh : g.nameTh || g.nameEn)}:</span>
+                {g.choices.map((c) => {
+                  const closed = isChoiceClosed(c);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => onSetChoiceClosed(item, g.id, c.id, !closed)}
+                      aria-pressed={closed}
+                      className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-colors active:scale-95 ${closed
+                        ? "bg-primary/10 border-primary/50 text-primary"
+                        : "bg-secondary/10 border-secondary/30 text-secondary"
+                        }`}
+                    >
+                      <span className={closed ? "line-through" : ""}>{(lang === "en" ? c.labelEn || c.labelTh : c.labelTh || c.labelEn) || "—"}</span>
+                      {closed && <span className="ml-1 no-underline">{lang === "en" ? "out" : "หมด"}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {/* อยู่แถวเต็มความกว้าง ไม่ใช่ใต้ชื่อ — คอลัมน์ชื่อแคบมากบนมือถือ */}
+            {choicesOut && (
+              <div className="basis-full pl-7 text-[11px] font-medium text-primary">
+                {lang === "en" ? "A required option is all off — customers see Sold out" : "ตัวเลือกที่ต้องเลือกปิดหมดทุกตัว ลูกค้าเห็นว่าหมด"}
               </div>
             )}
           </div>

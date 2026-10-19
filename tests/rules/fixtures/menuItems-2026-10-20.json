@@ -1,0 +1,3250 @@
+{
+ "kind": "menuItems-options-backup",
+ "version": 1,
+ "createdAt": "2026-10-20T00:00:00.000Z",
+ "categoryIds": [
+  "2NXv4pNZRU9yjVl9OIEq",
+  "5mIYAa6JGcKLBnA9tYhC",
+  "A209qGE7hdKpiVKOsZs7",
+  "FzjtnouB5Mf8BCNgYILS",
+  "JrE0GUnuZVq70DFN7JJy",
+  "Wk2oV2pWLt9mQOhBvmeU",
+  "aR7y3YHQYS3LdCbFJWcf",
+  "cYpEAYtt7l5CMLTPWq4l",
+  "mxympcjEz6sLCqF3UjQ5",
+  "qwxD1JbhmdBDvc23f2mH"
+ ],
+ "menuItems": [
+  {
+   "id": "1786811714326-s1n7b",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": true,
+    "name": {
+     "en": "Kanom Jeen Nam Ngiew (Pork Rib Noodle Soup)",
+     "th": "ขนมจีนน้ำเงี้ยวซี่โครงหมู"
+    },
+    "order": 0,
+    "photo": "",
+    "portionPriceDelta": 15,
+    "price": 69,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812043928-nv2yr",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1787373918003-i3pjm",
+        "labelEn": "Regular ",
+        "labelTh": "ธรรมดา",
+        "priceDelta": 0
+       },
+       {
+        "id": "1787373919217-rvkoi",
+        "labelEn": "Special ",
+        "labelTh": "พิเศษ",
+        "priceDelta": 25
+       }
+      ],
+      "defaultChoiceId": "1787373918003-i3pjm",
+      "id": "1787373872533-uxjag",
+      "nameEn": "Portion Size",
+      "nameTh": "ขนาดจาน (ธรรมดา/พิเศษ)",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "disabledMeats": [],
+    "hasEggAddon": false,
+    "hasMeatChoice": true,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "meatPriceDeltas": {
+     "beef": 10,
+     "pork": 0
+    },
+    "name": {
+     "en": "Khao Soi with Onsen Egg (Chicken / Pork / Beef)",
+     "th": "ข้าวซอยไข่ออนเซ็น (ไก่/หมู/เนื้อ)"
+    },
+    "order": 1,
+    "photo": "",
+    "portionPriceDelta": 15,
+    "price": 89,
+    "soldOut": false,
+    "soldOutMeats": [
+     "beef"
+    ]
+   }
+  },
+  {
+   "id": "1786812093428-h93ax",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786812162143-ztd9a",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786812169572-8h1di",
+        "labelEn": "Chiken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786812119955-1v56b",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Northern style Curry of Assorted Vegetables (Chicken/Pork)",
+     "th": "แกงแค (ไก่/หมู)"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 129,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786812216738-c1gwt",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "disabledMeats": [],
+    "hasEggAddon": false,
+    "hasMeatChoice": true,
+    "hasPlainAddOns": false,
+    "meatPriceDeltas": {
+     "beef": 20
+    },
+    "name": {
+     "en": "Northern style Spicy Soup (Chicken/Pork/Beef)",
+     "th": "แกงอ่อม (ไก่/หมู/เนื้อ)"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 129,
+    "soldOut": false,
+    "soldOutMeats": [
+     "beef"
+    ]
+   }
+  },
+  {
+   "id": "1786812247399-ftfep",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Yum Jin Gai (Shredded Chicken in Larb Chili Broth)",
+     "th": "ยำจิ้นไก่"
+    },
+    "order": 4,
+    "photo": "",
+    "price": 129,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786812269207-0xtcy",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Northern Style Spicy & Sour Soup with Chicken",
+     "th": "ต้มส้มไก่"
+    },
+    "order": 5,
+    "photo": "",
+    "price": 129,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786812286692-tl1xr",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1786812347944-p74j7",
+        "labelEn": "Tomato-Pork Chili Dip",
+        "labelTh": "น้ำพริกอ่อง",
+        "priceDelta": 0
+       },
+       {
+        "active": true,
+        "id": "1786812364477-uog2e",
+        "labelEn": "Roasted Green Chili Dip",
+        "labelTh": "น้ำพริกหนุ่ม",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786812316076-jebzg",
+      "nameEn": "Chili Dip Choice",
+      "nameTh": "เลือกน้ำพริก",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Hors d'oeuvres (Northern Style)",
+     "th": "ออเดิร์ฟหละปูน"
+    },
+    "order": 7,
+    "photo": "",
+    "price": 199,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812384883-hro9m",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Northern style Pork curry (Kaeng Hung Ley)",
+     "th": "แกงฮังเลลำไย"
+    },
+    "order": 8,
+    "photo": "",
+    "price": 99,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812453532-1m54t",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786812491867-ra4yy",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786812497047-yo3o3",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786812478714-j1uug",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Northern style Minced Pork/Chicken Spicy Salad with Herbs",
+     "th": "ลาบคั่วเมือง (หมู/ไก่)"
+    },
+    "order": 6,
+    "photo": "",
+    "price": 99,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812519388-co5em",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Northern Spicy Sausage (Sai Aua)",
+     "th": "ไส้อั่วเฮือนยอง"
+    },
+    "order": 11,
+    "photo": "",
+    "price": 99,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812548859-lt3ld",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Baked Sour Sausage in Banana Leaf",
+     "th": "จิ้นส้มหมกไข่"
+    },
+    "order": 12,
+    "photo": "",
+    "price": 99,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812577501-muxjm",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Nam Prik Ong Set (Minced-Pork Chili Dip with Tomatoes)",
+     "th": "ชุดน้ำพริกอ่อง"
+    },
+    "order": 17,
+    "photo": "",
+    "price": 89,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812603491-l5j6s",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Nam Prik Num Set (Green Chili Dip)",
+     "th": "ชุดน้ำพริกหนุ่ม"
+    },
+    "order": 16,
+    "photo": "",
+    "price": 89,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812620913-b27vf",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Steamed Beef with Galangal Chili Dip Set",
+     "th": "ชุดจิ้นนึ่งน้ำพริกข่า"
+    },
+    "order": 18,
+    "photo": "",
+    "price": 149,
+    "soldOut": true,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786812800808-129gn",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786812935073-q1o42",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "active": true,
+        "id": "1786812936338-knrbs",
+        "labelEn": "Pork Ribs",
+        "labelTh": "ซี่โครงหมู",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786812924330-dc7ue",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Tom Zaap (Pork / Pork Ribs)",
+     "th": "ต้มแซ่บ (หมู/ซี่โครง)"
+    },
+    "order": 0,
+    "photo": "",
+    "price": 129,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786813229735-wdw21",
+   "data": {
+    "active": true,
+    "categoryId": "mxympcjEz6sLCqF3UjQ5",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Treble Crispy Spicy Salad",
+     "th": "ยำสามกรอบ"
+    },
+    "order": 0,
+    "photo": "",
+    "price": 129,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786813273991-ebv5o",
+   "data": {
+    "active": true,
+    "categoryId": "mxympcjEz6sLCqF3UjQ5",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1786813308779-oj7vu",
+        "labelEn": "Vietnamese Sausage",
+        "labelTh": "หมูยอ",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786813309292-y9lsj",
+        "labelEn": "Fermented Pork",
+        "labelTh": "แหนม",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786813296600-1ahmi",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Northern Pork/Sour Pork Sausage Spicy Salad",
+     "th": "ยำ (หมูยอ/แหนม)"
+    },
+    "order": 1,
+    "photo": "",
+    "price": 99
+   }
+  },
+  {
+   "id": "1786813464760-dnwva",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Deep fried Chicken wings with Fish sauce",
+     "th": "ปีกไก่ทอดน้ำปลา"
+    },
+    "order": 0,
+    "photo": "",
+    "price": 199,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786813486506-sz5kt",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Deep fried Chicken tendons",
+     "th": "เอ็นไก่ทอด"
+    },
+    "order": 1,
+    "photo": "",
+    "price": 99,
+    "soldOut": true
+   }
+  },
+  {
+   "id": "1786813513751-helka",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Deep-fried Sun dried pork",
+     "th": "หมูแดดเดียว"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 119
+   }
+  },
+  {
+   "id": "1786894407318-wys0a",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Braised Chicken Wing in Spicy Soup",
+     "th": "ต้มแซ่บปีกไก่ตุ๋น"
+    },
+    "order": 1,
+    "photo": "",
+    "price": 129,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786894489692-antwt",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Shrimp in Spicy soup (Tom Yam Kung)",
+     "th": "ต้มยำกุ้ง"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 169
+   }
+  },
+  {
+   "id": "1786894534791-zjtgb",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Soup with chicken, galangal root & coconut milk (Tom Kha Gai)",
+     "th": "ต้มข่าไก่"
+    },
+    "order": 4,
+    "photo": "",
+    "price": 129,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786894564344-tnf5o",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786894607526-ftgea",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786894608713-9oipc",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786894597697-xu1he",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Green Curry in coconut milk (Pork/Chicken)",
+     "th": "แกงเขียวหวาน (หมู/ไก่)"
+    },
+    "order": 5,
+    "photo": "",
+    "price": 129
+   }
+  },
+  {
+   "id": "1786894626262-qs1yz",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786894705120-5uy3q",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786894705600-r9h5h",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786894690775-2tq3j",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Red Curry in coconut milk (Pork/Chicken)",
+     "th": "แกงเผ็ด (หมู/ไก่)"
+    },
+    "order": 6,
+    "photo": "",
+    "price": 129
+   }
+  },
+  {
+   "id": "1786894728115-ht4be",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Mild soup with vegetables and eggs",
+     "th": "ต้มจืดไข่น้ำ"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 129
+   }
+  },
+  {
+   "id": "1786894753693-iyrg0",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Clear Soup with Tofu and Minced Pork",
+     "th": "ต้มจืดเต้าหู้หมูสับ"
+    },
+    "order": 7,
+    "photo": "",
+    "price": 119
+   }
+  },
+  {
+   "id": "1786894857400-wb48c",
+   "data": {
+    "active": true,
+    "categoryId": "mxympcjEz6sLCqF3UjQ5",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Spicy Glass Noodle Salad with Minced Pork",
+     "th": "ยำวุ้นเส้นหมูสับ"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 99
+   }
+  },
+  {
+   "id": "1786894889288-efb8s",
+   "data": {
+    "active": true,
+    "categoryId": "mxympcjEz6sLCqF3UjQ5",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Spicy Mixed Seafood Salad",
+     "th": "ยำรวมทะเล"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 139
+   }
+  },
+  {
+   "id": "1786894998266-dlx95",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1786895047706-dwz3e",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895048772-l20a2",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786895034953-js7um",
+      "nameEn": "Meat Choice ",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Fried Larb Omelet",
+     "th": "ไข่เจียวลาบ"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 99
+   }
+  },
+  {
+   "id": "1786895074439-ufh8m",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Herbal Omelet",
+     "th": "ไข่เจียวสมุนไพร"
+    },
+    "order": 5,
+    "photo": "",
+    "price": 89
+   }
+  },
+  {
+   "id": "1786895212028-od92d",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir-fried Cabbage with Fish-sauce",
+     "th": "กะหล่ำปลีผัดน้ำปลา"
+    },
+    "order": 0,
+    "photo": "",
+    "price": 79
+   }
+  },
+  {
+   "id": "1786895262173-beesi",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir-Fried Mixed Vegetables with Pork",
+     "th": "ผัดผักรวมหมู"
+    },
+    "order": 1,
+    "photo": "",
+    "price": 119
+   }
+  },
+  {
+   "id": "1786895287094-xqg3s",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir-fried seafood with roast chili paste",
+     "th": "ผัดพริกเผาทะเล"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 139
+   }
+  },
+  {
+   "id": "1786895314700-t5qla",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786895360415-inn5f",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895361069-9jxia",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786895345883-0w2bx",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Spicy-fried Pork/Chicken",
+     "th": "ผัดเผ็ด (หมู/ไก่)"
+    },
+    "order": 4,
+    "photo": "",
+    "price": 119
+   }
+  },
+  {
+   "id": "1786895383966-cegax",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir-fried pork with Oyster sauce",
+     "th": "หมูผัดน้ำมันหอย"
+    },
+    "order": 5,
+    "photo": "",
+    "price": 119
+   }
+  },
+  {
+   "id": "1786895419814-mkksf",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir fried Chicken with Cashew nuts",
+     "th": "ไก่ผัดเม็ดมะม่วง"
+    },
+    "order": 6,
+    "photo": "",
+    "price": 139,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786895441632-8wqqs",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Spicy Stir-fried Seafood (Pad Cha)",
+     "th": "ทะเลผัดฉ่า"
+    },
+    "order": 7,
+    "photo": "",
+    "price": 139
+   }
+  },
+  {
+   "id": "1786895465512-eb4dc",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir-fried Squid with Salted-egg",
+     "th": "หมึกผัดไข่เค็ม"
+    },
+    "order": 8,
+    "photo": "",
+    "price": 139,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786895489680-1n975",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Stir-fried mixed mushroom with shrimp",
+     "th": "เห็ดรวมผัดกุ้งสด"
+    },
+    "order": 9,
+    "photo": "",
+    "price": 139
+   }
+  },
+  {
+   "id": "1786895528557-b6oig",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786895577860-kphe9",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895578264-e4czk",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895593230-sx5v4",
+        "labelEn": "Fermented pork",
+        "labelTh": "แหนม",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786895564780-3agls",
+      "nameEn": "Meat Choice ",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Egg Fried Rice (Pork / Chicken / Fermented Pork)",
+     "th": "ข้าวผัด (หมู/ไก่/แหนม)"
+    },
+    "order": 0,
+    "photo": "",
+    "price": 79
+   }
+  },
+  {
+   "id": "1786895612877-r7i4l",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Fried Rice with Northern Spicy Sausage (Sai Aua)",
+     "th": "ข้าวผัดไส้อั่ว"
+    },
+    "order": 1,
+    "photo": "",
+    "price": 89
+   }
+  },
+  {
+   "id": "1786895649163-qrop7",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1787070639342-2u66o",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1787070640595-2pjxa",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1787070619477-nhbtj",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "name": {
+     "en": "Spicy Larb Fried Rice",
+     "th": "ข้าวผัดลาบ"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 89
+   }
+  },
+  {
+   "id": "1786895675062-x97u9",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Roasted Green Chili Fried Rice",
+     "th": "ข้าวผัดน้ำพริกหนุ่ม"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 89,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786895704426-04wf0",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Fried Rice with seafood",
+     "th": "ข้าวผัดทะเล"
+    },
+    "order": 4,
+    "photo": "",
+    "price": 99
+   }
+  },
+  {
+   "id": "1786895757639-p3la6",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Fried Rice with 3 kinds of Northern sausage",
+     "th": "ข้าวผัดสามสหายจาวเหนือ"
+    },
+    "order": 5,
+    "photo": "",
+    "price": 109
+   }
+  },
+  {
+   "id": "1786895790365-e83zh",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1786895833790-3mkh8",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895834350-lu1yi",
+        "labelEn": "Seafood",
+        "labelTh": "ทะเล",
+        "priceDelta": 20
+       }
+      ],
+      "id": "1786895819443-6ejk2",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Rice served with Stir-fried holy basil (Minced Pork/Seafood)",
+     "th": "ข้าวราดกะเพรา (หมูสับ/ทะเล)"
+    },
+    "order": 7,
+    "photo": "",
+    "price": 79
+   }
+  },
+  {
+   "id": "1786895873444-hez67",
+   "data": {
+    "active": true,
+    "categoryId": "2NXv4pNZRU9yjVl9OIEq",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "active": true,
+        "id": "1786895927741-13jr5",
+        "labelEn": "Pork",
+        "labelTh": "หมู",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895928587-4be3s",
+        "labelEn": "Chicken",
+        "labelTh": "ไก่",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786895929104-xamaa",
+        "labelEn": "Seafood",
+        "labelTh": "ทะเล",
+        "priceDelta": 20
+       }
+      ],
+      "id": "1786895916116-lpttw",
+      "nameEn": "Meat Choice",
+      "nameTh": "เลือกเนื้อสัตว์",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": true,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Rice served with Stir-fried red curry (Pork/Chicken/Seafood)",
+     "th": "ข้าวราดผัดพริกแกง (หมู/ไก่/ทะเล)"
+    },
+    "order": 6,
+    "photo": "",
+    "price": 79
+   }
+  },
+  {
+   "id": "1786895969800-v4z4r",
+   "data": {
+    "active": true,
+    "categoryId": "qwxD1JbhmdBDvc23f2mH",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Steamed Rice (Plate)",
+     "th": "ข้าวสวย (จาน)"
+    },
+    "photo": "",
+    "price": 20,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786895997033-fnulf",
+   "data": {
+    "active": true,
+    "categoryId": "qwxD1JbhmdBDvc23f2mH",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Steamed Rice (Pot)",
+     "th": "ข้าวสวย (โถ)"
+    },
+    "photo": "",
+    "price": 70,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786896043320-2ez0q",
+   "data": {
+    "active": true,
+    "categoryId": "qwxD1JbhmdBDvc23f2mH",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Sticky Rice",
+     "th": "ข้าวเหนียว"
+    },
+    "photo": "",
+    "price": 15,
+    "soldOut": true
+   }
+  },
+  {
+   "id": "1786896077063-pokvp",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Singha water",
+     "th": "น้ำดื่มสิงห์"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 15,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786896096865-77v1p",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Mineral Water",
+     "th": "น้ำแร่"
+    },
+    "order": 4,
+    "photo": "",
+    "price": 25,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786896125725-t9297",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Coke",
+     "th": "โค้ก"
+    },
+    "order": 7,
+    "photo": "",
+    "price": 20,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786896148328-f4ync",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Soda",
+     "th": "โซดา"
+    },
+    "order": 5,
+    "photo": "",
+    "price": 25,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1786896165750-v6jwy",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Honey Lemon Soda",
+     "th": "น้ำผึ้งมะนาวโซดา"
+    },
+    "order": 23,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786896185748-35wjh",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Longan Juice",
+     "th": "น้ำลำไย"
+    },
+    "order": 22,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786896207829-fi9du",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "name": {
+     "en": "Thai Milk Tea",
+     "th": "ชาไทย"
+    },
+    "order": 21,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1786896225898-q4tc0",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasPlainAddOns": false,
+    "name": {
+     "en": "Thai Green Milk Tea",
+     "th": "ชาเขียว"
+    },
+    "order": 20,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787030788509-sbvgc",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Coke light",
+     "th": "โค้ก ไลท์"
+    },
+    "order": 8,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787030850400-m844x",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Coke zero ",
+     "th": "โค้ก ซีโร่"
+    },
+    "order": 9,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787030891488-qcl1w",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Singha lemon soda",
+     "th": "สิงห์ เลมอนโซดา"
+    },
+    "order": 11,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787030959065-z0wtk",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Singha pink lemon soda",
+     "th": "สิงห์ พิงก์เลมอนโซดา"
+    },
+    "order": 13,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055197020-1r1u2",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Passion fruit soda",
+     "th": "เสาวรส โซดา"
+    },
+    "order": 31,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055246192-hjf08",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Kiwi Soda",
+     "th": "กีวี่โซดา"
+    },
+    "order": 29,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055300166-c4mze",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Apple Soda",
+     "th": "แอปเปิ้ลโซดา"
+    },
+    "order": 25,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055337913-5513z",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Lychee Soda",
+     "th": "ลิ้นจี่โซดา"
+    },
+    "order": 30,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055363955-iy6el",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Cantaloupe soda",
+     "th": "แคนตาลูปโซดา"
+    },
+    "order": 27,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055399507-30eqj",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Strawberry soda",
+     "th": "สตรอเบอร์รีโซดา"
+    },
+    "order": 33,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055454759-ktpwa",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Blueberry soda",
+     "th": "บลูเบอร์รี่โซดา"
+    },
+    "order": 28,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055490264-t79cs",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Blue lemon soda",
+     "th": "บลูเลมอนโซดา"
+    },
+    "order": 26,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055515240-q8ol5",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Blue Hawaii soda",
+     "th": "บลูฮาวายโซดา"
+    },
+    "order": 24,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055621355-qjld6",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Sala soda",
+     "th": "แดงโซดา"
+    },
+    "order": 32,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055794885-iekbs",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Ice (Bucket)",
+     "th": "น้ำแข็ง (ถัง)"
+    },
+    "order": 1,
+    "photo": "",
+    "price": 20,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787055859398-zwa68",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Ice (Glass)",
+     "th": "น้ำแข็ง (แก้ว)"
+    },
+    "order": 0,
+    "photo": "",
+    "price": 2,
+    "soldOut": false,
+    "soldOutMeats": [],
+    "stockTracked": false
+   }
+  },
+  {
+   "id": "1787151971208-al50m",
+   "data": {
+    "active": true,
+    "categoryId": "A209qGE7hdKpiVKOsZs7",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Stir-Fried Mixed Vegetables in Oyster Sauce",
+     "th": "ผัดผักรวมน้ำมันหอย"
+    },
+    "order": 3,
+    "photo": "",
+    "price": 99
+   }
+  },
+  {
+   "id": "1787382988515-lz84y",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Nam Prik Num (Single Bowl)",
+     "th": "น้ำพริกหนุ่ม (ถ้วยเดี่ยว)"
+    },
+    "order": 19,
+    "photo": "",
+    "price": 49,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1787384306576-guham",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Nam Prik Ong (Single Bowl)",
+     "th": "น้ำพริกอ่อง (ถ้วยเดี่ยว)"
+    },
+    "order": 20,
+    "photo": "",
+    "price": 49
+   }
+  },
+  {
+   "id": "1787546064915-7h9mz",
+   "data": {
+    "active": true,
+    "categoryId": "JrE0GUnuZVq70DFN7JJy",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Boiled egg ",
+     "th": "ไข่ต้ม "
+    },
+    "order": 8,
+    "photo": "",
+    "price": 15
+   }
+  },
+  {
+   "id": "1787916678340-s21hb",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Chang",
+     "th": "B C."
+    },
+    "order": 34,
+    "photo": "",
+    "price": 89,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1787925554709-068f8",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Singha",
+     "th": "B S."
+    },
+    "order": 36,
+    "photo": "",
+    "price": 99,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1788250268770-q2whg",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "7Up strawberry lemon soda no sugar",
+     "th": "7อัพ สตรอเบอร์รี เลมอนโซดา น้ำตาล 0%"
+    },
+    "order": 16,
+    "photo": "",
+    "price": 25
+   }
+  },
+  {
+   "id": "1788250430793-pm9qb",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "7Up lemon soda no sugar",
+     "th": "7อัพ เลมอนโซดา น้ำตาล 0%"
+    },
+    "order": 17,
+    "photo": "",
+    "price": 25,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1788425937804-moixj",
+   "data": {
+    "active": false,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Heineken",
+     "th": "B H."
+    },
+    "order": 38,
+    "photo": "",
+    "price": 115,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1788688921194-35e6j",
+   "data": {
+    "active": false,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Leo",
+     "th": "B.L"
+    },
+    "order": 37,
+    "photo": "",
+    "price": 89,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1788689665313-t2rle",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Crispy pork (Single Bowl)",
+     "th": "แคบหมู (ถ้วยเดี่ยว)"
+    },
+    "order": 21,
+    "photo": "",
+    "price": 49
+   }
+  },
+  {
+   "id": "1788932841358-09woe",
+   "data": {
+    "active": true,
+    "categoryId": "qwxD1JbhmdBDvc23f2mH",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Thai rice noodles",
+     "th": "ขนมเส้น"
+    },
+    "photo": "",
+    "price": 20,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1789019616291-wztt9",
+   "data": {
+    "active": false,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Namthip water ",
+     "th": "น้ำดื่มน้ำทิพย์"
+    },
+    "order": 2,
+    "photo": "",
+    "price": 15,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1789216365603-jmb30",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Fried pork sausage",
+     "th": "หมูยอทอด"
+    },
+    "order": 6,
+    "photo": "",
+    "price": 99
+   }
+  },
+  {
+   "id": "1789379113287-fwr39",
+   "data": {
+    "active": true,
+    "categoryId": "cYpEAYtt7l5CMLTPWq4l",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "1789379173447-rtbtb",
+        "labelEn": "1 jars",
+        "labelTh": "1 กระปุก",
+        "priceDelta": 35
+       },
+       {
+        "id": "1790921099150-l0dxi",
+        "labelEn": "3 jars",
+        "labelTh": "3 กระปุก",
+        "priceDelta": 100
+       }
+      ],
+      "id": "1789379145729-nnw39",
+      "nameEn": "Quantity",
+      "nameTh": "จำนวน",
+      "required": true,
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Pickled ginger",
+     "th": "ขิงดอง"
+    },
+    "photo": "",
+    "price": 0,
+    "soldOut": true
+   }
+  },
+  {
+   "id": "1789379299777-usj7c",
+   "data": {
+    "active": true,
+    "categoryId": "cYpEAYtt7l5CMLTPWq4l",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Pickled single clove garlic ",
+     "th": "กระเทียมโทนดอง"
+    },
+    "photo": "",
+    "price": 60
+   }
+  },
+  {
+   "id": "1789445978557-3pdco",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Minute Maid Splash",
+     "th": "มินิทเมด สแปลช"
+    },
+    "order": 6,
+    "photo": "",
+    "price": 20
+   }
+  },
+  {
+   "id": "1789882291253-ekuy1",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "O-liang",
+     "th": "โอเลี้ยง"
+    },
+    "order": 19,
+    "photo": "",
+    "price": 55,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791001674597-tphf8",
+   "data": {
+    "active": true,
+    "categoryId": "cYpEAYtt7l5CMLTPWq4l",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "System testing",
+     "th": "ทดสอบระบบ"
+    },
+    "photo": "",
+    "price": 0,
+    "soldOut": false
+   }
+  },
+  {
+   "id": "1791040984627-iak67",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Chang small",
+     "th": "B C. เล็ก"
+    },
+    "order": 35,
+    "photo": "",
+    "price": 59
+   }
+  },
+  {
+   "id": "1791088686825-d95rw",
+   "data": {
+    "active": true,
+    "categoryId": "Wk2oV2pWLt9mQOhBvmeU",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Northern Spicy Sausage Omelet",
+     "th": "ไข่เจียวไส้อั่ว"
+    },
+    "order": 4,
+    "photo": "",
+    "price": 99,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791094144154-a1y5y",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Galangal Chili Dip Set",
+     "th": "ชุดน้ำพริกข่า"
+    },
+    "order": 15,
+    "photo": "",
+    "price": 89,
+    "soldOut": true,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791112758340-m4193",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Northern Style Jackfruit Salad",
+     "th": "ตำขนุน"
+    },
+    "order": 9,
+    "photo": "",
+    "price": 89,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791567824240-k0rkp",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Khao Kan Chin (Northern Thai steamed rice with pork blood)",
+     "th": "ข้าวกั้นจิ้น"
+    },
+    "order": 13,
+    "photo": "",
+    "price": 49,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791789645862-g7b08",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": " Singha Lemon Cream Soda",
+     "th": "สิงห์ เลมอนครีมโซดา"
+    },
+    "order": 14,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791793170286-6hgvd",
+   "data": {
+    "active": true,
+    "categoryId": "5mIYAa6JGcKLBnA9tYhC",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Rice served with Vegetarian Stir-fried Holy Basil",
+     "th": "ข้าวราดกะเพราผัดพริกเจ"
+    },
+    "photo": "",
+    "price": 79,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791793305342-fnoda",
+   "data": {
+    "active": true,
+    "categoryId": "5mIYAa6JGcKLBnA9tYhC",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Rice served with Vegetarian Stir-fried French Beans",
+     "th": "ข้าวราดถั่วแขกผัดพริกเจ"
+    },
+    "photo": "",
+    "price": 79,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791793383550-bx8e4",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Northern Sour Curry with Taro Stem and Tilapia",
+     "th": "แกงตูนใส่ปลานิล"
+    },
+    "order": 14,
+    "photo": "",
+    "price": 119,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791863792573-ipms3",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Coke Original Less Sugar ",
+     "th": "โค้ก ออริจินัล น้ำตาลน้อย"
+    },
+    "order": 10,
+    "photo": "",
+    "price": 25,
+    "soldOut": true,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791863888070-srz5n",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Sprite",
+     "th": "สไปรท์"
+    },
+    "order": 12,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791864221623-ha68y",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Schweppes",
+     "th": "ชเวปส์"
+    },
+    "order": 18,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1791887862469-oy9b3",
+   "data": {
+    "active": true,
+    "categoryId": "FzjtnouB5Mf8BCNgYILS",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Northern Thai Smoked Eggplant Salad",
+     "th": "ตำมะเขือ "
+    },
+    "order": 10,
+    "photo": "",
+    "price": 89,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1792213720986-m7fhm",
+   "data": {
+    "active": true,
+    "categoryId": "aR7y3YHQYS3LdCbFJWcf",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Singha Red Lemon Soda",
+     "th": "สิงห์ แดงเลมอนโซดา"
+    },
+    "order": 15,
+    "photo": "",
+    "price": 25,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "1792302477698-6h9gi",
+   "data": {
+    "active": true,
+    "categoryId": "5mIYAa6JGcKLBnA9tYhC",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasEggAddon": false,
+    "hasMeatChoice": false,
+    "hasPlainAddOns": false,
+    "hasPortion": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Rice served with vegetarian eryngii mushroom laab kua",
+     "th": "ข้าวราดลาบเห็ดออรินจิคั่วเจ"
+    },
+    "photo": "",
+    "price": 79,
+    "soldOut": false,
+    "soldOutMeats": []
+   }
+  },
+  {
+   "id": "a1",
+   "data": {
+    "active": true,
+    "categoryId": "appetizers",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Sai Oua",
+     "th": "ไส้อั่ว"
+    },
+    "photo": "",
+    "price": 120
+   }
+  },
+  {
+   "id": "a2",
+   "data": {
+    "active": true,
+    "categoryId": "appetizers",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Nam Prik Ong",
+     "th": "น้ำพริกอ่อง"
+    },
+    "photo": "",
+    "price": 95
+   }
+  },
+  {
+   "id": "a3",
+   "data": {
+    "active": true,
+    "categoryId": "appetizers",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Tod Mun Pla",
+     "th": "ทอดมันปลา"
+    },
+    "photo": "",
+    "price": 110
+   }
+  },
+  {
+   "id": "c1",
+   "data": {
+    "active": true,
+    "categoryId": "curries",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasSpice": true,
+    "name": {
+     "en": "Green Curry",
+     "th": "แกงเขียวหวาน"
+    },
+    "photo": "",
+    "price": 140
+   }
+  },
+  {
+   "id": "c2",
+   "data": {
+    "active": true,
+    "categoryId": "curries",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasSpice": false,
+    "name": {
+     "en": "Massaman Curry",
+     "th": "แกงมัสมั่น"
+    },
+    "photo": "",
+    "price": 145
+   }
+  },
+  {
+   "id": "d2",
+   "data": {
+    "active": true,
+    "categoryId": "drinks",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasSpice": false,
+    "name": {
+     "en": "Butterfly Pea Lemonade",
+     "th": "น้ำดอกอัญชัน"
+    },
+    "photo": "",
+    "price": 75
+   }
+  },
+  {
+   "id": "d3",
+   "data": {
+    "active": true,
+    "categoryId": "drinks",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasSpice": false,
+    "name": {
+     "en": "Fresh Coconut Water",
+     "th": "น้ำมะพร้าวสด"
+    },
+    "photo": "",
+    "price": 70
+   }
+  },
+  {
+   "id": "ds1",
+   "data": {
+    "active": true,
+    "categoryId": "desserts",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasSpice": false,
+    "name": {
+     "en": "Mango Sticky Rice",
+     "th": "ข้าวเหนียวมะม่วง"
+    },
+    "photo": "",
+    "price": 120
+   }
+  },
+  {
+   "id": "ds2",
+   "data": {
+    "active": true,
+    "categoryId": "desserts",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasSpice": false,
+    "name": {
+     "en": "Tub Tim Grob",
+     "th": "ทับทิมกรอบ"
+    },
+    "photo": "",
+    "price": 85
+   }
+  },
+  {
+   "id": "n1",
+   "data": {
+    "active": true,
+    "categoryId": "northern",
+    "customGroups": [
+     {
+      "choices": [
+       {
+        "id": "egg-noodle",
+        "labelEn": "Crispy Egg Noodle",
+        "labelTh": "เส้นไข่กรอบ",
+        "priceDelta": 0
+       },
+       {
+        "id": "extra-noodle",
+        "labelEn": "Extra Noodles",
+        "labelTh": "เส้นเพิ่ม",
+        "priceDelta": 15
+       }
+      ],
+      "id": "noodle-type",
+      "nameEn": "Noodle Type",
+      "nameTh": "ชนิดเส้น",
+      "type": "single"
+     },
+     {
+      "choices": [
+       {
+        "id": "1786337160996-bsp14",
+        "labelEn": "test1",
+        "labelTh": "",
+        "priceDelta": 0
+       },
+       {
+        "id": "1786337164709-3u9s3",
+        "labelEn": "test2",
+        "labelTh": "",
+        "priceDelta": 0
+       }
+      ],
+      "id": "1786337135694-du4vr",
+      "nameEn": "test",
+      "nameTh": "",
+      "type": "single"
+     }
+    ],
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasPortion": true,
+    "hasSpice": true,
+    "meatPriceDeltas": {
+     "beef": 123
+    },
+    "name": {
+     "en": "Khao Soi",
+     "th": "ข้าวซอย"
+    },
+    "photo": "",
+    "portionPriceDelta": 50,
+    "price": 150
+   }
+  },
+  {
+   "id": "n2",
+   "data": {
+    "active": true,
+    "categoryId": "northern",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": false,
+    "name": {
+     "en": "Gaeng Hang Lay",
+     "th": "แกงฮังเล"
+    },
+    "photo": "",
+    "price": 165
+   }
+  },
+  {
+   "id": "n3",
+   "data": {
+    "active": true,
+    "categoryId": "northern",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasSpice": true,
+    "name": {
+     "en": "Larb Khua",
+     "th": "ลาบคั่ว"
+    },
+    "photo": "",
+    "price": 130
+   }
+  },
+  {
+   "id": "n4",
+   "data": {
+    "active": true,
+    "categoryId": "northern",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Nam Prik Noom",
+     "th": "น้ำพริกหนุ่ม"
+    },
+    "photo": "",
+    "price": 95
+   }
+  },
+  {
+   "id": "nd1",
+   "data": {
+    "active": true,
+    "categoryId": "noodles",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasSpice": false,
+    "name": {
+     "en": "Pad See Ew",
+     "th": "ผัดซีอิ๊ว"
+    },
+    "photo": "",
+    "price": 90
+   }
+  },
+  {
+   "id": "nd2",
+   "data": {
+    "active": true,
+    "categoryId": "noodles",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasSpice": true,
+    "name": {
+     "en": "Tom Yum Noodles",
+     "th": "ก๋วยเตี๋ยวต้มยำ"
+    },
+    "photo": "",
+    "price": 80
+   }
+  },
+  {
+   "id": "r2",
+   "data": {
+    "active": true,
+    "categoryId": "rice",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": true,
+    "hasSpice": false,
+    "name": {
+     "en": "Khao Pad",
+     "th": "ข้าวผัด"
+    },
+    "photo": "",
+    "price": 90
+   }
+  },
+  {
+   "id": "s1",
+   "data": {
+    "active": true,
+    "categoryId": "salads",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Larb Moo",
+     "th": "ลาบหมู"
+    },
+    "photo": "",
+    "price": 110
+   }
+  },
+  {
+   "id": "s2",
+   "data": {
+    "active": true,
+    "categoryId": "salads",
+    "description": {
+     "en": "",
+     "th": ""
+    },
+    "hasMeatChoice": false,
+    "hasSpice": true,
+    "name": {
+     "en": "Yum Nuea Yang",
+     "th": "ยำเนื้อย่าง"
+    },
+    "photo": "",
+    "price": 130
+   }
+  }
+ ]
+}

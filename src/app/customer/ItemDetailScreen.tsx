@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { Check, ChevronLeft, Flame, Minus, Plus, ShoppingCart } from "lucide-react";
-import type { CartItem, Language, MeatChoice, MenuItem, Portion, SpiceLevel } from "../types";
-import { ADD_ONS } from "../constants";
+import { ChevronLeft, Minus, Plus, ShoppingCart } from "lucide-react";
+import type { CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
-import { defaultCustomSelections, isMeatGroup, itemPrice, MEAT_CHOICES, menuAvailability, resolvePhoto, uid } from "../utils";
+import { itemPrice, menuAvailability, resolvePhoto, uid } from "../utils";
+import { isChoiceClosed, normalizeMenuItem } from "../menuOptions";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 
 // ─── Item Detail Screen ───────────────────────────────────────────────────────
 
-// ตัวเลือก (เนื้อสัตว์) ที่หมด — สีเทา ขอบประ กดไม่ได้
+// ตัวเลือกที่ปิดอยู่ (ทุกกลุ่ม) — สีเทา ขอบประ กดไม่ได้
 const SOLD_OUT_CHOICE_CLASS = "bg-muted border-dashed border-border text-muted-foreground opacity-60 cursor-not-allowed";
 
 interface ItemDetailProps {
@@ -25,31 +25,22 @@ interface ItemDetailProps {
 }
 
 export function ItemDetailScreen({
-  lang, tableNumber, item, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode,
+  lang, tableNumber, item: rawItem, cart, onBack, onAddToCart, onViewCart, onLangToggle, isTakeaway, isStaffMode,
 }: ItemDetailProps) {
   const t = T[lang];
   const cartCount = cart.reduce((s, ci) => s + ci.quantity, 0);
-  // ตัวเลือกเนื้อในตัวที่แสดง (ไม่นับที่ซ่อน) — ตัวที่หมดยังแสดงแต่เลือกไม่ได้
-  const meats: MeatChoice[] = MEAT_CHOICES.filter((m) => !item.disabledMeats?.includes(m));
-  const isMeatSoldOut = (m: MeatChoice) => !!item.soldOutMeats?.includes(m);
-  // ค่าเริ่มต้นยังเป็น "ไก่" เหมือนเดิมถ้าไก่ยังขาย — ถ้าไก่ถูกซ่อน/หมด ใช้ตัวแรกที่ยังขายอยู่แทน
-  // (เดิมเป็นไก่เสมอ ไก่ถูกซ่อนแล้วลูกค้าก็ยังสั่งไก่ได้โดยไม่เห็นตัวเลือก)
-  const [meat, setMeat] = useState<MeatChoice>(() =>
-    (["chicken", ...meats] as MeatChoice[]).find((m) => meats.includes(m) && !isMeatSoldOut(m)) ?? meats[0] ?? "chicken");
-  const [portion, setPortion] = useState<Portion>("regular");
-  const [spice, setSpice] = useState<SpiceLevel>(1);
-  const [addEgg, setAddEgg] = useState(false);
-  const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
-  // เปิดมาเลือก "ตัวเลือกเริ่มต้น" ของแต่ละกลุ่มไว้ให้ (ตั้งในหน้าแก้ไขเมนู) — ไม่มี/ใช้ไม่ได้ = ว่างเหมือนเดิม
-  const [customSelections, setCustomSelections] = useState<Record<string, string[]>>(() => defaultCustomSelections(item));
+  // ตัวเลือกทั้งหมดอยู่ใน customGroups (เมนูแบบเดิมแปลงให้ตรงนี้) — รายการที่ใส่ตะกร้าเก็บเมนูรูปใหม่นี้ไว้
+  // ตั๋วครัว/ใบเสร็จ/สถิติ จึงเห็นตัวเลือกเหมือนกันหมด
+  const item = normalizeMenuItem(rawItem);
+  // ลูกค้าต้องเลือกเองทุกกลุ่ม — ไม่มีตัวเลือกเริ่มต้น
+  const [customSelections, setCustomSelections] = useState<Record<string, string[]>>({});
   const [note, setNote] = useState("");
   const [customNote, setCustomNote] = useState("");
   const [customAddOnPrice, setCustomAddOnPrice] = useState(0);
   const [quantity, setQuantity] = useState(1);
 
-  const spiceLevels: SpiceLevel[] = [0, 1, 2, 3];
   const effectiveCustomAddOnPrice = isStaffMode ? customAddOnPrice : 0;
-  const totalPrice = itemPrice(item, meat, portion, addEgg, selectedAddOns, customSelections, effectiveCustomAddOnPrice) * quantity;
+  const totalPrice = itemPrice(item, undefined, undefined, false, [], customSelections, effectiveCustomAddOnPrice) * quantity;
 
   const toggleCustomChoice = (groupId: string, choiceId: string, type: "single" | "multi") => {
     setCustomSelections((prev) => {
@@ -62,31 +53,21 @@ export function ItemDetailScreen({
     });
   };
 
-  const toggleAddOn = (id: string) => {
-    setSelectedAddOns((prev) =>
-      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
-    );
-  };
-
   const missingRequired = item.customGroups?.some(
     (g) => g.required && (customSelections[g.id] || []).length === 0
   );
   // item เป็นข้อมูลสด (App ส่งจาก menuItems) — เมนูหรือเนื้อที่เลือกไว้อาจเพิ่งถูกกด "หมด" ระหว่างเปิดหน้านี้
   const soldOut = menuAvailability(item) !== "available";
-  const selectedMeatSoldOut =
-    (item.hasMeatChoice && isMeatSoldOut(meat)) ||
-    (item.customGroups || []).filter(isMeatGroup).some((g) =>
-      g.choices.some((c) => c.soldOut && (customSelections[g.id] || []).includes(c.id)));
+  const selectedChoiceClosed = (item.customGroups || []).some((g) =>
+    g.choices.some((c) => isChoiceClosed(c) && (customSelections[g.id] || []).includes(c.id)));
 
   const handleAdd = () => {
     onAddToCart({
       cartId: uid(),
       item,
-      meat: item.hasMeatChoice ? meat : undefined,
-      portion: item.hasPortion ? portion : undefined,
-      spiceLevel: item.hasSpice ? spice : 0,
-      addEgg,
-      addOns: selectedAddOns,
+      spiceLevel: 0,
+      addEgg: false,
+      addOns: [],
       customSelections,
       note: note.trim() || undefined,
       // customNote/customAddOnPrice เป็นของ staff mode เท่านั้น — กันไว้อีกชั้นไม่ให้หลุดไปแม้ isStaffMode จะ false
@@ -168,149 +149,6 @@ export function ItemDetailScreen({
 
         <div className="h-px bg-border mb-5" />
 
-        {/* Meat choice */}
-        {item.hasMeatChoice && (
-          <div className="mb-5">
-            <h3 className="font-semibold text-foreground mb-3 text-sm">{t.meatChoice}</h3>
-            <div className="flex gap-2">
-              {meats.map((m) => {
-                const out = isMeatSoldOut(m);
-                return (
-                  <button
-                    key={m}
-                    onClick={() => setMeat(m)}
-                    disabled={out}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${out
-                      ? SOLD_OUT_CHOICE_CLASS
-                      : meat === m
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-card border-border text-foreground hover:border-primary/40"
-                      }`}
-                  >
-                    {T[lang].meats[m]}
-                    {out ? (
-                      <span className="block text-[10px] font-bold">{t.soldOut}</span>
-                    ) : item.meatPriceDeltas?.[m] ? (
-                      <span className="block text-[10px] opacity-70">+{t.thb}{item.meatPriceDeltas[m]}</span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Spice level */}
-        {item.hasSpice && (
-          <div className="mb-5">
-            <h3 className="font-semibold text-foreground mb-3 text-sm flex items-center gap-1.5">
-              <Flame size={15} className="text-primary" /> {t.spiceLevel}
-            </h3>
-            <div className="grid grid-cols-2 gap-2">
-              {spiceLevels.map((level) => (
-                <button
-                  key={level}
-                  onClick={() => setSpice(level)}
-                  className={`py-2.5 rounded-xl text-sm font-medium border-2 transition-all text-center ${spice === level
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card border-border text-foreground hover:border-primary/40"
-                    }`}
-                >
-                  {T[lang].spiceLevels[level]}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Portion size */}
-        {item.hasPortion && (
-          <div className="mb-5">
-            <h3 className="font-semibold text-foreground mb-3 text-sm">{t.portion}</h3>
-            <div className="flex gap-2">
-              {(["regular", "special"] as Portion[]).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setPortion(p)}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${portion === p
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card border-border text-foreground hover:border-primary/40"
-                    }`}
-                >
-                  {p === "regular" ? t.regular : t.special}
-                  {p === "special" && item.portionPriceDelta ? (
-                    <span className="block text-[10px] opacity-70">+{t.thb}{item.portionPriceDelta}</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Add egg toggle */}
-        {item.hasEggAddon !== false && (
-          <div className="mb-5">
-            <button
-              onClick={() => setAddEgg(!addEgg)}
-              className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${addEgg
-                ? "bg-primary/8 border-primary"
-                : "bg-card border-border hover:border-primary/30"
-                }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="text-left">
-                  <div className="font-semibold text-foreground text-sm">{t.addEgg}</div>
-                  <div className="text-muted-foreground text-xs">{t.eggPrice}</div>
-                </div>
-              </div>
-              <div className={`w-11 h-6 rounded-full relative transition-colors ${addEgg ? "bg-primary" : "bg-muted"}`}>
-                <div
-                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${addEgg ? "left-[22px]" : "left-0.5"
-                    }`}
-                />
-              </div>
-            </button>
-          </div>
-        )}
-
-        {/* Add-ons */}
-        {item.hasPlainAddOns !== false && (
-          <div className="mb-5">
-            <h3 className="font-semibold text-foreground mb-3 text-sm">{t.addOns}</h3>
-            <div className="space-y-2">
-              {ADD_ONS.map((addon) => (
-                <button
-                  key={addon.id}
-                  onClick={() => toggleAddOn(addon.id)}
-                  className={`w-full flex items-center justify-between p-3.5 rounded-xl border-2 transition-all ${selectedAddOns.includes(addon.id)
-                    ? "bg-primary/8 border-primary"
-                    : "bg-card border-border hover:border-primary/30"
-                    }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0 ${selectedAddOns.includes(addon.id)
-                        ? "bg-primary border-primary"
-                        : "border-border"
-                        }`}
-                    >
-                      {selectedAddOns.includes(addon.id) && (
-                        <Check size={11} className="text-primary-foreground" />
-                      )}
-                    </div>
-                    <span className="text-foreground text-sm font-medium">
-                      {lang === "en" ? addon.label.en : addon.label.th}
-                    </span>
-                  </div>
-                  <span className="text-muted-foreground text-sm">
-                    {addon.price > 0 ? `+${t.thb}${addon.price}` : t.freeLabel}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Custom option groups — สร้างเองจากหน้าจัดการเมนู */}
         {item.customGroups?.map((group) => (
           <div key={group.id} className="mb-5">
@@ -318,10 +156,10 @@ export function ItemDetailScreen({
               {lang === "en" ? group.nameEn : group.nameTh}
             </h3>
             <div className="flex flex-wrap gap-2">
-              {group.choices.filter((c) => c.active !== false).map((choice) => {
+              {group.choices.map((choice) => {
                 const selected = (customSelections[group.id] || []).includes(choice.id);
-                // "หมด" รายตัวเลือกใช้เฉพาะกลุ่มเนื้อสัตว์ — กลุ่มอื่นไม่สนฟิลด์นี้
-                const out = isMeatGroup(group) && !!choice.soldOut;
+                // ปิด = ยังเห็นแต่เป็นสีเทา "หมด" เลือกไม่ได้ (ทุกกลุ่ม)
+                const out = isChoiceClosed(choice);
                 return (
                   <button
                     key={choice.id}
@@ -416,7 +254,7 @@ export function ItemDetailScreen({
       <div className="fixed bottom-0 left-0 right-0 px-4 pb-4 pt-2 bg-gradient-to-t from-background via-background/95 to-transparent">
         <button
           onClick={handleAdd}
-          disabled={missingRequired || soldOut || selectedMeatSoldOut}
+          disabled={missingRequired || soldOut || selectedChoiceClosed}
           className="w-full bg-primary text-primary-foreground py-4 rounded-2xl font-semibold text-base flex items-center justify-between px-5 shadow-2xl hover:bg-primary/90 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-sm font-bold">{quantity}</span>

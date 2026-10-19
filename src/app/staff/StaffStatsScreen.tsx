@@ -4,7 +4,7 @@ import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
 import type { CartItem, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
-import { ADD_ONS } from "../constants";
+import { choiceLabels } from "../menuOptions";
 import {
   cartItemTotal,
   fetchPaidOrdersCached,
@@ -93,37 +93,13 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
     filtered.filter((o) => !o.isTakeaway).map((o) => o.paymentBatchId || o.id)
   ).size;
 
+  // จัดกลุ่มตามชื่อตัวเลือก (ภาษาไทย) ไม่ใช่ id — ออเดอร์ก่อน/หลังแปลงตัวเลือกในตัวเป็นกลุ่ม รวมเป็นแถวเดียวกัน
   function optionKey(ci: CartItem): string {
-    const parts: string[] = [];
-    if (ci.meat) parts.push(ci.meat);
-    if (ci.portion === "special") parts.push("special");
-    if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(`spice${ci.spiceLevel}`);
-    if (ci.addEgg) parts.push("egg");
-    (ci.addOns || []).forEach((id) => parts.push(id));
-    ci.item.customGroups?.forEach((group) => {
-      const selected = ci.customSelections?.[group.id] || [];
-      selected.forEach((cid) => parts.push(cid));
-    });
-    return parts.join(",");
+    return choiceLabels(ci, "th").join(",");
   }
 
   function optionLabel(ci: CartItem, lang: Language): string {
-    const parts: string[] = [];
-    if (ci.meat) parts.push(T[lang].meats[ci.meat]);
-    if (ci.portion === "special") parts.push(T[lang].special);
-    if (ci.item.hasSpice && ci.spiceLevel > 0) parts.push(T[lang].spiceLevels[ci.spiceLevel]);
-    if (ci.addEgg) parts.push(T[lang].eggAdded);
-    (ci.addOns || []).forEach((id) => {
-      const addon = ADD_ONS.find((a) => a.id === id);
-      if (addon) parts.push(lang === "en" ? addon.label.en : addon.label.th);
-    });
-    ci.item.customGroups?.forEach((group) => {
-      const selected = ci.customSelections?.[group.id] || [];
-      group.choices.forEach((choice) => {
-        if (selected.includes(choice.id)) parts.push(lang === "en" ? choice.labelEn : choice.labelTh);
-      });
-    });
-    return parts.join(", ");
+    return choiceLabels(ci, lang).join(", ");
   }
 
   const menuCounts: Record<string, { nameEn: string; nameTh: string; optionLabel: string; qty: number; revenue: number }> = {};

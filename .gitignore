@@ -2,3 +2,6 @@ node_modules
 dist
 dist-android
 .env
+scripts/options-migration/out
+scripts/options-migration/backups
+mockups

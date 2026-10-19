@@ -1,4 +1,5 @@
-import type { CartItem, CustomGroup, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion, ServedUnits } from "./types";
+import type { CartItem, Language, MeatChoice, MenuAvailability, MenuItem, Order, Portion, ServedUnits } from "./types";
+import { closedSelectedChoices, isChoiceClosed, isQuickToggleGroup, requiredGroupAllClosed } from "./menuOptions";
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
@@ -6,79 +7,7 @@ import { collection, documentId, getDocs, getDocsFromServer, orderBy, query, whe
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
-// ─── สถานะการขาย (เมนู + ตัวเลือกเนื้อสัตว์) ─────────────────────────────────
-
-export const MEAT_CHOICES: MeatChoice[] = ["pork", "chicken", "beef"];
-
-// กลุ่มตัวเลือกที่สร้างเอง (customGroups) นับเป็น "เนื้อสัตว์" จากชื่อกลุ่ม — ตอนนี้ทุกเมนูตั้งชื่อว่า
-// "เลือกเนื้อสัตว์" ตั้ง "หมด" รายตัวเลือกได้เฉพาะกลุ่มแบบนี้ (ไข่ดาว/ความเผ็ด/ฯลฯ ไม่เกี่ยว)
-export function isMeatGroup(group: CustomGroup): boolean {
-  return (group.nameTh || "").includes("เนื้อสัตว์");
-}
-
-// ค่าเริ่มต้นของ customSelections ตอนเปิดหน้าเมนู — เลือก defaultChoiceId ไว้ให้เฉพาะกลุ่ม single
-// ที่ตัวเลือกนั้นยังมีอยู่ ไม่ถูกซ่อน และไม่หมด (หมดนับเฉพาะกลุ่มเนื้อสัตว์ เหมือนหน้าสั่ง) ไม่งั้นปล่อยว่างเหมือนเดิม
-export function defaultCustomSelections(item: MenuItem): Record<string, string[]> {
-  const selections: Record<string, string[]> = {};
-  for (const g of item.customGroups || []) {
-    if (g.type !== "single" || !g.defaultChoiceId) continue;
-    const choice = g.choices.find((c) => c.id === g.defaultChoiceId);
-    if (!choice || choice.active === false || (isMeatGroup(g) && choice.soldOut)) continue;
-    selections[g.id] = [choice.id];
-  }
-  return selections;
-}
-
-// ตัวเลือกเนื้อสัตว์ที่ "แสดงอยู่" (ไม่นับที่ถูกซ่อน) ของเมนู ทั้งแบบในตัว (hasMeatChoice) และแบบกลุ่มที่สร้างเอง
-// ใช้ทั้งชิปในหน้าจัดการเมนูและการคิดว่าเนื้อหมดทุกตัวหรือยัง
-export interface MeatOption {
-  key: string;                // ไม่ซ้ำในเมนูเดียวกัน ใช้เป็น React key
-  meat?: MeatChoice;          // แบบในตัว
-  groupId?: string;           // แบบกลุ่ม
-  choiceId?: string;
-  required: boolean;          // แบบในตัวนับว่าบังคับเลือกเสมอ
-  labelTh: string;
-  labelEn: string;
-  soldOut: boolean;
-}
-
-export function meatOptions(item: MenuItem): MeatOption[] {
-  const options: MeatOption[] = [];
-  if (item.hasMeatChoice) {
-    MEAT_CHOICES.filter((m) => !item.disabledMeats?.includes(m)).forEach((m) => options.push({
-      key: `meat:${m}`,
-      meat: m,
-      required: true,
-      labelTh: T.th.meats[m],
-      labelEn: T.en.meats[m],
-      soldOut: !!item.soldOutMeats?.includes(m),
-    }));
-  }
-  (item.customGroups || []).filter(isMeatGroup).forEach((g) => {
-    g.choices.filter((c) => c.active !== false).forEach((c) => options.push({
-      key: `${g.id}:${c.id}`,
-      groupId: g.id,
-      choiceId: c.id,
-      required: !!g.required,
-      labelTh: c.labelTh,
-      labelEn: c.labelEn,
-      soldOut: !!c.soldOut,
-    }));
-  });
-  return options;
-}
-
-// true = เมนูนี้สั่งไม่ได้เพราะตัวเลือกเนื้อที่ "บังคับเลือก" หมดทุกตัว (ชุดใดชุดหนึ่ง) — คิดตอนแสดงผล ไม่เขียนลง DB
-// เปิดเนื้อกลับมาขายตัวเดียว เมนูก็กลับมาขายเองทันที
-export function allMeatsSoldOut(item: MenuItem): boolean {
-  const required = meatOptions(item).filter((o) => o.required);
-  const sets = new Map<string, MeatOption[]>(); // แยกตามชุด: ในตัว 1 ชุด + กลุ่มละ 1 ชุด
-  required.forEach((o) => {
-    const setKey = o.groupId ?? "builtin";
-    sets.set(setKey, [...(sets.get(setKey) || []), o]);
-  });
-  return [...sets.values()].some((set) => set.length > 0 && set.every((o) => o.soldOut));
-}
+// ─── สถานะการขาย (เมนู + ตัวเลือก) — ตัวเลือกดู menuOptions.ts ───────────────────
 
 // สถานะที่ "ตั้งไว้" (ปุ่ม ขาย/หมด/ซ่อน ในหน้าจัดการเมนู) — "hidden" มาก่อนเสมอ
 export function menuAvailabilitySetting(item: Pick<MenuItem, "active" | "soldOut">): MenuAvailability {
@@ -87,37 +16,31 @@ export function menuAvailabilitySetting(item: Pick<MenuItem, "active" | "soldOut
   return "available";
 }
 
-// สถานะ "ที่ลูกค้าเห็นจริง" — เหมือนที่ตั้งไว้ แต่ถ้าเนื้อสัตว์ที่บังคับเลือกหมดทุกตัว นับเป็นหมดด้วย
+// สถานะ "ที่ลูกค้าเห็นจริง" — เหมือนที่ตั้งไว้ แต่ถ้ากลุ่มที่ต้องเลือกกลุ่มใดถูกปิดหมดทุกตัว นับเป็นหมดด้วย
 export function menuAvailability(item: MenuItem): MenuAvailability {
   const setting = menuAvailabilitySetting(item);
-  if (setting === "available" && allMeatsSoldOut(item)) return "soldOut";
+  if (setting === "available" && requiredGroupAllClosed(item)) return "soldOut";
   return setting;
 }
 
 // รายการในตะกร้า 1 รายการ สั่งไม่ได้แล้วหรือยัง เทียบกับข้อมูลเมนูล่าสุด (fresh): เมนูหมด/ซ่อน
-// หรือเลือกเนื้อสัตว์ที่หมด/ถูกซ่อนไปแล้ว (ทั้งแบบในตัวและแบบกลุ่ม)
+// หรือเลือกตัวเลือกที่ตอนนี้ปิดอยู่ (ทุกกลุ่ม รวมรายการแบบเดิมที่เก็บเป็น meat/portion/...)
 export function isCartItemUnavailable(ci: CartItem, fresh: MenuItem): boolean {
   if (menuAvailability(fresh) !== "available") return true;
-  if (fresh.hasMeatChoice && ci.meat && (fresh.soldOutMeats?.includes(ci.meat) || fresh.disabledMeats?.includes(ci.meat))) {
-    return true;
-  }
-  return (fresh.customGroups || []).filter(isMeatGroup).some((g) => {
-    const selected = ci.customSelections?.[g.id] || [];
-    return g.choices.some((c) => selected.includes(c.id) && (c.soldOut || c.active === false));
-  });
+  return closedSelectedChoices(ci, fresh).length > 0;
 }
 
-// ข้อมูลที่จะบันทึกจากหน้าแก้เมนู (setDoc เขียนทับทั้ง doc): สถานะการขายทั้งหมดต้องเอาจากค่าล่าสุดใน Firestore
-// (prev) ไม่ใช่จาก form ที่ copy ไว้ตอนเปิดหน้าแก้ — ไม่งั้นแก้ชื่อ/ราคาแล้วเมนูหรือเนื้อที่ "หมด" อยู่จะกลับมาขาย
-// หรือทับสถานะที่เครื่องอื่นเพิ่งเปลี่ยนระหว่างที่เปิดหน้าแก้ค้างไว้
-// • เมนู: active / soldOut / soldOutMeats จาก prev (เมนูใหม่ = ขายปกติ)
-// • ตัวเลือกในกลุ่ม: soldOut จาก prev เทียบด้วย id กลุ่ม+ตัวเลือก (ตัวเลือกที่เพิ่มใหม่ใน form = ขายปกติ)
-//   ส่วน active (ซ่อนตัวเลือก) ยังมาจาก form ตามเดิม เพราะตั้งค่ากันในหน้าแก้เมนูนี้เอง
+// ข้อมูลที่จะบันทึกจากหน้าแก้เมนู (setDoc เขียนทับทั้ง doc) — item และ prev ต้องผ่าน normalizeMenuItem แล้ว
+// สถานะการขายต้องเอาจากค่าล่าสุดใน Firestore (prev) ไม่ใช่จาก form ที่ copy ไว้ตอนเปิดหน้าแก้ — ไม่งั้นแก้ชื่อ/ราคาแล้ว
+// เมนูหรือตัวเลือกที่ "หมด/ปิด" อยู่จะกลับมาขาย หรือทับสถานะที่เครื่องอื่นเพิ่งเปลี่ยนระหว่างที่เปิดหน้าแก้ค้างไว้
+// • เมนู: active / soldOut จาก prev (เมนูใหม่ = ขายปกติ)
+// • ตัวเลือก: ตัวที่มีอยู่แล้วใน prev (id กลุ่ม+ตัวเลือก ตรงกัน) เอา เปิด/ปิด จาก prev — สวิตช์ในหน้าแก้เขียนลง DB ทันทีอยู่แล้ว
+//   ตัวที่เพิ่มใหม่ใน form (ยังไม่มีใน DB) เอาจาก form
 // • แนะนำ (recommended / recommendedOrder): จาก prev เหมือนกัน — ตั้งจากปุ่มดาวในหน้าจัดการเมนูเท่านั้น
 export function withLiveAvailability(item: MenuItem, prev: MenuItem | undefined): MenuItem {
-  const liveSoldOutChoices = new Set<string>();
-  prev?.customGroups?.forEach((g) => g.choices.forEach((c) => { if (c.soldOut) liveSoldOutChoices.add(`${g.id}:${c.id}`); }));
-  const { recommended: _staleRecommended, recommendedOrder: _staleRecommendedOrder, ...rest } = item;
+  const liveChoices = new Map<string, boolean>();
+  prev?.customGroups?.forEach((g) => g.choices.forEach((c) => liveChoices.set(`${g.id}:${c.id}`, isChoiceClosed(c))));
+  const { recommended: _staleRecommended, recommendedOrder: _staleRecommendedOrder, soldOutMeats: _staleSoldOutMeats, ...rest } = item;
   return {
     ...rest,
     // Firestore ไม่รับ undefined — ใส่เฉพาะตอนมีค่า
@@ -125,24 +48,26 @@ export function withLiveAvailability(item: MenuItem, prev: MenuItem | undefined)
     ...(prev?.recommended && typeof prev.recommendedOrder === "number" ? { recommendedOrder: prev.recommendedOrder } : {}),
     active: prev ? prev.active ?? true : true,
     soldOut: prev?.soldOut ?? false,
-    soldOutMeats: prev?.soldOutMeats ?? [],
     ...(item.customGroups
       ? {
         customGroups: item.customGroups.map((g) => ({
           ...g,
-          choices: g.choices.map(({ soldOut: _staleSoldOut, ...c }) =>
-            liveSoldOutChoices.has(`${g.id}:${c.id}`) ? { ...c, soldOut: true } : c),
+          choices: g.choices.map(({ soldOut: formSoldOut, active: _active, ...c }) => {
+            const closed = liveChoices.get(`${g.id}:${c.id}`) ?? !!formSoldOut;
+            return closed ? { ...c, soldOut: true } : c;
+          }),
         })),
       }
       : {}),
   };
 }
 
-// ชื่อเนื้อสัตว์ที่เลือกในรายการตะกร้า (ไว้ต่อท้ายชื่อเมนูในข้อความเตือน เช่น "ข้าวผัด (แหนม)") — ไม่มีคืน ""
+// ชื่อตัวเลือกในกลุ่มปุ่มด่วน (เช่นเนื้อสัตว์) ที่เลือกในรายการตะกร้า — ไว้ต่อท้ายชื่อเมนูในข้อความเตือน
+// เช่น "ข้าวผัด (แหนม)" ให้รู้ว่าตัวไหนหมด ไม่มีคืน ""
 export function cartItemMeatLabel(ci: CartItem, lang: Language): string {
   const labels: string[] = [];
   if (ci.meat) labels.push(T[lang].meats[ci.meat]);
-  (ci.item.customGroups || []).filter(isMeatGroup).forEach((g) => {
+  (ci.item.customGroups || []).filter(isQuickToggleGroup).forEach((g) => {
     const selected = ci.customSelections?.[g.id] || [];
     g.choices.filter((c) => selected.includes(c.id)).forEach((c) => labels.push(lang === "en" ? c.labelEn : c.labelTh));
   });
@@ -596,10 +521,9 @@ export function ignoreSoldOut<M extends MenuItem>(item: M): M {
   return {
     ...item,
     soldOut: false,
-    soldOutMeats: [],
     customGroups: item.customGroups?.map((g) => ({
       ...g,
-      choices: g.choices.map((c) => ({ ...c, soldOut: false })),
+      choices: g.choices.map(({ soldOut: _soldOut, active: _active, ...c }) => c),
     })),
   };
 }

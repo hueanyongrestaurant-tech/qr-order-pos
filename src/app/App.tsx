@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import logo from "../assets/logo.png";
 import logoImg from "../assets/logo-black.png";
 import {
@@ -41,7 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
+import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 import { shouldTrackStock, soldOutAfterStockSet, stockLevel, stockNeeds, type StockEntry } from "./stock";
@@ -112,9 +112,9 @@ import {
   fetchFreshMenuItems,
   isCartItemUnavailable,
   withLiveAvailability,
-  type MeatOption,
   allocateTransfer,
 } from "./utils";
+import { hasLegacyOptions, LEGACY_OPTION_VALUES, normalizeMenuItem, setChoiceClosed } from "./menuOptions";
 import { LannaBorder, RestaurantLogo } from "./shared";
 // เฉพาะ printerStore เพราะเป็น localStorage ล้วน ไม่มี Capacitor — ส่วน nativePrinter.ts
 // (import capacitor-thermal-printer) โหลดแบบ dynamic import เฉพาะตอนจะใช้จริงเท่านั้น ไม่งั้น
@@ -549,7 +549,10 @@ export default function App() {
   const [expenseRangeStart, setExpenseRangeStart] = useState<string>(getTodayKey());
   const [expenseRangeEnd, setExpenseRangeEnd] = useState<string>(getTodayKey());
 
+  // allMenuItems = ข้อมูลดิบจาก Firestore (ใช้สร้าง menu snapshot ให้ hash ตรงกับเครื่องที่ยังเป็นแอปเก่า)
+  // menuItems / staffMenuItems = ผ่าน normalizeMenuItem แล้ว (ตัวเลือกทั้งหมดอยู่ใน customGroups) — หน้าจอใช้ชุดนี้
   const [allMenuItems, setAllMenuItems] = useState<(MenuItem & { active?: boolean })[]>([]);
+  const staffMenuItems = useMemo(() => allMenuItems.map(normalizeMenuItem), [allMenuItems]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   // auto-print ใน orders listener (subscribe ครั้งเดียว) ต้องเห็นหมวดล่าสุดเสมอ — ใช้ ref แทน state
@@ -593,7 +596,7 @@ export default function App() {
     const unsubscribe = onSnapshot(collection(db, "menuItems"), (snapshot) => {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem & { active?: boolean }));
       setAllMenuItems(data);
-      setMenuItems(data.filter((m) => m.active !== false));
+      setMenuItems(data.filter((m) => m.active !== false).map(normalizeMenuItem));
       if (!snapshot.metadata.fromCache) setStaffMenuSynced(true);
     });
     return unsubscribe;
@@ -652,7 +655,7 @@ export default function App() {
       setAllCategories(cached.categories);
       setCategories(cached.categories.filter((c) => c.active !== false));
       setAllMenuItems(cached.menuItems);
-      setMenuItems(cached.menuItems.filter((m) => m.active !== false));
+      setMenuItems(cached.menuItems.filter((m) => m.active !== false).map(normalizeMenuItem));
       return;
     }
 
@@ -680,7 +683,7 @@ export default function App() {
       setAllCategories(categoryData);
       setCategories(categoryData.filter((c) => c.active !== false));
       setAllMenuItems(menuData);
-      setMenuItems(menuData.filter((m) => m.active !== false));
+      setMenuItems(menuData.filter((m) => m.active !== false).map(normalizeMenuItem));
       writeMenuCache({ categories: categoryData, menuItems: menuData, timestamp: Date.now() });
     })();
 
@@ -1209,7 +1212,7 @@ export default function App() {
       return f ? { ...m, ...f } : m;
     };
     setAllMenuItems((prev) => prev.map(patch));
-    setMenuItems((prev) => prev.map(patch).filter((m) => m.active !== false));
+    setMenuItems((prev) => prev.map(patch).filter((m) => m.active !== false).map(normalizeMenuItem));
     const cached = readMenuCache<{ categories: Category[]; menuItems: MenuItem[]; timestamp: number }>();
     if (cached) writeMenuCache({ ...cached, menuItems: cached.menuItems.map(patch) });
   };
@@ -2125,7 +2128,8 @@ export default function App() {
   };
 
   const handleSaveItem = async (item: MenuItem, stockForm: StockFormValue) => {
-    const prev = allMenuItems.find((m) => m.id === item.id);
+    const rawPrev = allMenuItems.find((m) => m.id === item.id);
+    const prev = rawPrev ? normalizeMenuItem(rawPrev) : undefined;
     let photo = item.photo;
 
     if (photo.startsWith("data:")) {
@@ -2158,7 +2162,7 @@ export default function App() {
 
     // setDoc เขียนทับทั้ง doc — สถานะการขายทั้งหมด (เมนู + ตัวเลือกเนื้อสัตว์) เอาจากค่าล่าสุด ดู withLiveAvailability
     // สต็อก: เขียนพร้อมเมนูใน batch เดียว — ใส่จำนวนใหม่ = เปิดขาย (0 = หมด) | ลบจำนวนทิ้ง = ไม่จำกัด (สถานะขายคงเดิม)
-    const live = withLiveAvailability(item, prev);
+    const live = withLiveAvailability(normalizeMenuItem(item), prev);
     const { remaining, alertAt, remainingChanged } = stockForm;
     const batch = writeBatch(db);
     batch.set(doc(db, "menuItems", item.id), {
@@ -2219,27 +2223,23 @@ export default function App() {
     await batch.commit();
   };
 
-  // สลับ หมด/ขาย ของตัวเลือกเนื้อสัตว์ 1 ตัว (ชิปในหน้าจัดการเมนู) — บันทึกทันที ไม่ผ่านหน้าแก้เมนู
-  // แบบในตัว: เพิ่ม/ลบใน soldOutMeats แบบ atomic | แบบกลุ่ม: Firestore แก้ element ใน array ตรงๆ ไม่ได้
-  // จึงเขียน customGroups ทั้งก้อนใหม่ โดยเริ่มจากข้อมูลล่าสุดใน allMenuItems (realtime) แล้วแก้แค่ตัวเลือกนั้น
-  const handleToggleMeatSoldOut = async (item: MenuItem, option: MeatOption) => {
-    const ref = doc(db, "menuItems", item.id);
-    if (option.meat) {
-      await updateDoc(ref, { soldOutMeats: option.soldOut ? arrayRemove(option.meat) : arrayUnion(option.meat) });
-      return;
-    }
-    const live = allMenuItems.find((m) => m.id === item.id) ?? item;
-    const customGroups = (live.customGroups || []).map((g) =>
-      g.id !== option.groupId ? g : {
-        ...g,
-        choices: g.choices.map((c) => {
-          if (c.id !== option.choiceId) return c;
-          if (!option.soldOut) return { ...c, soldOut: true };
-          const { soldOut: _soldOut, ...rest } = c; // กลับมาขาย = ลบฟิลด์ออก (ไม่มีค่า = ขายปกติ)
-          return rest;
-        }),
-      });
-    await updateDoc(ref, { customGroups });
+  // ตั้ง เปิด/ปิด ตัวเลือก 1 ตัว (ปุ่มด่วนในหน้าจัดการเมนู + สวิตช์ในหน้าแก้เมนู) — บันทึกทันที ไม่ผ่านปุ่มบันทึก
+  // Firestore แก้ element ใน array ตรงๆ ไม่ได้ จึงเขียน customGroups ทั้งก้อนใหม่ โดยเริ่มจากข้อมูลล่าสุดใน allMenuItems
+  // (realtime) แล้วแก้แค่ตัวเลือกนั้น — เมนูที่ยังเป็นตัวเลือกในตัวแบบเดิม ถูกแปลงเป็นกลุ่มลง DB ไปในครั้งเดียวกัน
+  // คืน false = ยังไม่มีเมนู/กลุ่ม/ตัวเลือกนี้ใน DB (เช่นเพิ่งเพิ่มในหน้าแก้ ยังไม่กดบันทึก) — ผู้เรียกเก็บค่าไว้ในฟอร์มแทน
+  const handleSetChoiceClosed = async (itemId: string, groupId: string, choiceId: string, closed: boolean): Promise<boolean> => {
+    const raw = allMenuItems.find((m) => m.id === itemId);
+    if (!raw) return false;
+    const customGroups = setChoiceClosed(normalizeMenuItem(raw).customGroups || [], groupId, choiceId, closed);
+    if (!customGroups) return false;
+    const legacyPatch = hasLegacyOptions(raw)
+      ? {
+        hasMeatChoice: false, hasSpice: false, hasPortion: false, hasEggAddon: false, hasPlainAddOns: false,
+        ...Object.fromEntries(LEGACY_OPTION_VALUES.map((k) => [k, deleteField()])),
+      }
+      : {};
+    await updateDoc(doc(db, "menuItems", itemId), { customGroups, ...legacyPatch });
+    return true;
   };
 
   // รับ id ที่เรียงลำดับใหม่แล้ว (จากการลาก) แล้วเขียนค่า order ทับทั้งหมวด
@@ -2602,12 +2602,14 @@ export default function App() {
         <Suspense fallback={staffLoadingFallback}>
           <StaffMenuScreen
             lang={lang}
-            items={allMenuItems}
+            items={staffMenuItems}
             categories={allCategories}
             onAdd={handleAddNewItem}
             onEdit={handleEditItem}
             onSetAvailability={handleSetAvailability}
-            onToggleMeatSoldOut={handleToggleMeatSoldOut}
+            onSetChoiceClosed={(item, groupId, choiceId, closed) => {
+              handleSetChoiceClosed(item.id, groupId, choiceId, closed).catch((err) => setNotice(String(err?.message || err)));
+            }}
             onDelete={handleDeleteItem}
             onAddCategory={handleAddCategory}
             onDeleteCategory={handleDeleteCategory}
@@ -2641,6 +2643,7 @@ export default function App() {
             lang={lang}
             item={editingItem}
             onSave={handleSaveItem}
+            onSetChoiceClosed={handleSetChoiceClosed}
             onCancel={() => setView("staff-menu")}
             onLangToggle={toggleLang}
             categories={categories}
