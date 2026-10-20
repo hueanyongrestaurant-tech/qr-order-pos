@@ -2,9 +2,9 @@
 // "บิล" = ออเดอร์ที่ปิดพร้อมกัน (paymentBatchId เดียวกัน) — โต๊ะ 1 รอบนั่ง = 1 บิล ไม่ว่าจะสั่งกี่รอบ
 // กลับบ้าน/บิลเก่าที่ไม่มี paymentBatchId = 1 ออเดอร์ 1 บิล
 
-import type { Order } from "./types";
+import type { Category, Order } from "./types";
 import { cartItemTotal, orderTotal } from "./utils";
-import { ADDON_CATEGORY_ID } from "./constants";
+import { ADDON_CATEGORY_ID, COUNTER_CATEGORY_PREFIXES } from "./constants";
 
 export interface Bill {
   key: string;
@@ -122,10 +122,11 @@ export function parseTableNumber(tn: string): { floor: number; table: number } |
 
 // เมนูขายดี (รวมทุกตัวเลือกของเมนูเดียวกัน) ไม่นับรายการที่ยกเลิก / Add-on ที่พนักงานพิมพ์เพิ่มเอง (ค่าถุง ฯลฯ)
 export interface TopItem { id: string; nameTh: string; nameEn: string; qty: number; revenue: number }
-export function topItems(orders: Order[], top = 10): TopItem[] {
+// skipCategoryIds = หมวดที่ไม่นับ (การ์ดเมนูขายดี ไม่นับเครื่องดื่ม/ของฝาก — ดู counterCategoryIds)
+export function topItems(orders: Order[], top = 10, skipCategoryIds?: Set<string>): TopItem[] {
   const map = new Map<string, TopItem>();
   orders.forEach((o) => (o.items || []).forEach((ci) => {
-    if (ci.voided || ci.item.categoryId === ADDON_CATEGORY_ID) return;
+    if (ci.voided || ci.item.categoryId === ADDON_CATEGORY_ID || skipCategoryIds?.has(ci.item.categoryId)) return;
     const s = map.get(ci.item.id) ?? { id: ci.item.id, nameTh: ci.item.name.th, nameEn: ci.item.name.en, qty: 0, revenue: 0 };
     s.qty += ci.quantity;
     s.revenue += cartItemTotal(ci);
@@ -140,4 +141,9 @@ export function formatMinutes(min: number, lang: "th" | "en"): string {
   const r = m % 60;
   if (lang === "en") return h > 0 ? `${h} h ${r} min` : `${r} min`;
   return h > 0 ? `${h} ชม. ${r} นาที` : `${r} นาที`;
+}
+
+// หมวดเครื่องดื่ม/ของฝาก (ชื่อหมวดขึ้นต้นด้วย COUNTER_CATEGORY_PREFIXES — ชุดเดียวกับที่ส่งพิมพ์เคาน์เตอร์)
+export function counterCategoryIds(categories: Category[]): Set<string> {
+  return new Set(categories.filter((c) => COUNTER_CATEGORY_PREFIXES.some((p) => (c.nameTh || "").startsWith(p))).map((c) => c.id));
 }

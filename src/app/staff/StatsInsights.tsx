@@ -1,10 +1,10 @@
-import { Clock, Crown, Receipt, Utensils } from "lucide-react";
+import { Clock, Crown, Utensils } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
-import type { Language, Order } from "../types";
+import type { Category, Language, Order } from "../types";
 import { T } from "../translations";
 import { TABLE_FLOORS } from "../constants";
-import { billsPerHour, formatMinutes, groupBills, parseTableNumber, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
+import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, parseTableNumber, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
 
 // ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
 // คิดจากออเดอร์ที่จ่ายแล้วชุดเดียวกับส่วนรายได้ (ไม่อ่าน Firestore เพิ่ม) — ดู statsInsights.ts
@@ -23,9 +23,10 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
   );
 }
 
-export function StatsInsights({ lang, orders, rangeStart, rangeEnd }: {
+export function StatsInsights({ lang, orders, categories, rangeStart, rangeEnd }: {
   lang: Language;
   orders: Order[];
+  categories: Category[]; // ใช้ตัดหมวดเครื่องดื่ม/ของฝากออกจากการ์ดเมนูขายดี
   rangeStart: Date;
   rangeEnd: Date;
 }) {
@@ -39,7 +40,7 @@ export function StatsInsights({ lang, orders, rangeStart, rangeEnd }: {
   const topTable = tables[0];
   const takeaway = bills.filter((b) => b.isTakeaway);
   const dineInCount = bills.length - takeaway.length;
-  const items = topItems(orders, 1);
+  const items = topItems(orders, 1, counterCategoryIds(categories));
   const days = rangeDayCount(rangeStart, rangeEnd);
   const perHour = billsPerHour(bills, days);
   const peaks = topHours(perHour, 3);
@@ -84,19 +85,15 @@ export function StatsInsights({ lang, orders, rangeStart, rangeEnd }: {
   return (
     <div className="space-y-6 mb-6">
       {/* ─── การ์ดสรุป ─── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="col-span-2 sm:col-span-1 grid">
         <StatCard
           icon={<Clock size={14} />}
           label={en ? "Avg. time at table" : "เวลานั่งเฉลี่ย"}
           value={seating.avgMinutes !== null ? formatMinutes(seating.avgMinutes, lang) : "–"}
           sub={seatingSub}
         />
-        <StatCard
-          icon={<Receipt size={14} />}
-          label={en ? "Bills" : "จำนวนบิล"}
-          value={`${bills.length}`}
-          sub={en ? `Dine-in ${dineInCount} · Takeaway ${takeaway.length}` : `ทานที่ร้าน ${dineInCount} · กลับบ้าน ${takeaway.length}`}
-        />
+        </div>
         <StatCard
           icon={<Utensils size={14} />}
           label={en ? "Busiest table" : "โต๊ะยอดนิยม"}
@@ -105,7 +102,7 @@ export function StatsInsights({ lang, orders, rangeStart, rangeEnd }: {
         />
         <StatCard
           icon={<Crown size={14} />}
-          label={en ? "Best seller" : "เมนูขายดีอันดับ 1"}
+          label={en ? "Best seller (food)" : "เมนูขายดีอันดับ 1"}
           value={items[0] ? itemName(items[0]) : "–"}
           sub={items[0] ? (en ? `${items[0].qty} sold` : `ขายได้ ${items[0].qty}`) : undefined}
         />

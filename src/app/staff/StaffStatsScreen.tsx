@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
-import type { CartItem, Language, Order, StaffTab } from "../types";
+import type { CartItem, Category, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { choiceLabels } from "../menuOptions";
 import {
@@ -20,12 +20,13 @@ import { StatsInsights } from "./StatsInsights";
 
 interface StaffStatsProps {
   lang: Language;
+  categories: Category[];
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
 
-export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
+export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
   // เปิดหน้ามาแสดง "วันนี้" ก่อน
@@ -278,7 +279,7 @@ export function StaffStatsScreen({ lang, onTabChange, onLogout, onLangToggle }: 
           </div>
         )}
 
-        <StatsInsights lang={lang} orders={filtered} rangeStart={rangeStart} rangeEnd={rangeEnd} />
+        <StatsInsights lang={lang} orders={filtered} categories={categories} rangeStart={rangeStart} rangeEnd={rangeEnd} />
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
           {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}

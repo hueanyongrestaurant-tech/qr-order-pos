@@ -2875,6 +2875,7 @@ export default function App() {
         <Suspense fallback={staffLoadingFallback}>
           <StaffStatsScreen
             lang={lang}
+            categories={allCategories}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}
