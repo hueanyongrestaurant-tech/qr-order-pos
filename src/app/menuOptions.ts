@@ -177,7 +177,8 @@ export function setChoiceClosed(groups: CustomGroup[], groupId: string, choiceId
     ...g,
     choices: g.choices.map((c) => {
       if (c.id !== choiceId) return c;
-      const { soldOut: _soldOut, active: _active, ...rest } = c; // เปิด = ลบฟิลด์ออก (ไม่มีค่า = ขายปกติ)
+      // เปิด = ลบฟิลด์ออก (ไม่มีค่า = ขายปกติ) | กดเอง = ไม่ใช่ระบบปิดเพราะของเตรียม ลบธงด้วย
+      const { soldOut: _soldOut, active: _active, soldOutByPrep: _byPrep, ...rest } = c;
       return closed ? { ...rest, soldOut: true } : rest;
     }),
   });

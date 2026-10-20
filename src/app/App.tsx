@@ -48,7 +48,8 @@ import { shouldTrackStock, soldOutAfterStockSet, stockNeeds, type StockEntry } f
 import type { StockFormValue } from "./staff/StaffMenuEditScreen";
 import { createOrderTakingStock, runStockTransaction, STOCK_CONFIG_REF, StockShortError } from "./stockStore";
 import {
-  buildStockAlerts, guestStockDocIds, isPrepId, menusUsingPrep, prepIsOut, prepSoldOutChanges, prepTrackedFor, staffStockDocIds, PREP_ID_PREFIX, type PrepEntry,
+  allPrepLinks, buildStockAlerts, choiceKey, guestLineDocIds, isPrepId, localSoldOutPatch, prepIsOut, prepSoldOutChanges, prepTrackedFor,
+  setPrepOnChoices, staffLineDocIds, PREP_ID_PREFIX, type ChoiceRef, type PrepEntry,
 } from "./prep";
 
 import type {
@@ -474,6 +475,34 @@ const MENU_CACHE_TTL_MS = 15 * 60 * 1000;
 const AUTH_CHECK_TIMEOUT_MS = 8000;
 // เวลารอเช็คสถานะ "หมด" ล่าสุดของเมนูในตะกร้าก่อนส่งออเดอร์ — เกินนี้ข้ามการเช็คแล้วส่งเลย (ร้านเน็ตช้า)
 const SOLD_OUT_CHECK_TIMEOUT_MS = 3000;
+// เขียน customGroups ทั้งก้อนลงเมนูแบบเดิม (ตัวเลือกในตัว) → ปิด field แบบเดิมไปพร้อมกัน ไม่งั้นอ่านแล้วกลุ่มซ้ำ
+function legacyOptionsPatch(raw: MenuItem): Record<string, unknown> {
+  return hasLegacyOptions(raw)
+    ? {
+      hasMeatChoice: false, hasSpice: false, hasPortion: false, hasEggAddon: false, hasPlainAddOns: false,
+      ...Object.fromEntries(LEGACY_OPTION_VALUES.map((k) => [k, deleteField()])),
+    }
+    : {};
+}
+
+// ผลของ prepSoldOutChanges เป็น patch ต่อเมนู (เมนูหมด/เปิด + ธง, customGroups ที่ตัวเลือกปิด/เปิด)
+function prepSyncPatches(
+  menus: MenuItem[],
+  stockMap: Map<string, StockEntry>,
+  prepMap: Map<string, PrepEntry>,
+): Map<string, Record<string, unknown>> {
+  const { close, reopen, groups } = prepSoldOutChanges(menus, stockMap, prepMap);
+  const patches = new Map<string, Record<string, unknown>>();
+  const add = (id: string, patch: Record<string, unknown>) => patches.set(id, { ...(patches.get(id) ?? {}), ...patch });
+  close.forEach((id) => add(id, { soldOut: true, soldOutByPrep: true }));
+  reopen.forEach((id) => add(id, { soldOut: false, soldOutByPrep: deleteField() }));
+  groups.forEach((customGroups, id) => {
+    const raw = menus.find((m) => m.id === id);
+    add(id, { customGroups, ...(raw ? legacyOptionsPatch(raw) : {}) });
+  });
+  return patches;
+}
+
 // รอให้การแก้เมนูหลายจุดติดกัน (เช่นลากเรียงลำดับ = เขียนหลาย doc) นิ่งก่อนค่อยเขียน menu snapshot ครั้งเดียว
 const MENU_SNAPSHOT_DEBOUNCE_MS = 2000;
 // ลูกค้ากดส่งออเดอร์แล้ว server ไม่ตอบภายในนี้ = ขึ้น "ส่งไม่สำเร็จ" (ตะกร้ายังอยู่ กดส่งใหม่ได้ ดู handleConfirmOrder)
@@ -656,21 +685,19 @@ export default function App() {
     });
   }, [stockMap, allMenuItems, stockEnabled, staffLoggedIn]);
 
-  // ของเตรียมเหลือ ≤ 0 → กด "หมด" ทุกเมนูที่ผูก (ติดธง soldOutByPrep) | เติม/ไม่จำกัด/ลบ/ถอดแล้ว → เปิดขายคืนเฉพาะเมนูที่มีธง
-  // (เมนูที่พนักงานกดหมดเองไม่มีธง หมดต่อไป) รอข้อมูล stock และเมนูจาก server ก่อน ไม่งั้น cache ว่างทำให้เปิดขายคืนผิด
+  // ของเตรียมเหลือ ≤ 0 → กด "หมด" ทุกเมนูที่ผูกทั้งเมนู / ปิดทุกตัวเลือกที่ผูก (ติดธง soldOutByPrep)
+  // เติม/ไม่จำกัด/ลบ/ถอดแล้ว → เปิดคืนเฉพาะที่มีธง (ที่พนักงานปิดเองไม่มีธง ปิดต่อไป)
+  // รอข้อมูล stock และเมนูจาก server ก่อน ไม่งั้น cache ว่างทำให้เปิดคืนผิด
   const prepSoldOutPendingRef = useRef(new Set<string>());
   useEffect(() => {
     if (getTableFromUrl() !== null || !staffLoggedIn || !stockEnabled || !stockSynced || !staffMenuSynced) return;
-    const { close, reopen } = prepSoldOutChanges(allMenuItems, stockMap, prepMap);
-    const write = (id: string, patch: Record<string, unknown>) => {
+    prepSyncPatches(allMenuItems, stockMap, prepMap).forEach((patch, id) => {
       if (prepSoldOutPendingRef.current.has(id)) return;
       prepSoldOutPendingRef.current.add(id);
       updateDoc(doc(db, "menuItems", id), patch)
         .catch((err) => console.error("prep sold-out sync failed", err))
         .finally(() => prepSoldOutPendingRef.current.delete(id));
-    };
-    close.forEach((id) => write(id, { soldOut: true, soldOutByPrep: true }));
-    reopen.forEach((id) => write(id, { soldOut: false, soldOutByPrep: deleteField() }));
+    });
   }, [stockMap, prepMap, allMenuItems, stockEnabled, stockSynced, staffMenuSynced, staffLoggedIn]);
 
   // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน localStorage แทน realtime listener
@@ -1270,20 +1297,18 @@ export default function App() {
 
   // ตัดสต็อกไม่ผ่าน: เหลือ 0 = ป้าย "หมด" (+ ทำเมนูในเครื่องเป็นหมดทันที) / ยังเหลือแต่ไม่พอ = ป้าย "เหลือไม่พอ"
   // shortIds เป็น stock doc (สต็อกของเมนู หรือของเตรียม) — บรรทัดที่ใช้ doc นั้นโดนทุกบรรทัด (docIdsOf ตัวเดียวกับตอนคิด needs)
-  const showStockShort = (items: CartItem[], err: StockShortError, docIdsOf: (itemId: string) => string[]) => {
+  // หมด → เมนูในเครื่องเป็นหมด หรือปิดเฉพาะตัวเลือกที่ผูกของเตรียมนั้น (localSoldOutPatch)
+  const showStockShort = (items: CartItem[], err: StockShortError, docIdsOf: (ci: CartItem) => string[]) => {
     const outIds = err.shortIds.filter((id) => (err.current.get(id) ?? 0) <= 0);
     const lowIds = err.shortIds.filter((id) => !outIds.includes(id));
-    const uses = (ci: CartItem, ids: string[]) => docIdsOf(ci.item.id).some((d) => ids.includes(d));
-    const outLines = items.filter((ci) => uses(ci, outIds));
-    setCartUnavailableCartIds(outLines.map((ci) => ci.cartId));
+    const uses = (ci: CartItem, ids: string[]) => docIdsOf(ci).some((d) => ids.includes(d));
+    setCartUnavailableCartIds(items.filter((ci) => uses(ci, outIds)).map((ci) => ci.cartId));
     setCartShortCartIds(items.filter((ci) => !uses(ci, outIds) && uses(ci, lowIds)).map((ci) => ci.cartId));
-    if (outLines.length > 0) patchLocalMenu(new Map(outLines.map((ci) => [ci.item.id, { soldOut: true }])));
+    if (outIds.length > 0) patchLocalMenu(localSoldOutPatch(allMenuItems, outIds));
   };
-  // ตัดสำเร็จแล้วมี doc เหลือ 0 → เมนูในเครื่องที่ใช้ doc นั้นเป็นหมดทันที (ไม่ต้องรอ cache/เครื่องพนักงาน)
-  const patchSoldOutAfterTake = (soldOutIds: string[], docIdsOf: (itemId: string) => string[]) => {
-    if (soldOutIds.length === 0) return;
-    const ids = allMenuItems.filter((m) => docIdsOf(m.id).some((d) => soldOutIds.includes(d))).map((m) => m.id);
-    patchLocalMenu(new Map(ids.map((id) => [id, { soldOut: true }])));
+  // ตัดสำเร็จแล้วมี doc เหลือ 0 → เมนู/ตัวเลือกในเครื่องที่ใช้ doc นั้นเป็นหมดทันที (ไม่ต้องรอ cache/เครื่องพนักงาน)
+  const patchSoldOutAfterTake = (soldOutIds: string[]) => {
+    if (soldOutIds.length > 0) patchLocalMenu(localSoldOutPatch(allMenuItems, soldOutIds));
   };
 
   // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 3 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
@@ -1344,13 +1369,13 @@ export default function App() {
       const orderRef = doc(db, "orders", attempt.id);
       const orderData = { tableNumber, items: cleanItems, status: "in-progress", createdAt: serverTimestamp() };
       // เมนูติดสต็อกดูจากข้อมูลล่าสุดที่เพิ่งเช็ค (ไม่ได้ = จากเมนูในเครื่อง) — ไม่มีเลย = ส่งแบบเดิมทุกอย่าง
-      // ของเตรียมที่ผูกไว้ (prepTracked) ตัดใน transaction เดียวกัน — ดู prep.ts
-      const docIdsOf = (id: string) => guestStockDocIds(fresh.get(id) ?? allMenuItems.find((m) => m.id === id));
+      // ของเตรียมที่ผูกไว้ (prepTracked — ทั้งเมนูและตัวเลือกที่เลือก) ตัดใน transaction เดียวกัน — ดู prep.ts
+      const docIdsOf = (ci: CartItem) => guestLineDocIds(fresh.get(ci.item.id) ?? allMenuItems.find((m) => m.id === ci.item.id), ci);
       const needs = stockNeeds(cart, docIdsOf);
       const writing: Promise<unknown> = needs.size === 0
         ? setDoc(orderRef, orderData)
         : runStockTransaction((tx) => createOrderTakingStock(tx, { orderRef, orderData, needs, guest: true }))
-          .then((r) => patchSoldOutAfterTake(r.soldOutIds, docIdsOf));
+          .then((r) => patchSoldOutAfterTake(r.soldOutIds));
       // หมดเวลาแล้ว SDK ยังพยายามส่งต่อเองเบื้องหลัง — ถ้าส่งถึงทีหลังและตะกร้ายังเหมือนเดิม พาไปหน้าส่งสำเร็จเอง
       writing.then(() => {
         if (orderAttemptRef.current === attempt && orderSignature(cartRef.current) === attempt.signature) finishOrderSent();
@@ -1474,7 +1499,8 @@ export default function App() {
       if ((await cartHasUnavailableItems(manualCart)).blocked) return;
       const cleanItems = (JSON.parse(JSON.stringify(manualCart)) as CartItem[]).map(stripItemPhoto);
       // มีเมนูติดสต็อก → สร้างออเดอร์ (+ ตัวนับคิวกลับบ้าน) + ตัดสต็อก ใน transaction เดียว
-      const docIdsOf = (id: string) => staffStockDocIds(allMenuItems.find((m) => m.id === id), id, stockEnabled, stockMap, prepMap);
+      const docIdsOf = (ci: CartItem) =>
+        staffLineDocIds(allMenuItems.find((m) => m.id === ci.item.id), ci, stockEnabled, stockMap, prepMap);
       const needs = stockNeeds(manualCart, docIdsOf);
       if (needs.size > 0) {
         const orderRef = doc(collection(db, "orders"));
@@ -2203,11 +2229,26 @@ export default function App() {
 
     // setDoc เขียนทับทั้ง doc — สถานะการขายทั้งหมด (เมนู + ตัวเลือกเนื้อสัตว์) เอาจากค่าล่าสุด ดู withLiveAvailability
     // สต็อก: เขียนพร้อมเมนูใน batch เดียว — ใส่จำนวนใหม่ = เปิดขาย (0 = หมด) | ลบจำนวนทิ้ง = ไม่จำกัด (สถานะขายคงเดิม)
-    // ของเตรียม: prepIds จากฟอร์ม (แก้ที่แท็บสต็อก) | ธง soldOutByPrep จากค่าล่าสุด เก็บไว้เฉพาะตอนยังหมดอยู่
+    // ของเตรียม: prepIds (ทั้งเมนู — แท็บสต็อก / ตัวเลือก — แท็บตัวเลือก) จากฟอร์ม ตัดตัวที่ถูกลบไปแล้วทิ้ง
+    // (ตัดเฉพาะตอนได้ข้อมูล stock จาก server แล้ว ไม่งั้นการผูกหายหมด) | ธง soldOutByPrep ของเมนูจากค่าล่าสุด เก็บไว้เฉพาะตอนยังหมดอยู่
     // ไม่ได้ผูกอะไร = ไม่ใส่ฟิลด์ของเตรียมเลย (เมนูเดิมหน้าตาเหมือนเดิม)
-    const { prepIds: formPrepIds, prepTracked: _stalePrepTracked, soldOutByPrep: _staleSoldOutByPrep, ...live } =
+    const keepPreps = (ids: string[] | undefined) => (ids ?? []).filter((p) => !stockSynced || prepMap.has(p));
+    const { prepIds: formPrepIds, prepTracked: _stalePrepTracked, soldOutByPrep: _staleSoldOutByPrep, ...liveForm } =
       withLiveAvailability(normalizeMenuItem(item), prev);
-    const prepIds = (formPrepIds ?? []).filter((p) => prepMap.has(p));
+    const live = liveForm.customGroups
+      ? {
+        ...liveForm,
+        customGroups: liveForm.customGroups.map((g) => ({
+          ...g,
+          choices: g.choices.map(({ prepIds: choicePrepIds, ...c }) => {
+            const kept = keepPreps(choicePrepIds);
+            return kept.length > 0 ? { ...c, prepIds: kept } : c;
+          }),
+        })),
+      }
+      : liveForm;
+    const prepIds = keepPreps(formPrepIds);
+    const links = allPrepLinks({ ...live, prepIds });
     const { remaining, alertAt, remainingChanged } = stockForm;
     const soldOut = remainingChanged && remaining !== null ? soldOutAfterStockSet(remaining) : live.soldOut;
     const batch = writeBatch(db);
@@ -2216,7 +2257,8 @@ export default function App() {
       photo,
       stockTracked: shouldTrackStock(stockEnabled, remaining !== null),
       soldOut,
-      ...(prepIds.length > 0 ? { prepIds, prepTracked: prepTrackedFor(stockEnabled, prepIds) } : {}),
+      ...(prepIds.length > 0 ? { prepIds } : {}),
+      ...(links.length > 0 ? { prepTracked: prepTrackedFor(stockEnabled, links) } : {}),
       ...(soldOut && prev?.soldOutByPrep ? { soldOutByPrep: true } : {}),
     });
     const stockRef = doc(db, "stock", item.id);
@@ -2260,8 +2302,8 @@ export default function App() {
       });
       const nextStock = new Map(stockMap);
       if (ownOut) nextStock.delete(item.id);
-      prepSoldOutChanges(allMenuItems.filter((m) => m.id !== item.id), nextStock, nextPreps).reopen.forEach((id) =>
-        batch.update(doc(db, "menuItems", id), { soldOut: false, soldOutByPrep: deleteField() }));
+      prepSyncPatches(allMenuItems.filter((m) => m.id !== item.id), nextStock, nextPreps).forEach((patch, id) =>
+        batch.update(doc(db, "menuItems", id), patch));
       batch.update(doc(db, "menuItems", item.id), {
         active: true, soldOut: false, soldOutByPrep: deleteField(), ...(ownOut ? { stockTracked: false } : {}),
       });
@@ -2282,23 +2324,47 @@ export default function App() {
     batch.set(STOCK_CONFIG_REF(), { enabled }, { merge: true });
     allMenuItems.forEach((m) => {
       const tracked = shouldTrackStock(enabled, stockMap.has(m.id));
-      const prepTracked = prepTrackedFor(enabled, m.prepIds);
+      const links = allPrepLinks(m);
+      const prepTracked = prepTrackedFor(enabled, links);
       const patch: Record<string, boolean> = {};
       if (!!m.stockTracked !== tracked) patch.stockTracked = tracked;
-      if ((m.prepIds?.length ?? 0) > 0 && !!m.prepTracked !== prepTracked) patch.prepTracked = prepTracked;
+      if (links.length > 0 && !!m.prepTracked !== prepTracked) patch.prepTracked = prepTracked;
       if (Object.keys(patch).length > 0) batch.update(doc(db, "menuItems", m.id), patch);
     });
     await batch.commit();
   };
 
   // ─── ของเตรียม (แท็บในหน้าจัดการเมนู) — ดู prep.ts ───
-  // บันทึกจากหน้าต่างแก้: ชื่อ/เตือน/จำนวน (แก้ช่องจำนวนจริงเท่านั้นถึงเขียนทับ — ลูกค้าอาจเพิ่งตัดไประหว่างเปิดค้าง)
-  // + ผูก/ถอดเมนูด้วย arrayUnion/arrayRemove (ไม่ทับการผูกของเตรียมอื่นที่เครื่องอื่นเพิ่งทำ)
-  // เปิดขาย/กดหมดเมนูที่ผูกตามจำนวนใหม่ ให้ effect prepSoldOutChanges ทำต่อ
+  // การผูกของเตรียม prepId ให้ตรงกับที่ต้องการ (ทั้งเมนู = wantMenus, ตัวเลือก = wantChoices) → patch ต่อเมนูที่เปลี่ยน
+  // ทั้งเมนูใช้ arrayUnion/arrayRemove (ไม่ทับการผูกของเตรียมอื่นที่เครื่องอื่นเพิ่งทำ) | ตัวเลือกต้องเขียน customGroups ทั้งก้อน
+  // จากข้อมูลล่าสุดในเครื่อง (เหมือนสวิตช์เปิด/ปิดตัวเลือก) — เมนูแบบเดิมแปลงเป็นแบบใหม่ไปพร้อมกัน
+  const prepLinkPatches = (prepId: string, wantMenus: Set<string>, wantChoices: Map<string, Set<string>>) => {
+    const patches = new Map<string, Record<string, unknown>>();
+    allMenuItems.forEach((m) => {
+      const patch: Record<string, unknown> = {};
+      const linked = !!m.prepIds?.includes(prepId);
+      const want = wantMenus.has(m.id);
+      let nextPrepIds = m.prepIds ?? [];
+      if (linked !== want) {
+        nextPrepIds = want ? [...nextPrepIds, prepId] : nextPrepIds.filter((p) => p !== prepId);
+        patch.prepIds = want ? arrayUnion(prepId) : nextPrepIds.length > 0 ? arrayRemove(prepId) : deleteField();
+      }
+      const groups = setPrepOnChoices(normalizeMenuItem(m).customGroups ?? [], prepId, wantChoices.get(m.id) ?? new Set());
+      if (groups) Object.assign(patch, { customGroups: groups }, legacyOptionsPatch(m));
+      if (Object.keys(patch).length === 0) return;
+      const links = allPrepLinks({ ...normalizeMenuItem(m), ...(groups ? { customGroups: groups } : {}), prepIds: nextPrepIds });
+      patch.prepTracked = links.length > 0 ? prepTrackedFor(stockEnabled, links) : deleteField();
+      patches.set(m.id, patch);
+    });
+    return patches;
+  };
+
+  // บันทึกจากหน้าต่างแก้: ชื่อ/เตือน/จำนวน (แก้ช่องจำนวนจริงเท่านั้นถึงเขียนทับ — ลูกค้าอาจเพิ่งตัดไประหว่างเปิดค้าง) + การผูก
+  // เปิดขาย/กดหมดเมนูและตัวเลือกที่ผูกตามจำนวนใหม่ ให้ effect prepSoldOutChanges ทำต่อ
   const handleSavePrep = async (
     prepId: string | null,
     form: { name: string; remaining: number | null; alertAt: number | null; remainingChanged: boolean },
-    menuIds: string[],
+    links: { menuIds: string[]; choices: ChoiceRef[] },
   ) => {
     const id = prepId ?? `${PREP_ID_PREFIX}${doc(collection(db, "stock")).id}`;
     const batch = writeBatch(db);
@@ -2308,17 +2374,13 @@ export default function App() {
       alertAt: form.alertAt ?? deleteField(),
       ...(form.remainingChanged || !prepId ? { remaining: form.remaining ?? deleteField() } : {}),
     }, { merge: true });
-    const wanted = new Set(menuIds);
-    allMenuItems.forEach((m) => {
-      const linked = !!m.prepIds?.includes(id);
-      if (linked === wanted.has(m.id)) return;
-      const nextIds = linked ? (m.prepIds ?? []).filter((p) => p !== id) : [...(m.prepIds ?? []), id];
-      batch.update(doc(db, "menuItems", m.id), linked
-        ? nextIds.length > 0
-          ? { prepIds: arrayRemove(id), prepTracked: prepTrackedFor(stockEnabled, nextIds) }
-          : { prepIds: deleteField(), prepTracked: deleteField() }
-        : { prepIds: arrayUnion(id), prepTracked: prepTrackedFor(stockEnabled, nextIds) });
+    const wantChoices = new Map<string, Set<string>>();
+    links.choices.forEach((c) => {
+      if (!wantChoices.has(c.menuId)) wantChoices.set(c.menuId, new Set());
+      wantChoices.get(c.menuId)!.add(choiceKey(c.groupId, c.choiceId));
     });
+    prepLinkPatches(id, new Set(links.menuIds), wantChoices).forEach((patch, menuId) =>
+      batch.update(doc(db, "menuItems", menuId), patch));
     await batch.commit();
   };
 
@@ -2334,16 +2396,11 @@ export default function App() {
     await updateDoc(doc(db, "stock", prepId), { remaining: remaining ?? deleteField() });
   };
 
-  // ลบของเตรียม: ถอดออกจากทุกเมนูที่ผูกใน commit เดียวกัน (เมนูที่หมดเพราะมันเปิดขายคืนเองผ่าน effect)
+  // ลบของเตรียม: ถอดออกจากทุกเมนู/ตัวเลือกที่ผูกใน commit เดียวกัน (ที่หมดเพราะมันเปิดคืนเองผ่าน effect)
   const handleDeletePrep = async (prepId: string) => {
     const batch = writeBatch(db);
     batch.delete(doc(db, "stock", prepId));
-    menusUsingPrep(allMenuItems, prepId).forEach((m) => {
-      const nextIds = (m.prepIds ?? []).filter((p) => p !== prepId);
-      batch.update(doc(db, "menuItems", m.id), nextIds.length > 0
-        ? { prepIds: arrayRemove(prepId), prepTracked: prepTrackedFor(stockEnabled, nextIds) }
-        : { prepIds: deleteField(), prepTracked: deleteField() });
-    });
+    prepLinkPatches(prepId, new Set(), new Map()).forEach((patch, menuId) => batch.update(doc(db, "menuItems", menuId), patch));
     await batch.commit();
   };
 
@@ -2351,18 +2408,30 @@ export default function App() {
   // Firestore แก้ element ใน array ตรงๆ ไม่ได้ จึงเขียน customGroups ทั้งก้อนใหม่ โดยเริ่มจากข้อมูลล่าสุดใน allMenuItems
   // (realtime) แล้วแก้แค่ตัวเลือกนั้น — เมนูที่ยังเป็นตัวเลือกในตัวแบบเดิม ถูกแปลงเป็นกลุ่มลง DB ไปในครั้งเดียวกัน
   // คืน false = ยังไม่มีเมนู/กลุ่ม/ตัวเลือกนี้ใน DB (เช่นเพิ่งเพิ่มในหน้าแก้ ยังไม่กดบันทึก) — ผู้เรียกเก็บค่าไว้ในฟอร์มแทน
+  // เปิดตัวเลือกที่ของเตรียมที่ผูกหมดอยู่ → ของเตรียมนั้นเป็นไม่จำกัด + เปิดคืนเมนู/ตัวเลือกอื่นที่ปิดเพราะมันใน commit เดียวกัน
+  // กดเองทุกแบบ = ลบธง soldOutByPrep ของตัวเลือก (setChoiceClosed) — ปิดเองแล้วไม่โดนเปิดคืนตอนเติมของเตรียม
   const handleSetChoiceClosed = async (itemId: string, groupId: string, choiceId: string, closed: boolean): Promise<boolean> => {
     const raw = allMenuItems.find((m) => m.id === itemId);
     if (!raw) return false;
-    const customGroups = setChoiceClosed(normalizeMenuItem(raw).customGroups || [], groupId, choiceId, closed);
+    const groups = normalizeMenuItem(raw).customGroups || [];
+    const customGroups = setChoiceClosed(groups, groupId, choiceId, closed);
     if (!customGroups) return false;
-    const legacyPatch = hasLegacyOptions(raw)
-      ? {
-        hasMeatChoice: false, hasSpice: false, hasPortion: false, hasEggAddon: false, hasPlainAddOns: false,
-        ...Object.fromEntries(LEGACY_OPTION_VALUES.map((k) => [k, deleteField()])),
-      }
-      : {};
-    await updateDoc(doc(db, "menuItems", itemId), { customGroups, ...legacyPatch });
+    const choice = groups.find((g) => g.id === groupId)?.choices.find((c) => c.id === choiceId);
+    const outPreps = closed ? [] : (choice?.prepIds ?? []).filter((p) => prepIsOut(prepMap.get(p)));
+    if (outPreps.length === 0) {
+      await updateDoc(doc(db, "menuItems", itemId), { customGroups, ...legacyOptionsPatch(raw) });
+      return true;
+    }
+    const batch = writeBatch(db);
+    const nextPreps = new Map(prepMap);
+    outPreps.forEach((p) => {
+      batch.update(doc(db, "stock", p), { remaining: deleteField(), alertAt: deleteField() });
+      nextPreps.set(p, { name: prepMap.get(p)?.name ?? "" });
+    });
+    batch.update(doc(db, "menuItems", itemId), { customGroups, ...legacyOptionsPatch(raw) });
+    prepSyncPatches(allMenuItems.filter((m) => m.id !== itemId), stockMap, nextPreps).forEach((patch, id) =>
+      batch.update(doc(db, "menuItems", id), patch));
+    await batch.commit();
     return true;
   };
 

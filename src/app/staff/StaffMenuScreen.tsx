@@ -6,8 +6,8 @@ import { isChoiceClosed, isQuickToggleGroup, requiredGroupAllClosed } from "../m
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
 import { stockLevel, type StockEntry } from "../stock";
-import { prepIsOut, type PrepEntry } from "../prep";
-import { StaffPrepPanel, type PrepFormValue } from "./StaffPrepPanel";
+import { allPrepLinks, prepIsOut, type PrepEntry } from "../prep";
+import { StaffPrepPanel, type PrepFormValue, type PrepLinks } from "./StaffPrepPanel";
 
 // ─── Drag-to-reorder (mouse + touch via Pointer Events) ──────────────────────
 // เดิมใช้ปุ่มลูกศรขึ้น/ลง เปลี่ยนมาใช้ "จับที่ไอคอน Grip แล้วลาก" แทน
@@ -117,7 +117,7 @@ interface StaffMenuProps {
   onSetStockEnabled: (enabled: boolean) => void; // App ถามยืนยันก่อน
   // แท็บ "ของเตรียม" (ดู StaffPrepPanel / prep.ts)
   prepMap: Map<string, PrepEntry>;
-  onSavePrep: (prepId: string | null, form: PrepFormValue, menuIds: string[]) => Promise<void>;
+  onSavePrep: (prepId: string | null, form: PrepFormValue, links: PrepLinks) => Promise<void>;
   onAdjustPrep: (prepId: string, delta: 1 | -1) => void;
   onSetPrepRemaining: (prepId: string, remaining: number | null) => Promise<void>;
   onDeletePrep: (prepId: string) => void;
@@ -389,7 +389,7 @@ function StockBadge({ lang, entry, enabled }: { lang: Language; entry?: StockEnt
   );
 }
 
-// ป้ายของเตรียมที่เมนูนี้ผูกไว้ (ชื่อ + จำนวน) — แดง = หมด (เมนูนี้หมดตามไปด้วย) / ส้ม = ใกล้หมด
+// ป้ายของเตรียมที่เมนูนี้ผูกไว้ ทั้งเมนูและตัวเลือก (ชื่อ + จำนวน) — แดง = หมด / ส้ม = ใกล้หมด
 function PrepBadges({ lang, prepIds, prepMap, enabled }: { lang: Language; prepIds?: string[]; prepMap: Map<string, PrepEntry>; enabled: boolean }) {
   return (
     <>
@@ -486,7 +486,7 @@ function CategoryMenuItemsList({
               <div className="text-muted-foreground text-xs flex items-center gap-1.5 flex-wrap">
                 <span>{t.thb}{item.price}</span>
                 <StockBadge lang={lang} entry={stockMap.get(item.id)} enabled={stockEnabled} />
-                <PrepBadges lang={lang} prepIds={item.prepIds} prepMap={prepMap} enabled={stockEnabled} />
+                <PrepBadges lang={lang} prepIds={allPrepLinks(item)} prepMap={prepMap} enabled={stockEnabled} />
               </div>
             </div>
             <RecommendedStar lang={lang} on={!!item.recommended} onClick={() => onToggleRecommended(item)} />

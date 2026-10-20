@@ -2,12 +2,16 @@
 // ของที่ทำไว้เป็นหม้อ/ชุดแล้วใช้หลายเมนู — สั่งเมนูที่ผูกไว้ 1 จาน หักของเตรียม 1
 // เก็บใน collection stock เดียวกับสต็อกรายเมนู: stock/prep_xxx = { kind: "prep", name, remaining?, alertAt? }
 //   ไม่มี remaining = ไม่จำกัด (ไม่ตัด) | rules ของ stock เดิมใช้ได้เลย ไม่ต้องแก้ firestore.rules
-// เมนูเก็บว่าใช้ของเตรียมไหนใน menuItems.prepIds (ไหลไปกับ menu snapshot — ลูกค้าเห็นแค่ id ไม่เห็นจำนวน)
+// ผูกได้ 2 ระดับ (ไหลไปกับ menu snapshot — ลูกค้าเห็นแค่ id ไม่เห็นจำนวน):
+//   • ทั้งเมนู: menuItems.prepIds — ทุกจานหัก | หมด = เมนูขึ้น "หมด" (ธง soldOutByPrep ที่เมนู)
+//   • ตัวเลือก: customGroups[].choices[].prepIds — หักเฉพาะจานที่เลือกตัวนี้ | หมด = ปิดเฉพาะตัวเลือก (ธงที่ตัวเลือก)
+//     กลุ่ม "ต้องเลือก" ที่ปิดหมดทุกตัว เมนูขึ้นหมดตามกฎเดิม (requiredGroupAllClosed)
 // กติกาเหมือนสต็อกรายเมนู: หักเฉพาะตอนกดสั่ง ไม่คืนเมื่อยกเลิก ใช้สวิตช์ระบบสต็อกตัวเดียวกัน
 // เมนูมีทั้งสต็อกของตัวเองและของเตรียมได้ — หมดเมื่ออันใดอันหนึ่งเหลือ 0
 
-import type { MenuItem } from "./types";
+import type { CartItem, CustomGroup, MenuItem } from "./types";
 import type { StockEntry } from "./stock";
+import { cartItemSelections, isChoiceClosed, normalizeMenuItem } from "./menuOptions";
 
 export const PREP_ID_PREFIX = "prep_";
 export const isPrepId = (id: string) => id.startsWith(PREP_ID_PREFIX);
@@ -18,48 +22,175 @@ export interface PrepEntry {
   alertAt?: number;
 }
 
-// เหลือ 0 หรือติดลบ = เมนูที่ผูกทุกเมนูขึ้น "หมด" (ไม่จำกัด/ไม่มี doc แล้ว = ไม่หมด)
+// ตัวเลือกหนึ่งตัวในเมนู — key = "groupId:choiceId" ใช้ใน Set
+export interface ChoiceRef {
+  menuId: string;
+  groupId: string;
+  choiceId: string;
+}
+export const choiceKey = (groupId: string, choiceId: string) => `${groupId}:${choiceId}`;
+
+// เหลือ 0 หรือติดลบ = เมนู/ตัวเลือกที่ผูกขึ้น "หมด" (ไม่จำกัด/ไม่มี doc แล้ว = ไม่หมด)
 export function prepIsOut(prep: PrepEntry | undefined): boolean {
   return prep?.remaining !== undefined && prep.remaining <= 0;
 }
 
-// stock doc ที่ต้องตัดเมื่อลูกค้าสั่งเมนูนี้ — ดูจากฟิลด์ในเมนูอย่างเดียว (ลูกค้าไม่อ่าน stock ล่วงหน้า)
-// doc ที่ไม่มีอยู่/ไม่จำกัด transaction อ่านแล้วข้ามไปเอง
+const unique = (ids: string[]) => [...new Set(ids)];
+const groupsOf = (item: MenuItem) => normalizeMenuItem(item).customGroups ?? [];
+
+// ของเตรียมทุกตัวที่เมนูนี้ผูกไว้ (ทั้งเมนู + ทุกตัวเลือก)
+export function allPrepLinks(item: MenuItem): string[] {
+  return unique([...(item.prepIds ?? []), ...groupsOf(item).flatMap((g) => g.choices.flatMap((c) => c.prepIds ?? []))]);
+}
+
+// ของเตรียมของตัวเลือกที่รายการในตะกร้าเลือกไว้ (ดูจากเมนู item — ข้อมูลล่าสุดที่มี ไม่ใช่สำเนาในตะกร้า)
+export function selectedChoicePrepIds(item: MenuItem, ci: CartItem): string[] {
+  const selections = cartItemSelections(ci);
+  return unique(groupsOf(item).flatMap((g) =>
+    g.choices.filter((c) => (selections[g.id] ?? []).includes(c.id)).flatMap((c) => c.prepIds ?? [])));
+}
+
+// stock doc ระดับเมนูที่ลูกค้าต้องตัด (สต็อกของเมนูเอง + ของเตรียมที่ผูกทั้งเมนู) — ดูจากฟิลด์ในเมนูอย่างเดียว
 export function guestStockDocIds(item: MenuItem | undefined): string[] {
   if (!item) return [];
   return [...(item.stockTracked ? [item.id] : []), ...(item.prepTracked ? item.prepIds ?? [] : [])];
 }
 
-// stock doc ที่ต้องตัดเมื่อพนักงานสั่งแทน — พนักงานมีข้อมูล stock ทั้งหมดในเครื่อง ตัดเฉพาะที่ตั้งจำนวนไว้จริง
-export function staffStockDocIds(
+// stock doc ที่ต้องตัดสำหรับรายการนี้ในตะกร้าลูกค้า (ระดับเมนู + ตัวเลือกที่เลือก) — doc ที่ไม่มีอยู่/ไม่จำกัด transaction ข้ามเอง
+export function guestLineDocIds(item: MenuItem | undefined, ci: CartItem): string[] {
+  if (!item) return [];
+  return unique([...guestStockDocIds(item), ...(item.prepTracked ? selectedChoicePrepIds(item, ci) : [])]);
+}
+
+// เหมือน guestLineDocIds แต่ฝั่งพนักงานสั่งแทน — มีข้อมูล stock ในเครื่อง ตัดเฉพาะที่ตั้งจำนวนไว้จริง
+export function staffLineDocIds(
   item: MenuItem | undefined,
-  itemId: string,
+  ci: CartItem,
   enabled: boolean,
   stockMap: Map<string, StockEntry>,
   prepMap: Map<string, PrepEntry>,
 ): string[] {
   if (!enabled) return [];
-  return [
-    ...(stockMap.has(itemId) ? [itemId] : []),
-    ...(item?.prepIds ?? []).filter((p) => prepMap.get(p)?.remaining !== undefined),
-  ];
+  const preps = item ? [...(item.prepIds ?? []), ...selectedChoicePrepIds(item, ci)] : [];
+  return unique([
+    ...(stockMap.has(ci.item.id) ? [ci.item.id] : []),
+    ...preps.filter((p) => prepMap.get(p)?.remaining !== undefined),
+  ]);
 }
 
-// เมนูที่ใช้ของเตรียมนี้
+// เมนูที่ใช้ของเตรียมนี้ (ระดับเมนูหรือตัวเลือกใดก็ได้)
 export function menusUsingPrep<M extends MenuItem>(menus: M[], prepId: string): M[] {
-  return menus.filter((m) => m.prepIds?.includes(prepId));
+  return menus.filter((m) => allPrepLinks(m).includes(prepId));
 }
 
-// ผูกเมนูใหม่ / ถอด / ระบบสต็อกเปลี่ยน → prepTracked ของเมนู (ไม่มีของเตรียมผูกเลย = ไม่ใส่ฟิลด์)
-export function prepTrackedFor(enabled: boolean, prepIds: string[] | undefined): boolean {
-  return enabled && (prepIds?.length ?? 0) > 0;
+// ที่ผูกของเตรียมนี้ไว้: ทั้งเมนู (menuIds) และรายตัวเลือก (choices)
+export function prepLinks(menus: MenuItem[], prepId: string): { menuIds: string[]; choices: ChoiceRef[] } {
+  const menuIds: string[] = [];
+  const choices: ChoiceRef[] = [];
+  menus.forEach((m) => {
+    if (m.prepIds?.includes(prepId)) menuIds.push(m.id);
+    groupsOf(m).forEach((g) => g.choices.forEach((c) => {
+      if (c.prepIds?.includes(prepId)) choices.push({ menuId: m.id, groupId: g.id, choiceId: c.id });
+    }));
+  });
+  return { menuIds, choices };
+}
+
+// ผูก/ถอดของเตรียมกับตัวเลือก ให้ตรงกับ wanted (Set ของ choiceKey) — คืน customGroups ใหม่ หรือ null ถ้าไม่มีอะไรเปลี่ยน
+// wanted = ว่าง = ถอดออกจากทุกตัวเลือก (ใช้ตอนลบของเตรียม)
+export function setPrepOnChoices(groups: CustomGroup[], prepId: string, wanted: Set<string>): CustomGroup[] | null {
+  let changed = false;
+  const next = groups.map((g) => ({
+    ...g,
+    choices: g.choices.map((c) => {
+      const has = !!c.prepIds?.includes(prepId);
+      const want = wanted.has(choiceKey(g.id, c.id));
+      if (has === want) return c;
+      changed = true;
+      const ids = want ? [...(c.prepIds ?? []), prepId] : (c.prepIds ?? []).filter((p) => p !== prepId);
+      const { prepIds: _old, ...rest } = c;
+      return ids.length > 0 ? { ...rest, prepIds: ids } : rest;
+    }),
+  }));
+  return changed ? next : null;
+}
+
+// ผูก/ถอดของเตรียม = prepTracked (ไม่มีของเตรียมผูกเลย = ไม่ใส่ฟิลด์) — links = allPrepLinks ของเมนูหลังเปลี่ยน
+export function prepTrackedFor(enabled: boolean, links: string[] | undefined): boolean {
+  return enabled && (links?.length ?? 0) > 0;
+}
+
+// สิ่งที่ต้องเขียนตามของเตรียมตอนนี้ (เครื่องพนักงานทำแทนลูกค้าที่เขียน menuItems ไม่ได้)
+// • close / reopen: ระดับเมนู — ผูกทั้งเมนูกับของเตรียมที่หมด → หมด + ธง | ไม่หมดแล้วและมีธง (และสต็อกของเมนูเองไม่เป็น 0) → เปิด
+// • groups: customGroups ใหม่ของเมนูที่ตัวเลือกต้องปิด/เปิด — กติกาเดียวกันแต่ธงอยู่ที่ตัวเลือก
+// เมนู/ตัวเลือกที่พนักงานปิดเองไม่มีธง จึงปิดต่อไป | เมนูที่ซ่อนอยู่ไม่แตะ
+export function prepSoldOutChanges(
+  menus: MenuItem[],
+  stockMap: Map<string, StockEntry>,
+  prepMap: Map<string, PrepEntry>,
+): { close: string[]; reopen: string[]; groups: Map<string, CustomGroup[]> } {
+  const close: string[] = [];
+  const reopen: string[] = [];
+  const groups = new Map<string, CustomGroup[]>();
+  const anyOut = (ids: string[] | undefined) => (ids ?? []).some((p) => prepIsOut(prepMap.get(p)));
+  menus.forEach((m) => {
+    if (m.active === false) return;
+    if (anyOut(m.prepIds)) {
+      if (!m.soldOut) close.push(m.id);
+    } else if (m.soldOut && m.soldOutByPrep) {
+      const own = stockMap.get(m.id);
+      if (!own || own.remaining > 0) reopen.push(m.id);
+    }
+    let changed = false;
+    const next = groupsOf(m).map((g) => ({
+      ...g,
+      choices: g.choices.map((c) => {
+        if (!c.prepIds?.length && !c.soldOutByPrep) return c;
+        if (anyOut(c.prepIds)) {
+          if (isChoiceClosed(c)) return c;
+          changed = true;
+          return { ...c, soldOut: true, soldOutByPrep: true };
+        }
+        if (!c.soldOutByPrep || !isChoiceClosed(c)) return c;
+        changed = true;
+        const { soldOut: _s, active: _a, soldOutByPrep: _f, ...rest } = c;
+        return rest;
+      }),
+    }));
+    if (changed) groups.set(m.id, next);
+  });
+  return { close, reopen, groups };
+}
+
+// doc ที่เพิ่งหมด/ไม่พอ → ทำเมนูในเครื่องลูกค้าให้เห็นว่าหมดทันที (ไม่ต้องรอ cache / เครื่องพนักงาน)
+// ผูกทั้งเมนู (หรือสต็อกของเมนูเอง) = เมนูหมด | ผูกแค่ตัวเลือก = ปิดเฉพาะตัวเลือกนั้น (ไม่ติดธง — แค่ในเครื่อง)
+export function localSoldOutPatch(menus: MenuItem[], outDocIds: string[]): Map<string, Partial<MenuItem>> {
+  const out = new Set(outDocIds);
+  const patch = new Map<string, Partial<MenuItem>>();
+  menus.forEach((m) => {
+    if (out.has(m.id) || (m.prepIds ?? []).some((p) => out.has(p))) {
+      patch.set(m.id, { soldOut: true });
+      return;
+    }
+    let changed = false;
+    const next = groupsOf(m).map((g) => ({
+      ...g,
+      choices: g.choices.map((c) => {
+        if (isChoiceClosed(c) || !(c.prepIds ?? []).some((p) => out.has(p))) return c;
+        changed = true;
+        return { ...c, soldOut: true };
+      }),
+    }));
+    if (changed) patch.set(m.id, { customGroups: next });
+  });
+  return patch;
 }
 
 export interface StockAlert {
   id: string;
   name: string;
   remaining: number;
-  menuCount?: number; // ของเตรียม: จำนวนเมนูที่ขายอยู่ซึ่งผูกไว้ (หมดตามไปด้วย)
+  menuCount?: number; // ของเตรียม: จำนวนเมนูที่ขายอยู่ซึ่งผูกไว้ (ทั้งเมนูหรือตัวเลือก)
 }
 
 // แถบเตือนหน้าออเดอร์ (เฉพาะพนักงาน ระบบสต็อกปิด = ว่าง):
@@ -93,31 +224,4 @@ export function buildStockAlerts(
   });
   const byName = (a: StockAlert, b: StockAlert) => a.name.localeCompare(b.name, "th");
   return { out: out.sort(byName), low: low.sort((a, b) => a.remaining - b.remaining || byName(a, b)) };
-}
-
-// เมนูที่ต้องกด "หมด" / เปิดขายคืน ตามของเตรียมตอนนี้ (เครื่องพนักงานทำแทนลูกค้าที่เขียน menuItems ไม่ได้)
-// • close: ผูกของเตรียมที่หมดอยู่ และเมนูยังขายอยู่ → หมด + ติดธง soldOutByPrep
-// • reopen: มีธง soldOutByPrep และของเตรียมที่ผูกไม่หมดแล้วสักตัว (เติมแล้ว/ไม่จำกัด/ลบ/ถอดออก)
-//   และสต็อกของเมนูเองไม่ได้เป็น 0 → เปิดขาย — เมนูที่พนักงานกด "หมด" เองไม่มีธง จึงหมดต่อไป
-// เมนูที่ซ่อนอยู่ไม่แตะ
-export function prepSoldOutChanges(
-  menus: MenuItem[],
-  stockMap: Map<string, StockEntry>,
-  prepMap: Map<string, PrepEntry>,
-): { close: string[]; reopen: string[] } {
-  const close: string[] = [];
-  const reopen: string[] = [];
-  menus.forEach((m) => {
-    if (m.active === false) return;
-    const prepOut = (m.prepIds ?? []).some((p) => prepIsOut(prepMap.get(p)));
-    if (prepOut) {
-      if (!m.soldOut) close.push(m.id);
-      return;
-    }
-    if (!m.soldOut || !m.soldOutByPrep) return;
-    const own = stockMap.get(m.id);
-    if (own && own.remaining <= 0) return;
-    reopen.push(m.id);
-  });
-  return { close, reopen };
 }

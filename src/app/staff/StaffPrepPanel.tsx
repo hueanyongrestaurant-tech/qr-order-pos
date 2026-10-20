@@ -1,12 +1,19 @@
 import { useState } from "react";
-import { Check, Minus, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Minus, Plus, Search, Trash2 } from "lucide-react";
 import type { Category, Language, MenuItem } from "../types";
-import { menusUsingPrep, type PrepEntry } from "../prep";
+import { normalizeMenuItem } from "../menuOptions";
+import { choiceKey, prepLinks, type ChoiceRef, type PrepEntry } from "../prep";
 import { parseStockInput, stockLevel } from "../stock";
 
 // ─── แท็บ "ของเตรียม" ในหน้าจัดการเมนู (ดู prep.ts) ─────────────────────────────────
 // การ์ดละ 1 ของเตรียม: −/+ บันทึกทันที | แตะตัวเลข/ปุ่ม "ใส่จำนวนใหม่" = หน้าต่างกรอกจำนวน กดยืนยันก่อนบันทึก
-// แตะชื่อ = หน้าต่างแก้ (ชื่อ / จำนวน / เตือน / ติ๊กเมนูที่ผูก) — ปุ่มทุกปุ่มสูง ≥ 44px กดง่ายบนแท็บเล็ต
+// แตะชื่อ = หน้าต่างแก้ (ชื่อ / จำนวน / เตือน / ติ๊กเมนูทั้งเมนู หรือเฉพาะตัวเลือก) — ปุ่มทุกปุ่มสูง ≥ 40px กดง่ายบนแท็บเล็ต
+
+// ที่ผูก: ทั้งเมนู (menuIds) และรายตัวเลือก (choices) — ตรงกับ prepLinks ใน prep.ts
+export interface PrepLinks {
+  menuIds: string[];
+  choices: ChoiceRef[];
+}
 
 export interface PrepFormValue {
   name: string;
@@ -21,7 +28,7 @@ interface PrepPanelProps {
   items: (MenuItem & { active?: boolean })[];
   categories: Category[];
   stockEnabled: boolean;
-  onSave: (prepId: string | null, form: PrepFormValue, menuIds: string[]) => Promise<void>;
+  onSave: (prepId: string | null, form: PrepFormValue, links: PrepLinks) => Promise<void>;
   onAdjust: (prepId: string, delta: 1 | -1) => void;
   onSetRemaining: (prepId: string, remaining: number | null) => Promise<void>;
   onDelete: (prepId: string) => void;
@@ -32,6 +39,28 @@ const INPUT = "w-full min-w-0 bg-card border-2 border-border rounded-xl px-3 py-
 const STEP_BTN = "w-12 h-12 rounded-xl bg-muted text-foreground flex items-center justify-center active:scale-95 transition-all";
 const errorText = (err: unknown) => (err as { code?: string })?.code ?? (err as Error)?.message ?? String(err);
 const menuName = (lang: Language, m: MenuItem) => (lang === "en" ? m.name.en || m.name.th : m.name.th || m.name.en);
+const label = (lang: Language, th: string, en: string) => (lang === "en" ? en || th : th || en) || "—";
+// ชื่อที่ผูกไว้ทั้งหมด เช่น "ลาบหมูคั่วเมือง", "ไข่เจียวลาบ (หมู)" — soldOut = เมนู/ตัวเลือกนั้นปิดอยู่
+function linkLabels(lang: Language, items: MenuItem[], prepId: string): { key: string; text: string; soldOut: boolean }[] {
+  const { menuIds, choices } = prepLinks(items, prepId);
+  const byId = new Map(items.map((m) => [m.id, m]));
+  return [
+    ...menuIds.flatMap((id) => {
+      const m = byId.get(id);
+      return m ? [{ key: id, text: menuName(lang, m), soldOut: !!m.soldOut }] : [];
+    }),
+    ...choices.flatMap((c) => {
+      const m = byId.get(c.menuId);
+      const choice = m && normalizeMenuItem(m).customGroups?.find((g) => g.id === c.groupId)?.choices.find((x) => x.id === c.choiceId);
+      if (!m || !choice) return [];
+      return [{
+        key: `${c.menuId}:${choiceKey(c.groupId, c.choiceId)}`,
+        text: `${menuName(lang, m)} (${label(lang, choice.labelTh, choice.labelEn)})`,
+        soldOut: !!choice.soldOut || !!m.soldOut,
+      }];
+    }),
+  ];
+}
 
 export function StaffPrepPanel({ lang, preps, items, categories, stockEnabled, onSave, onAdjust, onSetRemaining, onDelete, onAskConfirm }: PrepPanelProps) {
   const en = lang === "en";
@@ -67,7 +96,7 @@ export function StaffPrepPanel({ lang, preps, items, categories, stockEnabled, o
               key={id}
               lang={lang}
               prep={prep}
-              linked={menusUsingPrep(items, id)}
+              linked={linkLabels(lang, items, id)}
               stockEnabled={stockEnabled}
               onEdit={() => setEditing(id)}
               onSetNumber={() => setSettingId(id)}
@@ -85,15 +114,15 @@ export function StaffPrepPanel({ lang, preps, items, categories, stockEnabled, o
           items={items}
           categories={categories}
           onCancel={() => setEditing(null)}
-          onSave={async (form, menuIds) => {
-            await onSave(editing === "new" ? null : editing, form, menuIds);
+          onSave={async (form, links) => {
+            await onSave(editing === "new" ? null : editing, form, links);
             setEditing(null);
           }}
           onDelete={editing === "new" ? undefined : () => {
             const id = editing;
             const name = preps.get(id)?.name ?? "";
             onAskConfirm(
-              en ? `Delete ${name}? Linked menus will be unlinked.` : `ลบ ${name}? เมนูที่ผูกไว้จะถูกถอดออก`,
+              en ? `Delete ${name}? Linked menus and options will be unlinked.` : `ลบ ${name}? เมนูและตัวเลือกที่ผูกไว้จะถูกถอดออก`,
               () => { onDelete(id); setEditing(null); },
               { confirmLabel: en ? "Delete" : "ลบ", cancelLabel: en ? "No" : "ไม่" },
             );
@@ -119,7 +148,7 @@ export function StaffPrepPanel({ lang, preps, items, categories, stockEnabled, o
 function PrepCard({ lang, prep, linked, stockEnabled, onEdit, onSetNumber, onAdjust }: {
   lang: Language;
   prep: PrepEntry;
-  linked: MenuItem[];
+  linked: { key: string; text: string; soldOut: boolean }[];
   stockEnabled: boolean;
   onEdit: () => void;
   onSetNumber: () => void;
@@ -178,13 +207,13 @@ function PrepCard({ lang, prep, linked, stockEnabled, onEdit, onSetNumber, onAdj
 
       <div className="text-[11px] text-muted-foreground">
         {prep.alertAt !== undefined && limited && (en ? `Warn at ≤ ${prep.alertAt} · ` : `เตือนเมื่อเหลือ ≤ ${prep.alertAt} · `)}
-        {en ? `${linked.length} menu(s) linked` : `ผูก ${linked.length} เมนู`}
+        {en ? `${linked.length} linked` : `ผูก ${linked.length} รายการ`}
       </div>
       {linked.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5">
-          {linked.map((m) => (
-            <span key={m.id} className={`text-[11px] px-2 py-0.5 rounded-full bg-muted ${m.soldOut ? "text-primary line-through" : "text-muted-foreground"}`}>
-              {menuName(lang, m)}
+          {linked.map((l) => (
+            <span key={l.key} className={`text-[11px] px-2 py-0.5 rounded-full bg-muted ${l.soldOut ? "text-primary line-through" : "text-muted-foreground"}`}>
+              {l.text}
             </span>
           ))}
         </div>
@@ -254,7 +283,8 @@ function SetRemainingModal({ lang, prep, onCancel, onConfirm }: {
   );
 }
 
-// หน้าต่างแก้ของเตรียม: ชื่อ / จำนวน / เตือน + ติ๊กเมนูที่ผูก (แบ่งตามหมวด ค้นหาได้)
+// หน้าต่างแก้ของเตรียม: ชื่อ / จำนวน / เตือน + ติ๊กที่ผูก (แบ่งตามหมวด ค้นหาได้)
+// ติ๊กช่องหน้าชื่อ = ทั้งเมนู (ทุกจานหัก) | กด "ตัวเลือก" แล้วติ๊กตัวเลือก = หักเฉพาะจานที่ลูกค้าเลือกตัวนั้น
 function PrepEditModal({ lang, prepId, prep, items, categories, onCancel, onSave, onDelete }: {
   lang: Language;
   prepId: string | null;
@@ -262,7 +292,7 @@ function PrepEditModal({ lang, prepId, prep, items, categories, onCancel, onSave
   items: (MenuItem & { active?: boolean })[];
   categories: Category[];
   onCancel: () => void;
-  onSave: (form: PrepFormValue, menuIds: string[]) => Promise<void>;
+  onSave: (form: PrepFormValue, links: PrepLinks) => Promise<void>;
   onDelete?: () => void;
 }) {
   const en = lang === "en";
@@ -270,16 +300,24 @@ function PrepEditModal({ lang, prepId, prep, items, categories, onCancel, onSave
   const [name, setName] = useState(prep?.name ?? "");
   const [remainingInput, setRemainingInput] = useState(initialRemaining);
   const [alertInput, setAlertInput] = useState(prep?.alertAt !== undefined ? String(prep.alertAt) : "");
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(prepId ? menusUsingPrep(items, prepId).map((m) => m.id) : []));
+  const initialLinks = prepId ? prepLinks(items, prepId) : { menuIds: [], choices: [] };
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialLinks.menuIds));
+  // ตัวเลือกที่ผูก: key = "menuId|groupId:choiceId"
+  const refKey = (menuId: string, groupId: string, choiceId: string) => `${menuId}|${choiceKey(groupId, choiceId)}`;
+  const [selectedChoices, setSelectedChoices] = useState<Set<string>>(
+    () => new Set(initialLinks.choices.map((c) => refKey(c.menuId, c.groupId, c.choiceId))));
+  // เมนูที่กางตัวเลือกอยู่ — เริ่มกางเมนูที่มีตัวเลือกผูกไว้แล้ว
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialLinks.choices.map((c) => c.menuId)));
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const toggle = (id: string) => setSelected((prev) => {
+  const flip = (set: (fn: (prev: Set<string>) => Set<string>) => void, key: string) => set((prev) => {
     const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
+  const toggle = (id: string) => flip(setSelected, id);
 
   const q = search.trim().toLowerCase();
   const matches = (m: MenuItem) => !q || m.name.th.toLowerCase().includes(q) || m.name.en.toLowerCase().includes(q);
@@ -306,7 +344,12 @@ function PrepEditModal({ lang, prepId, prep, items, categories, onCancel, onSave
     setSaving(true);
     setError(null);
     try {
-      await onSave({ name: name.trim(), remaining, alertAt, remainingChanged }, [...selected]);
+      const choices = [...selectedChoices].map((k) => {
+        const [menuId, rest] = [k.slice(0, k.indexOf("|")), k.slice(k.indexOf("|") + 1)];
+        const groupId = rest.slice(0, rest.indexOf(":"));
+        return { menuId, groupId, choiceId: rest.slice(groupId.length + 1) };
+      });
+      await onSave({ name: name.trim(), remaining, alertAt, remainingChanged }, { menuIds: [...selected], choices });
     } catch (err) {
       console.error("save prep failed", err);
       setError(`${en ? "Save failed" : "บันทึกไม่สำเร็จ"} (${errorText(err)})`);
@@ -353,8 +396,12 @@ function PrepEditModal({ lang, prepId, prep, items, categories, onCancel, onSave
         </div>
 
         <div className="px-4 pt-3 flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-foreground">{en ? "Menus using it (1 per plate)" : "เมนูที่ใช้ของเตรียมนี้ (หัก 1 ต่อ 1 จาน)"}</span>
-          <span className="text-xs text-muted-foreground flex-shrink-0">{en ? `${selected.size} selected` : `เลือกแล้ว ${selected.size}`}</span>
+          <span className="text-sm font-semibold text-foreground">
+            {en ? "Used by (1 per plate) — tick a whole menu, or open Options to tick just a choice" : "ใช้กับ (หัก 1 ต่อ 1 จาน) — ติ๊กทั้งเมนู หรือกด \"ตัวเลือก\" แล้วติ๊กเฉพาะตัวเลือก"}
+          </span>
+          <span className="text-xs text-muted-foreground flex-shrink-0">
+            {en ? `${selected.size + selectedChoices.size} selected` : `เลือกแล้ว ${selected.size + selectedChoices.size}`}
+          </span>
         </div>
         <div className="px-4 pt-2">
           <div className="relative">
@@ -369,19 +416,59 @@ function PrepEditModal({ lang, prepId, prep, items, categories, onCancel, onSave
               <div className="text-xs font-semibold text-muted-foreground pt-2 pb-1">{en ? cat.nameEn : cat.nameTh}</div>
               {menus.map((m) => {
                 const on = selected.has(m.id);
+                const groups = (normalizeMenuItem(m).customGroups ?? []).filter((g) => g.choices.length > 0);
+                const open = expanded.has(m.id);
+                const choiceCount = groups.reduce((n, g) => n + g.choices.filter((c) => selectedChoices.has(refKey(m.id, g.id, c.id))).length, 0);
                 return (
-                  <button
-                    key={m.id}
-                    onClick={() => toggle(m.id)}
-                    aria-pressed={on}
-                    className={`w-full min-h-[44px] flex items-center gap-3 px-2 border-b border-border text-left text-sm transition-colors ${on ? "text-foreground" : "text-muted-foreground"}`}
-                  >
-                    <span className={`w-6 h-6 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${on ? "bg-secondary border-secondary text-secondary-foreground" : "border-border"}`}>
-                      {on && <Check size={14} />}
-                    </span>
-                    <span className="flex-1 min-w-0 truncate">{menuName(lang, m)}</span>
-                    {m.active === false && <span className="text-[11px] text-muted-foreground">{en ? "hidden" : "ซ่อน"}</span>}
-                  </button>
+                  <div key={m.id} className="border-b border-border">
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => toggle(m.id)}
+                        aria-pressed={on}
+                        className={`flex-1 min-w-0 min-h-[44px] flex items-center gap-3 px-2 text-left text-sm transition-colors ${on ? "text-foreground" : "text-muted-foreground"}`}
+                      >
+                        <span className={`w-6 h-6 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${on ? "bg-secondary border-secondary text-secondary-foreground" : "border-border"}`}>
+                          {on && <Check size={14} />}
+                        </span>
+                        <span className="flex-1 min-w-0 truncate">{menuName(lang, m)}</span>
+                        {m.active === false && <span className="text-[11px] text-muted-foreground">{en ? "hidden" : "ซ่อน"}</span>}
+                      </button>
+                      {groups.length > 0 && (
+                        <button
+                          onClick={() => flip(setExpanded, m.id)}
+                          aria-expanded={open}
+                          className={`min-h-[40px] px-3 rounded-lg text-xs font-medium flex items-center gap-1 flex-shrink-0 transition-colors ${choiceCount > 0 ? "text-secondary" : "text-muted-foreground"} hover:bg-muted`}
+                        >
+                          {en ? "Options" : "ตัวเลือก"}{choiceCount > 0 ? ` (${choiceCount})` : ""}
+                          <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+                        </button>
+                      )}
+                    </div>
+                    {open && (
+                      <div className="pl-11 pr-2 pb-2.5 space-y-1.5">
+                        {groups.map((g) => (
+                          <div key={g.id} className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] text-muted-foreground mr-0.5">{label(lang, g.nameTh, g.nameEn)}:</span>
+                            {g.choices.map((c) => {
+                              const key = refKey(m.id, g.id, c.id);
+                              const cOn = selectedChoices.has(key);
+                              return (
+                                <button
+                                  key={c.id}
+                                  onClick={() => flip(setSelectedChoices, key)}
+                                  aria-pressed={cOn}
+                                  className={`min-h-[36px] px-3 rounded-full border-2 text-xs font-medium flex items-center gap-1 transition-colors active:scale-95 ${cOn ? "bg-secondary/10 border-secondary text-secondary" : "border-border text-muted-foreground"}`}
+                                >
+                                  {cOn && <Check size={12} />}
+                                  {label(lang, c.labelTh, c.labelEn)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>

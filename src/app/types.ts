@@ -34,6 +34,9 @@ export interface CustomChoice {
   priceDelta: number;
   active?: boolean;   // เลิกใช้แล้ว (ปุ่ม "ซ่อน" เดิม แอปเก่ายังเขียนได้) — false นับเป็น "ปิด" เหมือน soldOut ดู isChoiceClosed
   soldOut?: boolean;  // true = ปิด: ลูกค้ายังเห็นเป็นสีเทา "หมด" เลือกไม่ได้ (ทุกกลุ่ม)
+  // ของเตรียมระดับตัวเลือก (ดู prep.ts) — เลือกตัวเลือกนี้ 1 จาน หักของเตรียมที่ผูกอย่างละ 1
+  prepIds?: string[];
+  soldOutByPrep?: boolean; // true = ระบบปิดตัวเลือกนี้ให้เพราะของเตรียมเหลือ 0 — เติมแล้วเปิดคืนเฉพาะตัวที่มีธงนี้
 }
 export interface CustomGroup {
   id: string;
@@ -128,7 +131,7 @@ export interface MenuItem {
   stockTracked?: boolean;
   // ของเตรียม (สต็อกร่วมหลายเมนู ดู prep.ts) — ไม่มีฟิลด์เหล่านี้ = ไม่ได้ผูก ทำงานเหมือนเดิมทุกอย่าง
   prepIds?: string[];      // stock doc id ของของเตรียมที่เมนูนี้ใช้ (หัก 1 ต่อ 1 ที่สั่ง)
-  prepTracked?: boolean;   // true = ผูกไว้ และระบบสต็อกเปิดอยู่ → เครื่องลูกค้าตัดของเตรียมด้วย
+  prepTracked?: boolean;   // true = ผูกไว้ (ทั้งเมนู หรือตัวเลือกใดตัวเลือกหนึ่ง) และระบบสต็อกเปิดอยู่ → เครื่องลูกค้าตัดของเตรียมด้วย
   soldOutByPrep?: boolean; // true = ระบบกด "หมด" ให้เพราะของเตรียมเหลือ 0 — เติมแล้วเปิดขายคืนเฉพาะเมนูที่มีธงนี้
 }
 

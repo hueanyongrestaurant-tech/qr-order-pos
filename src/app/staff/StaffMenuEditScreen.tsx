@@ -432,6 +432,43 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
                         >
                           <X size={14} />
                         </button>
+                        {/* ของเตรียมของตัวเลือกนี้ — เลือกตัวนี้ 1 จาน หักอย่างละ 1 (บันทึกพร้อมปุ่มบันทึก) */}
+                        {sortedPreps.length > 0 && (
+                          <div className="col-[2/-1] flex flex-wrap items-center gap-1.5">
+                            {(choice.prepIds ?? []).map((pid) => (
+                              <button
+                                key={pid}
+                                onClick={() => {
+                                  const ids = (choice.prepIds ?? []).filter((p) => p !== pid);
+                                  const { prepIds: _old, ...rest } = choice;
+                                  patchGroup(gIdx, { choices: group.choices.map((c, i) => (i === cIdx ? (ids.length > 0 ? { ...rest, prepIds: ids } : rest) : c)) });
+                                }}
+                                className="min-h-[32px] px-2.5 rounded-full border border-secondary/40 bg-secondary/10 text-secondary text-[11px] font-medium flex items-center gap-1"
+                                aria-label={en ? `Unlink ${prepMap.get(pid)?.name ?? ""}` : `ถอด ${prepMap.get(pid)?.name ?? ""}`}
+                              >
+                                {prepMap.get(pid)?.name ?? (en ? "(deleted)" : "(ถูกลบ)")}
+                                <span className="tabular-nums opacity-80">· {prepMap.get(pid)?.remaining ?? (en ? "∞" : "ไม่จำกัด")}</span>
+                                <X size={12} />
+                              </button>
+                            ))}
+                            {sortedPreps.some(([pid]) => !(choice.prepIds ?? []).includes(pid)) && (
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  if (!e.target.value) return;
+                                  patchChoice({ prepIds: [...(choice.prepIds ?? []), e.target.value] });
+                                }}
+                                className="min-h-[32px] bg-background border border-dashed border-border rounded-full px-2.5 text-[11px] text-muted-foreground outline-none"
+                                aria-label={en ? "Link a prepared item" : "ผูกของเตรียม"}
+                              >
+                                <option value="">{en ? "+ prepared item" : "+ ของเตรียม"}</option>
+                                {sortedPreps.filter(([pid]) => !(choice.prepIds ?? []).includes(pid)).map(([pid, p]) => (
+                                  <option key={pid} value={pid}>{p.name}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
                         {pendingSwitches.has(`${group.id}:${choice.id}`) && (
                           <span className="col-start-2 col-span-3 sm:col-span-4 text-[10px] text-muted-foreground">
                             {en ? "New option — takes effect when you Save" : "ตัวเลือกใหม่ — มีผลเมื่อกดบันทึก"}

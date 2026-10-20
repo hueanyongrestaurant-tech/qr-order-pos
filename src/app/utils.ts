@@ -34,12 +34,16 @@ export function isCartItemUnavailable(ci: CartItem, fresh: MenuItem): boolean {
 // สถานะการขายต้องเอาจากค่าล่าสุดใน Firestore (prev) ไม่ใช่จาก form ที่ copy ไว้ตอนเปิดหน้าแก้ — ไม่งั้นแก้ชื่อ/ราคาแล้ว
 // เมนูหรือตัวเลือกที่ "หมด/ปิด" อยู่จะกลับมาขาย หรือทับสถานะที่เครื่องอื่นเพิ่งเปลี่ยนระหว่างที่เปิดหน้าแก้ค้างไว้
 // • เมนู: active / soldOut จาก prev (เมนูใหม่ = ขายปกติ)
-// • ตัวเลือก: ตัวที่มีอยู่แล้วใน prev (id กลุ่ม+ตัวเลือก ตรงกัน) เอา เปิด/ปิด จาก prev — สวิตช์ในหน้าแก้เขียนลง DB ทันทีอยู่แล้ว
+// • ตัวเลือก: ตัวที่มีอยู่แล้วใน prev (id กลุ่ม+ตัวเลือก ตรงกัน) เอา เปิด/ปิด (+ ธง soldOutByPrep) จาก prev — สวิตช์ในหน้าแก้เขียนลง DB ทันทีอยู่แล้ว
 //   ตัวที่เพิ่มใหม่ใน form (ยังไม่มีใน DB) เอาจาก form
 // • แนะนำ (recommended / recommendedOrder): จาก prev เหมือนกัน — ตั้งจากปุ่มดาวในหน้าจัดการเมนูเท่านั้น
 export function withLiveAvailability(item: MenuItem, prev: MenuItem | undefined): MenuItem {
   const liveChoices = new Map<string, boolean>();
-  prev?.customGroups?.forEach((g) => g.choices.forEach((c) => liveChoices.set(`${g.id}:${c.id}`, isChoiceClosed(c))));
+  const byPrep = new Set<string>(); // ตัวเลือกที่ระบบปิดเพราะของเตรียม (ธงจากค่าล่าสุด ไม่ใช่จาก form)
+  prev?.customGroups?.forEach((g) => g.choices.forEach((c) => {
+    liveChoices.set(`${g.id}:${c.id}`, isChoiceClosed(c));
+    if (c.soldOutByPrep) byPrep.add(`${g.id}:${c.id}`);
+  }));
   const { recommended: _staleRecommended, recommendedOrder: _staleRecommendedOrder, soldOutMeats: _staleSoldOutMeats, ...rest } = item;
   return {
     ...rest,
@@ -52,9 +56,10 @@ export function withLiveAvailability(item: MenuItem, prev: MenuItem | undefined)
       ? {
         customGroups: item.customGroups.map((g) => ({
           ...g,
-          choices: g.choices.map(({ soldOut: formSoldOut, active: _active, ...c }) => {
-            const closed = liveChoices.get(`${g.id}:${c.id}`) ?? !!formSoldOut;
-            return closed ? { ...c, soldOut: true } : c;
+          choices: g.choices.map(({ soldOut: formSoldOut, active: _active, soldOutByPrep: _staleByPrep, ...c }) => {
+            const key = `${g.id}:${c.id}`;
+            const closed = liveChoices.get(key) ?? !!formSoldOut;
+            return closed ? { ...c, soldOut: true, ...(byPrep.has(key) ? { soldOutByPrep: true } : {}) } : c;
           }),
         })),
       }
