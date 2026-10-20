@@ -5,6 +5,7 @@ import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } fr
 import { T } from "../translations";
 import { compareTables, formatClock, lineServedQty, liveItems, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
+import type { StockAlert } from "../prep";
 
 // แถบย้อนกลับค้างไว้ 10 วิ หลังกดเสิร์ฟ/พร้อมรับ/ยกเลิกรายการ
 const UNDO_MS = 10000;
@@ -59,8 +60,8 @@ interface StaffOrdersProps {
   onStartManualOrder: () => void;
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
-  // เมนูที่สต็อกใกล้หมด (≤ ที่ตั้งเตือนไว้) หรือติดลบ — App คำนวณจาก stock/* ให้ ว่าง = ไม่ขึ้นแถบ
-  stockAlerts: { id: string; name: string; remaining: number }[];
+  // แถบเตือนสต็อก: หมดแล้ว (สต็อกเมนู/ของเตรียม ≤ 0) + ใกล้หมด — App คำนวณให้ (buildStockAlerts) ว่างทั้งคู่ = ไม่ขึ้นแถบ
+  stockAlerts: { out: StockAlert[]; low: StockAlert[] };
 }
 
 export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories, stockAlerts }: StaffOrdersProps) {
@@ -462,19 +463,48 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
           style={{ scrollbarWidth: "none" }}
         >
 
-          {stockAlerts.length > 0 && (
-            <div role="status" className="mb-4 px-3 py-2.5 rounded-xl border border-[#D07E35]/40 bg-[#D07E35]/10 text-sm">
-              <div className="font-semibold text-foreground mb-1">{lang === "en" ? "Running low" : "สต็อกใกล้หมด"}</div>
-              <div className="flex flex-wrap gap-1.5">
-                {stockAlerts.map((a) => (
-                  <span
-                    key={a.id}
-                    className={`px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums ${a.remaining < 0 ? "bg-destructive text-destructive-foreground" : "bg-card text-foreground border border-border"}`}
-                  >
-                    {a.name} · {lang === "en" ? "left" : "เหลือ"} {a.remaining}
+          {/* แถบเตือนสต็อก (เฉพาะพนักงาน): หมดแล้ว (แดง) อยู่บน ใกล้หมด (ส้ม) อยู่ล่าง — ระบบสต็อกปิด = ไม่มีแถบ */}
+          {(stockAlerts.out.length > 0 || stockAlerts.low.length > 0) && (
+            <div role="status" className="mb-4 rounded-xl border border-border bg-card text-sm divide-y divide-border overflow-hidden">
+              {stockAlerts.out.length > 0 && (
+                <div className="px-3 py-2.5 flex items-start gap-2 bg-destructive/10">
+                  <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-bold bg-destructive text-destructive-foreground">
+                    {lang === "en" ? "Sold out" : "หมดแล้ว"}
                   </span>
-                ))}
-              </div>
+                  <div className="flex-1 min-w-0 flex flex-wrap gap-x-3 gap-y-1 leading-6">
+                    {stockAlerts.out.map((a) => (
+                      <span key={a.id} className="font-semibold text-foreground">
+                        {a.name}
+                        {(a.remaining < 0 || !!a.menuCount) && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground tabular-nums">
+                            {[
+                              a.menuCount ? (lang === "en" ? `${a.menuCount} menus` : `${a.menuCount} เมนู`) : "",
+                              a.remaining < 0 ? (lang === "en" ? `over ${-a.remaining}` : `เกิน ${-a.remaining}`) : "",
+                            ].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {stockAlerts.low.length > 0 && (
+                <div className="px-3 py-2.5 flex items-start gap-2 bg-[#D07E35]/10">
+                  <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-bold bg-[#D07E35] text-white">
+                    {lang === "en" ? "Running low" : "ใกล้หมด"}
+                  </span>
+                  <div className="flex-1 min-w-0 flex flex-wrap gap-x-3 gap-y-1 leading-6">
+                    {stockAlerts.low.map((a) => (
+                      <span key={a.id} className="text-foreground">
+                        {a.name}
+                        <span className="ml-1 text-xs font-semibold text-[#a3561b] tabular-nums">
+                          {lang === "en" ? `${a.remaining} left` : `เหลือ ${a.remaining}`}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

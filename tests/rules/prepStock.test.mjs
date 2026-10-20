@@ -8,7 +8,7 @@ import { setTestDb } from "./shim/firebase.mjs";
 import { createOrderTakingStock, runStockTransaction, StockShortError } from "../../src/app/stockStore";
 import { stockNeeds } from "../../src/app/stock";
 import {
-  guestStockDocIds, isPrepId, prepIsOut, prepSoldOutChanges, prepTrackedFor, staffStockDocIds,
+  buildStockAlerts, guestStockDocIds, isPrepId, prepIsOut, prepSoldOutChanges, prepTrackedFor, staffStockDocIds,
 } from "../../src/app/prep";
 
 const menu = (id, extra = {}) => ({ id, categoryId: "c", name: { th: id, en: id }, description: { th: "", en: "" }, photo: "", price: 50, ...extra });
@@ -97,6 +97,29 @@ test("prepSoldOutChanges: prep made unlimited / deleted / unlinked → flagged m
   assert.deepEqual(prepSoldOutChanges([flagged(["prep_x"])], new Map(), new Map([["prep_x", { name: "X" }]])).reopen, ["a"]);
   assert.deepEqual(prepSoldOutChanges([flagged(["prep_x"])], new Map(), new Map()).reopen, ["a"]);
   assert.deepEqual(prepSoldOutChanges([flagged(undefined)], new Map(), new Map()).reopen, ["a"]);
+});
+
+test("buildStockAlerts: sold out (menu stock or prep at ≤ 0) apart from running low; manual sold-out not listed", () => {
+  const menus = [
+    menu("soup", { stockTracked: true, soldOut: true }),
+    menu("rice", { stockTracked: true }),
+    menu("manual", { soldOut: true }),                           // pressed หมด by hand, no stock → not listed
+    menu("hiddenOut", { stockTracked: true, active: false }),
+    menu("a", { prepIds: ["prep_x"] }), menu("b", { prepIds: ["prep_x"] }),
+    menu("c", { prepIds: ["prep_low"] }),
+  ];
+  const stockMap = new Map([
+    ["soup", { remaining: 0 }], ["rice", { remaining: 2, alertAt: 3 }], ["hiddenOut", { remaining: 0 }], ["deleted", { remaining: 0 }],
+  ]);
+  const prepMap = new Map([
+    ["prep_x", { name: "X", remaining: -1 }], ["prep_low", { name: "L", remaining: 1, alertAt: 1 }],
+    ["prep_free", { name: "F" }], ["prep_unused", { name: "U", remaining: 0 }],
+  ]);
+  const { out, low } = buildStockAlerts(true, menus, stockMap, prepMap, (m) => m.name.th);
+  assert.deepEqual(out, [{ id: "soup", name: "soup", remaining: 0 }, { id: "prep_x", name: "X", remaining: -1, menuCount: 2 }]
+    .sort((p, q) => p.name.localeCompare(q.name, "th")));
+  assert.deepEqual(low, [{ id: "prep_low", name: "L", remaining: 1, menuCount: 1 }, { id: "rice", name: "rice", remaining: 2 }]);
+  assert.deepEqual(buildStockAlerts(false, menus, stockMap, prepMap, (m) => m.name.th), { out: [], low: [] }, "stock switch off → no bar");
 });
 
 // ─── emulator: ตัดของเตรียมจริงด้วย firestore.rules ของจริง (ไม่แตะ production) ───

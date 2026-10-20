@@ -44,11 +44,11 @@ import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
 import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, increment, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
-import { shouldTrackStock, soldOutAfterStockSet, stockLevel, stockNeeds, type StockEntry } from "./stock";
+import { shouldTrackStock, soldOutAfterStockSet, stockNeeds, type StockEntry } from "./stock";
 import type { StockFormValue } from "./staff/StaffMenuEditScreen";
 import { createOrderTakingStock, runStockTransaction, STOCK_CONFIG_REF, StockShortError } from "./stockStore";
 import {
-  guestStockDocIds, isPrepId, menusUsingPrep, prepIsOut, prepSoldOutChanges, prepTrackedFor, staffStockDocIds, PREP_ID_PREFIX, type PrepEntry,
+  buildStockAlerts, guestStockDocIds, isPrepId, menusUsingPrep, prepIsOut, prepSoldOutChanges, prepTrackedFor, staffStockDocIds, PREP_ID_PREFIX, type PrepEntry,
 } from "./prep";
 
 import type {
@@ -1738,19 +1738,9 @@ export default function App() {
     }
   };
 
-  // แถบเตือนหน้าออเดอร์: ใกล้หมด (≤ ที่ตั้งไว้ ยังไม่ถึง 0) และติดลบ — ที่เหลือ 0 พอดีขึ้น "หมด" ที่เมนูอยู่แล้ว
-  const stockAlerts = !stockEnabled ? [] : [...stockMap]
-    .filter(([, e]) => { const lv = stockLevel(e); return lv === "low" || lv === "negative"; })
-    .map(([id, e]) => {
-      const m = allMenuItems.find((x) => x.id === id);
-      return { id, name: m ? (lang === "en" ? m.name.en || m.name.th : m.name.th) : id, remaining: e.remaining };
-    })
-    .concat([...prepMap].flatMap(([id, p]) => {
-      if (p.remaining === undefined) return [];
-      const lv = stockLevel({ remaining: p.remaining, alertAt: p.alertAt });
-      return lv === "low" || lv === "negative" ? [{ id, name: p.name, remaining: p.remaining }] : [];
-    }))
-    .sort((a, b) => a.remaining - b.remaining);
+  // แถบเตือนหน้าออเดอร์: หมดแล้ว (สต็อกเมนู/ของเตรียมเหลือ ≤ 0) + ใกล้หมด — ดู buildStockAlerts ใน prep.ts
+  const stockAlerts = buildStockAlerts(stockEnabled, allMenuItems, stockMap, prepMap,
+    (m) => (lang === "en" ? m.name.en || m.name.th : m.name.th));
 
   // ยอดบิลที่พนักงานเห็น ณ ตอนกด — โต๊ะ = รวมทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) / กลับบ้าน = ใบเดียว
   // ใช้บันทึก "ยอดบิลเดิม → ใหม่" ลง log ของการยกเลิก/ปรับจำนวน

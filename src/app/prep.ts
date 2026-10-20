@@ -55,6 +55,46 @@ export function prepTrackedFor(enabled: boolean, prepIds: string[] | undefined):
   return enabled && (prepIds?.length ?? 0) > 0;
 }
 
+export interface StockAlert {
+  id: string;
+  name: string;
+  remaining: number;
+  menuCount?: number; // ของเตรียม: จำนวนเมนูที่ขายอยู่ซึ่งผูกไว้ (หมดตามไปด้วย)
+}
+
+// แถบเตือนหน้าออเดอร์ (เฉพาะพนักงาน ระบบสต็อกปิด = ว่าง):
+// • out = หมดเพราะสต็อก — สต็อกของเมนูเหลือ ≤ 0 หรือของเตรียมเหลือ ≤ 0 (แสดงชื่อของเตรียม ไม่ไล่ทุกเมนูที่ผูก)
+// • low = ใกล้หมด (≤ ที่ตั้งเตือน ยังไม่ถึง 0)
+// เมนูที่พนักงานกด "หมด" เองไม่มาจากสต็อก จึงไม่อยู่ในนี้ | เมนูที่ซ่อน/ลบไปแล้ว และของเตรียมที่ไม่มีเมนูขายอยู่ผูกไว้ ไม่แสดง
+export function buildStockAlerts(
+  enabled: boolean,
+  menus: MenuItem[],
+  stockMap: Map<string, StockEntry>,
+  prepMap: Map<string, PrepEntry>,
+  nameOf: (m: MenuItem) => string,
+): { out: StockAlert[]; low: StockAlert[] } {
+  const out: StockAlert[] = [];
+  const low: StockAlert[] = [];
+  if (!enabled) return { out, low };
+  const add = (alert: StockAlert, alertAt: number | undefined) => {
+    if (alert.remaining <= 0) out.push(alert);
+    else if (alertAt !== undefined && alert.remaining <= alertAt) low.push(alert);
+  };
+  stockMap.forEach((entry, id) => {
+    const m = menus.find((x) => x.id === id);
+    if (!m || m.active === false) return;
+    add({ id, name: nameOf(m), remaining: entry.remaining }, entry.alertAt);
+  });
+  prepMap.forEach((prep, id) => {
+    if (prep.remaining === undefined) return;
+    const menuCount = menusUsingPrep(menus, id).filter((m) => m.active !== false).length;
+    if (menuCount === 0) return;
+    add({ id, name: prep.name, remaining: prep.remaining, menuCount }, prep.alertAt);
+  });
+  const byName = (a: StockAlert, b: StockAlert) => a.name.localeCompare(b.name, "th");
+  return { out: out.sort(byName), low: low.sort((a, b) => a.remaining - b.remaining || byName(a, b)) };
+}
+
 // เมนูที่ต้องกด "หมด" / เปิดขายคืน ตามของเตรียมตอนนี้ (เครื่องพนักงานทำแทนลูกค้าที่เขียน menuItems ไม่ได้)
 // • close: ผูกของเตรียมที่หมดอยู่ และเมนูยังขายอยู่ → หมด + ติดธง soldOutByPrep
 // • reopen: มีธง soldOutByPrep และของเตรียมที่ผูกไม่หมดแล้วสักตัว (เติมแล้ว/ไม่จำกัด/ลบ/ถอดออก)
