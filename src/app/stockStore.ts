@@ -7,6 +7,7 @@
 import { doc, runTransaction, type DocumentReference, type Transaction } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { planStockTake } from "./stock";
+import { isPrepId } from "./prep";
 
 export const stockDocRef = (itemId: string) => doc(db, "stock", itemId);
 // สวิตช์ปิดระบบสต็อกทั้งร้าน { enabled: boolean } — ไม่มี doc = เปิด
@@ -50,7 +51,8 @@ export async function readStock(tx: Transaction, itemIds: Iterable<string>): Pro
 
 // สร้างออเดอร์ + ตัดสต็อกใน transaction ที่ผู้เรียกเปิดไว้ (อ่านทั้งหมดก่อนเขียนตามกติกา transaction)
 // prepare: อ่านอย่างอื่นเพิ่มก่อนเขียน (เช่นตัวนับคิวกลับบ้าน) คืน field ที่จะใส่ในออเดอร์ + ฟังก์ชันเขียนของมัน
-// guest = ลูกค้า (ไม่ได้ล็อกอิน) → ห้ามแตะ menuItems; พนักงานกดหมดให้ทันทีในรอบเดียวกันเมื่อเหลือ 0
+// guest = ลูกค้า (ไม่ได้ล็อกอิน) → ห้ามแตะ menuItems; พนักงานกดหมดให้ทันทีในรอบเดียวกันเมื่อสต็อกของเมนูเหลือ 0
+// needs มีของเตรียม (stock/prep_*) ปนได้ — ตัดเหมือนกัน แต่เมนูที่ผูกไว้ให้ effect ในเครื่องพนักงานกดหมด (ต้องติดธง soldOutByPrep)
 export async function createOrderTakingStock(
   tx: Transaction,
   opts: {
@@ -71,7 +73,7 @@ export async function createOrderTakingStock(
     tx.update(stockDocRef(id), { remaining, lastOrderId: opts.orderRef.id });
   });
   if (!opts.guest) {
-    plan.soldOutIds.forEach((id) => tx.update(doc(db, "menuItems", id), { soldOut: true }));
+    plan.soldOutIds.filter((id) => !isPrepId(id)).forEach((id) => tx.update(doc(db, "menuItems", id), { soldOut: true }));
   }
   return { remaining: plan.updates, soldOutIds: plan.soldOutIds };
 }

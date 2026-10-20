@@ -41,12 +41,15 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
-import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
+import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, increment, deleteField, FieldPath, type Transaction, type DocumentReference } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
 import { shouldTrackStock, soldOutAfterStockSet, stockLevel, stockNeeds, type StockEntry } from "./stock";
 import type { StockFormValue } from "./staff/StaffMenuEditScreen";
 import { createOrderTakingStock, runStockTransaction, STOCK_CONFIG_REF, StockShortError } from "./stockStore";
+import {
+  guestStockDocIds, isPrepId, menusUsingPrep, prepIsOut, prepSoldOutChanges, prepTrackedFor, staffStockDocIds, PREP_ID_PREFIX, type PrepEntry,
+} from "./prep";
 
 import type {
   Language,
@@ -604,18 +607,34 @@ export default function App() {
 
   // ─── สต็อก (ฝั่งพนักงานที่ล็อกอินแล้ว) — ดู stock.ts / stockStore.ts ───
   // stockMap = stock/* ทั้งหมด (เฉพาะเมนูที่ตั้งจำนวนไว้ มีไม่กี่ doc) | stockEnabled = สวิตช์ทั้งร้าน (ไม่มี doc = เปิด)
+  // prepMap = ของเตรียม (stock/prep_* อยู่ใน listener เดียวกัน ไม่อ่านเพิ่ม — ดู prep.ts)
+  // stockSynced = ได้ข้อมูล stock จาก server แล้ว — กันเปิดขายคืนผิดๆ ตอนเพิ่งเปิดแอปแล้ว cache ยังว่าง
   const [stockMap, setStockMap] = useState<Map<string, StockEntry>>(new Map());
+  const [prepMap, setPrepMap] = useState<Map<string, PrepEntry>>(new Map());
+  const [stockSynced, setStockSynced] = useState(false);
   const [stockEnabled, setStockEnabled] = useState(true);
   useEffect(() => {
     if (getTableFromUrl() !== null || !everAuthed) return;
     const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
       const next = new Map<string, StockEntry>();
+      const nextPreps = new Map<string, PrepEntry>();
       snapshot.docs.forEach((d) => {
         const data = d.data();
+        const alertAt = typeof data.alertAt === "number" ? { alertAt: data.alertAt } : {};
+        if (isPrepId(d.id)) {
+          nextPreps.set(d.id, {
+            name: typeof data.name === "string" ? data.name : "",
+            ...(typeof data.remaining === "number" ? { remaining: data.remaining } : {}),
+            ...alertAt,
+          });
+          return;
+        }
         if (typeof data.remaining !== "number") return;
-        next.set(d.id, { remaining: data.remaining, ...(typeof data.alertAt === "number" ? { alertAt: data.alertAt } : {}) });
+        next.set(d.id, { remaining: data.remaining, ...alertAt });
       });
       setStockMap(next);
+      setPrepMap(nextPreps);
+      if (!snapshot.metadata.fromCache) setStockSynced(true);
     });
     const unsubConfig = onSnapshot(STOCK_CONFIG_REF(), (snap) => setStockEnabled(snap.data()?.enabled !== false));
     return () => { unsubStock(); unsubConfig(); };
@@ -636,6 +655,23 @@ export default function App() {
         .finally(() => autoSoldOutPendingRef.current.delete(m.id));
     });
   }, [stockMap, allMenuItems, stockEnabled, staffLoggedIn]);
+
+  // ของเตรียมเหลือ ≤ 0 → กด "หมด" ทุกเมนูที่ผูก (ติดธง soldOutByPrep) | เติม/ไม่จำกัด/ลบ/ถอดแล้ว → เปิดขายคืนเฉพาะเมนูที่มีธง
+  // (เมนูที่พนักงานกดหมดเองไม่มีธง หมดต่อไป) รอข้อมูล stock และเมนูจาก server ก่อน ไม่งั้น cache ว่างทำให้เปิดขายคืนผิด
+  const prepSoldOutPendingRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !staffLoggedIn || !stockEnabled || !stockSynced || !staffMenuSynced) return;
+    const { close, reopen } = prepSoldOutChanges(allMenuItems, stockMap, prepMap);
+    const write = (id: string, patch: Record<string, unknown>) => {
+      if (prepSoldOutPendingRef.current.has(id)) return;
+      prepSoldOutPendingRef.current.add(id);
+      updateDoc(doc(db, "menuItems", id), patch)
+        .catch((err) => console.error("prep sold-out sync failed", err))
+        .finally(() => prepSoldOutPendingRef.current.delete(id));
+    };
+    close.forEach((id) => write(id, { soldOut: true, soldOutByPrep: true }));
+    reopen.forEach((id) => write(id, { soldOut: false, soldOutByPrep: deleteField() }));
+  }, [stockMap, prepMap, allMenuItems, stockEnabled, stockSynced, staffMenuSynced, staffLoggedIn]);
 
   // ฝั่งลูกค้า (มี ?table=): cache categories+menuItems ใน localStorage แทน realtime listener
   // ลด Firestore reads ต่อการเปิด/รีเฟรชหน้าเมนู 1 ครั้ง (ก่อนหน้านี้ทุกครั้งที่เปิดหน้า = subscribe
@@ -1233,12 +1269,21 @@ export default function App() {
   };
 
   // ตัดสต็อกไม่ผ่าน: เหลือ 0 = ป้าย "หมด" (+ ทำเมนูในเครื่องเป็นหมดทันที) / ยังเหลือแต่ไม่พอ = ป้าย "เหลือไม่พอ"
-  const showStockShort = (items: CartItem[], err: StockShortError) => {
+  // shortIds เป็น stock doc (สต็อกของเมนู หรือของเตรียม) — บรรทัดที่ใช้ doc นั้นโดนทุกบรรทัด (docIdsOf ตัวเดียวกับตอนคิด needs)
+  const showStockShort = (items: CartItem[], err: StockShortError, docIdsOf: (itemId: string) => string[]) => {
     const outIds = err.shortIds.filter((id) => (err.current.get(id) ?? 0) <= 0);
     const lowIds = err.shortIds.filter((id) => !outIds.includes(id));
-    setCartUnavailableCartIds(items.filter((ci) => outIds.includes(ci.item.id)).map((ci) => ci.cartId));
-    setCartShortCartIds(items.filter((ci) => lowIds.includes(ci.item.id)).map((ci) => ci.cartId));
-    if (outIds.length > 0) patchLocalMenu(new Map(outIds.map((id) => [id, { soldOut: true }])));
+    const uses = (ci: CartItem, ids: string[]) => docIdsOf(ci.item.id).some((d) => ids.includes(d));
+    const outLines = items.filter((ci) => uses(ci, outIds));
+    setCartUnavailableCartIds(outLines.map((ci) => ci.cartId));
+    setCartShortCartIds(items.filter((ci) => !uses(ci, outIds) && uses(ci, lowIds)).map((ci) => ci.cartId));
+    if (outLines.length > 0) patchLocalMenu(new Map(outLines.map((ci) => [ci.item.id, { soldOut: true }])));
+  };
+  // ตัดสำเร็จแล้วมี doc เหลือ 0 → เมนูในเครื่องที่ใช้ doc นั้นเป็นหมดทันที (ไม่ต้องรอ cache/เครื่องพนักงาน)
+  const patchSoldOutAfterTake = (soldOutIds: string[], docIdsOf: (itemId: string) => string[]) => {
+    if (soldOutIds.length === 0) return;
+    const ids = allMenuItems.filter((m) => docIdsOf(m.id).some((d) => soldOutIds.includes(d))).map((m) => m.id);
+    patchLocalMenu(new Map(ids.map((id) => [id, { soldOut: true }])));
   };
 
   // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 3 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
@@ -1299,11 +1344,13 @@ export default function App() {
       const orderRef = doc(db, "orders", attempt.id);
       const orderData = { tableNumber, items: cleanItems, status: "in-progress", createdAt: serverTimestamp() };
       // เมนูติดสต็อกดูจากข้อมูลล่าสุดที่เพิ่งเช็ค (ไม่ได้ = จากเมนูในเครื่อง) — ไม่มีเลย = ส่งแบบเดิมทุกอย่าง
-      const needs = stockNeeds(cart, (id) => (fresh.get(id) ?? allMenuItems.find((m) => m.id === id))?.stockTracked === true);
+      // ของเตรียมที่ผูกไว้ (prepTracked) ตัดใน transaction เดียวกัน — ดู prep.ts
+      const docIdsOf = (id: string) => guestStockDocIds(fresh.get(id) ?? allMenuItems.find((m) => m.id === id));
+      const needs = stockNeeds(cart, docIdsOf);
       const writing: Promise<unknown> = needs.size === 0
         ? setDoc(orderRef, orderData)
         : runStockTransaction((tx) => createOrderTakingStock(tx, { orderRef, orderData, needs, guest: true }))
-          .then((r) => { if (r.soldOutIds.length > 0) patchLocalMenu(new Map(r.soldOutIds.map((id) => [id, { soldOut: true }]))); });
+          .then((r) => patchSoldOutAfterTake(r.soldOutIds, docIdsOf));
       // หมดเวลาแล้ว SDK ยังพยายามส่งต่อเองเบื้องหลัง — ถ้าส่งถึงทีหลังและตะกร้ายังเหมือนเดิม พาไปหน้าส่งสำเร็จเอง
       writing.then(() => {
         if (orderAttemptRef.current === attempt && orderSignature(cartRef.current) === attempt.signature) finishOrderSent();
@@ -1317,7 +1364,7 @@ export default function App() {
         ]);
       } catch (err: any) {
         if (err instanceof StockShortError) {
-          showStockShort(cart, err);
+          showStockShort(cart, err, docIdsOf);
           return;
         }
         errCode = typeof err?.code === "string" ? err.code : "unknown";
@@ -1427,7 +1474,8 @@ export default function App() {
       if ((await cartHasUnavailableItems(manualCart)).blocked) return;
       const cleanItems = (JSON.parse(JSON.stringify(manualCart)) as CartItem[]).map(stripItemPhoto);
       // มีเมนูติดสต็อก → สร้างออเดอร์ (+ ตัวนับคิวกลับบ้าน) + ตัดสต็อก ใน transaction เดียว
-      const needs = stockNeeds(manualCart, (id) => stockEnabled && stockMap.has(id));
+      const docIdsOf = (id: string) => staffStockDocIds(allMenuItems.find((m) => m.id === id), id, stockEnabled, stockMap, prepMap);
+      const needs = stockNeeds(manualCart, docIdsOf);
       if (needs.size > 0) {
         const orderRef = doc(collection(db, "orders"));
         const counterRef = doc(db, "counters", `takeaway-${getTodayKey()}`);
@@ -1448,7 +1496,7 @@ export default function App() {
               : undefined,
           }));
         } catch (err) {
-          if (err instanceof StockShortError) { showStockShort(manualCart, err); return; }
+          if (err instanceof StockShortError) { showStockShort(manualCart, err, docIdsOf); return; }
           throw err;
         }
       } else if (manualIsTakeaway) {
@@ -1697,6 +1745,11 @@ export default function App() {
       const m = allMenuItems.find((x) => x.id === id);
       return { id, name: m ? (lang === "en" ? m.name.en || m.name.th : m.name.th) : id, remaining: e.remaining };
     })
+    .concat([...prepMap].flatMap(([id, p]) => {
+      if (p.remaining === undefined) return [];
+      const lv = stockLevel({ remaining: p.remaining, alertAt: p.alertAt });
+      return lv === "low" || lv === "negative" ? [{ id, name: p.name, remaining: p.remaining }] : [];
+    }))
     .sort((a, b) => a.remaining - b.remaining);
 
   // ยอดบิลที่พนักงานเห็น ณ ตอนกด — โต๊ะ = รวมทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) / กลับบ้าน = ใบเดียว
@@ -2160,14 +2213,21 @@ export default function App() {
 
     // setDoc เขียนทับทั้ง doc — สถานะการขายทั้งหมด (เมนู + ตัวเลือกเนื้อสัตว์) เอาจากค่าล่าสุด ดู withLiveAvailability
     // สต็อก: เขียนพร้อมเมนูใน batch เดียว — ใส่จำนวนใหม่ = เปิดขาย (0 = หมด) | ลบจำนวนทิ้ง = ไม่จำกัด (สถานะขายคงเดิม)
-    const live = withLiveAvailability(normalizeMenuItem(item), prev);
+    // ของเตรียม: prepIds จากฟอร์ม (แก้ที่แท็บสต็อก) | ธง soldOutByPrep จากค่าล่าสุด เก็บไว้เฉพาะตอนยังหมดอยู่
+    // ไม่ได้ผูกอะไร = ไม่ใส่ฟิลด์ของเตรียมเลย (เมนูเดิมหน้าตาเหมือนเดิม)
+    const { prepIds: formPrepIds, prepTracked: _stalePrepTracked, soldOutByPrep: _staleSoldOutByPrep, ...live } =
+      withLiveAvailability(normalizeMenuItem(item), prev);
+    const prepIds = (formPrepIds ?? []).filter((p) => prepMap.has(p));
     const { remaining, alertAt, remainingChanged } = stockForm;
+    const soldOut = remainingChanged && remaining !== null ? soldOutAfterStockSet(remaining) : live.soldOut;
     const batch = writeBatch(db);
     batch.set(doc(db, "menuItems", item.id), {
       ...live,
       photo,
       stockTracked: shouldTrackStock(stockEnabled, remaining !== null),
-      ...(remainingChanged && remaining !== null ? { soldOut: soldOutAfterStockSet(remaining) } : {}),
+      soldOut,
+      ...(prepIds.length > 0 ? { prepIds, prepTracked: prepTrackedFor(stockEnabled, prepIds) } : {}),
+      ...(soldOut && prev?.soldOutByPrep ? { soldOutByPrep: true } : {}),
     });
     const stockRef = doc(db, "stock", item.id);
     if (remaining === null) {
@@ -2194,18 +2254,34 @@ export default function App() {
   // เขียนทั้งสองฟิลด์ทุกครั้ง สถานะจะได้ไม่ค้างข้ามกัน (เช่นซ่อนเมนูที่หมดอยู่ แล้วเปิดกลับมากลายเป็นหมดเอง)
   // กด "ขาย" ที่เมนูที่สต็อกเหลือ ≤ 0 → เปิดขายทันทีแบบไม่จำกัด (ลบสต็อกทิ้ง) ไม่งั้นจะถูกกดหมดกลับเอง
   // อยากจำกัดจำนวนอีก พนักงานใส่ใหม่ที่หน้าแก้เมนู
+  // ของเตรียมที่ผูกไว้หมดอยู่ (เหลือ ≤ 0) + กด "ขาย" → ของเตรียมนั้นเป็นไม่จำกัด เมนูอื่นที่ระบบกดหมดเพราะมันเปิดขายคืนใน commit เดียวกัน
+  // กดเองทุกแบบ = ลบธง soldOutByPrep (กด "หมด" เอง = หมดจนกว่าพนักงานเปิดเอง ไม่โดนเปิดคืนตอนเติมของเตรียม)
   const handleSetAvailability = async (item: MenuItem, availability: MenuAvailability) => {
     const entry = stockMap.get(item.id);
-    if (availability === "available" && entry && entry.remaining <= 0) {
+    const ownOut = availability === "available" && !!entry && entry.remaining <= 0;
+    const outPreps = availability === "available" ? (item.prepIds ?? []).filter((p) => prepIsOut(prepMap.get(p))) : [];
+    if (ownOut || outPreps.length > 0) {
       const batch = writeBatch(db);
-      batch.delete(doc(db, "stock", item.id));
-      batch.update(doc(db, "menuItems", item.id), { active: true, soldOut: false, stockTracked: false });
+      if (ownOut) batch.delete(doc(db, "stock", item.id));
+      const nextPreps = new Map(prepMap);
+      outPreps.forEach((p) => {
+        batch.update(doc(db, "stock", p), { remaining: deleteField(), alertAt: deleteField() });
+        nextPreps.set(p, { name: prepMap.get(p)?.name ?? "" });
+      });
+      const nextStock = new Map(stockMap);
+      if (ownOut) nextStock.delete(item.id);
+      prepSoldOutChanges(allMenuItems.filter((m) => m.id !== item.id), nextStock, nextPreps).reopen.forEach((id) =>
+        batch.update(doc(db, "menuItems", id), { soldOut: false, soldOutByPrep: deleteField() }));
+      batch.update(doc(db, "menuItems", item.id), {
+        active: true, soldOut: false, soldOutByPrep: deleteField(), ...(ownOut ? { stockTracked: false } : {}),
+      });
       await batch.commit();
       return;
     }
     await updateDoc(doc(db, "menuItems", item.id), {
       active: availability !== "hidden",
       soldOut: availability === "soldOut",
+      ...(item.soldOutByPrep ? { soldOutByPrep: deleteField() } : {}),
     });
   };
 
@@ -2216,7 +2292,67 @@ export default function App() {
     batch.set(STOCK_CONFIG_REF(), { enabled }, { merge: true });
     allMenuItems.forEach((m) => {
       const tracked = shouldTrackStock(enabled, stockMap.has(m.id));
-      if (!!m.stockTracked !== tracked) batch.update(doc(db, "menuItems", m.id), { stockTracked: tracked });
+      const prepTracked = prepTrackedFor(enabled, m.prepIds);
+      const patch: Record<string, boolean> = {};
+      if (!!m.stockTracked !== tracked) patch.stockTracked = tracked;
+      if ((m.prepIds?.length ?? 0) > 0 && !!m.prepTracked !== prepTracked) patch.prepTracked = prepTracked;
+      if (Object.keys(patch).length > 0) batch.update(doc(db, "menuItems", m.id), patch);
+    });
+    await batch.commit();
+  };
+
+  // ─── ของเตรียม (แท็บในหน้าจัดการเมนู) — ดู prep.ts ───
+  // บันทึกจากหน้าต่างแก้: ชื่อ/เตือน/จำนวน (แก้ช่องจำนวนจริงเท่านั้นถึงเขียนทับ — ลูกค้าอาจเพิ่งตัดไประหว่างเปิดค้าง)
+  // + ผูก/ถอดเมนูด้วย arrayUnion/arrayRemove (ไม่ทับการผูกของเตรียมอื่นที่เครื่องอื่นเพิ่งทำ)
+  // เปิดขาย/กดหมดเมนูที่ผูกตามจำนวนใหม่ ให้ effect prepSoldOutChanges ทำต่อ
+  const handleSavePrep = async (
+    prepId: string | null,
+    form: { name: string; remaining: number | null; alertAt: number | null; remainingChanged: boolean },
+    menuIds: string[],
+  ) => {
+    const id = prepId ?? `${PREP_ID_PREFIX}${doc(collection(db, "stock")).id}`;
+    const batch = writeBatch(db);
+    batch.set(doc(db, "stock", id), {
+      kind: "prep",
+      name: form.name,
+      alertAt: form.alertAt ?? deleteField(),
+      ...(form.remainingChanged || !prepId ? { remaining: form.remaining ?? deleteField() } : {}),
+    }, { merge: true });
+    const wanted = new Set(menuIds);
+    allMenuItems.forEach((m) => {
+      const linked = !!m.prepIds?.includes(id);
+      if (linked === wanted.has(m.id)) return;
+      const nextIds = linked ? (m.prepIds ?? []).filter((p) => p !== id) : [...(m.prepIds ?? []), id];
+      batch.update(doc(db, "menuItems", m.id), linked
+        ? nextIds.length > 0
+          ? { prepIds: arrayRemove(id), prepTracked: prepTrackedFor(stockEnabled, nextIds) }
+          : { prepIds: deleteField(), prepTracked: deleteField() }
+        : { prepIds: arrayUnion(id), prepTracked: prepTrackedFor(stockEnabled, nextIds) });
+    });
+    await batch.commit();
+  };
+
+  // ปุ่ม −/+ บนการ์ด: บันทึกทันที (increment = ไม่ชนกับลูกค้าที่ตัดพร้อมกัน) — ลดต่ำกว่า 0 ไม่ได้
+  const handleAdjustPrep = async (prepId: string, delta: 1 | -1) => {
+    const p = prepMap.get(prepId);
+    if (p?.remaining === undefined || (delta < 0 && p.remaining <= 0)) return;
+    await updateDoc(doc(db, "stock", prepId), { remaining: increment(delta) });
+  };
+
+  // ใส่จำนวนใหม่ทั้งก้อน (ผ่านหน้าต่างยืนยันแล้ว) — null = ไม่จำกัด
+  const handleSetPrepRemaining = async (prepId: string, remaining: number | null) => {
+    await updateDoc(doc(db, "stock", prepId), { remaining: remaining ?? deleteField() });
+  };
+
+  // ลบของเตรียม: ถอดออกจากทุกเมนูที่ผูกใน commit เดียวกัน (เมนูที่หมดเพราะมันเปิดขายคืนเองผ่าน effect)
+  const handleDeletePrep = async (prepId: string) => {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, "stock", prepId));
+    menusUsingPrep(allMenuItems, prepId).forEach((m) => {
+      const nextIds = (m.prepIds ?? []).filter((p) => p !== prepId);
+      batch.update(doc(db, "menuItems", m.id), nextIds.length > 0
+        ? { prepIds: arrayRemove(prepId), prepTracked: prepTrackedFor(stockEnabled, nextIds) }
+        : { prepIds: deleteField(), prepTracked: deleteField() });
     });
     await batch.commit();
   };
@@ -2621,6 +2757,11 @@ export default function App() {
             onReorderMenuItems={handleReorderMenuItems}
             scrollTopRef={menuScrollTopRef}
             stockMap={stockMap}
+            prepMap={prepMap}
+            onSavePrep={handleSavePrep}
+            onAdjustPrep={(prepId, delta) => { handleAdjustPrep(prepId, delta).catch((err) => setNotice(String(err?.message || err))); }}
+            onSetPrepRemaining={handleSetPrepRemaining}
+            onDeletePrep={(prepId) => { handleDeletePrep(prepId).catch((err) => setNotice(String(err?.message || err))); }}
             stockEnabled={stockEnabled}
             onSetStockEnabled={(enabled) =>
               askConfirm(
@@ -2646,6 +2787,7 @@ export default function App() {
             onLangToggle={toggleLang}
             categories={categories}
             stock={stockMap.get(editingItem.id)}
+            prepMap={prepMap}
             stockEnabled={stockEnabled}
           />
         </Suspense>

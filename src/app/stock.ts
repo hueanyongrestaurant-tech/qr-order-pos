@@ -14,14 +14,14 @@ export interface StockEntry {
 // ตรงกับ rules: ลูกค้าตัดได้ไม่เกิน 50 ชิ้นต่อเมนูต่อออเดอร์
 export const GUEST_MAX_TAKE_PER_ITEM = 50;
 
-// จำนวนที่ต้องตัดต่อเมนู (รวมทุกบรรทัดของเมนูเดียวกัน ไม่นับบรรทัดที่ยกเลิก) เฉพาะเมนูที่ติดสต็อก
-export function stockNeeds(items: CartItem[], isTracked: (itemId: string) => boolean): Map<string, number> {
+// จำนวนที่ต้องตัดต่อ stock doc (รวมทุกบรรทัดที่ใช้ doc เดียวกัน ไม่นับบรรทัดที่ยกเลิก)
+// docIdsOf = stock doc ที่เมนูนี้ต้องตัด: สต็อกของเมนูเอง (id เมนู) และ/หรือของเตรียมที่ผูกไว้ (ดู prep.ts) — [] = ไม่ตัด
+// เช่น ลาบหมูคั่ว 1 + ข้าวผัดลาบ 1 ที่ผูกของเตรียมเดียวกัน = ของเตรียมนั้นต้องตัด 2
+export function stockNeeds(items: CartItem[], docIdsOf: (itemId: string) => string[]): Map<string, number> {
   const needs = new Map<string, number>();
   items.forEach((ci) => {
     if (ci.voided || ci.quantity <= 0) return;
-    const id = ci.item.id;
-    if (!isTracked(id)) return;
-    needs.set(id, (needs.get(id) ?? 0) + ci.quantity);
+    new Set(docIdsOf(ci.item.id)).forEach((id) => needs.set(id, (needs.get(id) ?? 0) + ci.quantity));
   });
   return needs;
 }

@@ -1,4 +1,4 @@
-// bundle test ที่ใช้โค้ดจริงใน src/ (stockStore, menuOptions, utils) และ scripts/options-migration ให้รันกับ emulator ได้
+// bundle test ที่ใช้โค้ดจริงใน src/ (stockStore, prep, menuOptions, utils) และ scripts/options-migration ให้รันกับ emulator ได้
 // (สลับ src/lib/firebase → shim และให้ firebase/* มาจาก node_modules ของโฟลเดอร์นี้ = instance เดียวกับ test env)
 import { build } from "../../node_modules/esbuild/lib/main.js";
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,7 @@ import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 await build({
-  entryPoints: ["stockStore.test.mjs", "menuOptions.test.mjs", "optionsMigration.test.mjs"].map((f) => path.join(here, f)),
+  entryPoints: ["stockStore.test.mjs", "prepStock.test.mjs", "menuOptions.test.mjs", "optionsMigration.test.mjs"].map((f) => path.join(here, f)),
   outdir: path.join(here, "out"),
   outExtension: { ".js": ".mjs" },
   bundle: true,

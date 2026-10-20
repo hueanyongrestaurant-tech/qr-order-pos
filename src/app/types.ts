@@ -126,6 +126,10 @@ export interface MenuItem {
   soldOut?: boolean; // true = หมด ยังแสดงแต่เป็นสีเทา กดสั่งไม่ได้ (มีผลเฉพาะตอน active ไม่ใช่ false)
   // true = ตั้งจำนวนสต็อกไว้ (stock/{id}) และระบบสต็อกเปิดอยู่ → ส่งออเดอร์แบบ transaction ตัดสต็อก (ดู stock.ts)
   stockTracked?: boolean;
+  // ของเตรียม (สต็อกร่วมหลายเมนู ดู prep.ts) — ไม่มีฟิลด์เหล่านี้ = ไม่ได้ผูก ทำงานเหมือนเดิมทุกอย่าง
+  prepIds?: string[];      // stock doc id ของของเตรียมที่เมนูนี้ใช้ (หัก 1 ต่อ 1 ที่สั่ง)
+  prepTracked?: boolean;   // true = ผูกไว้ และระบบสต็อกเปิดอยู่ → เครื่องลูกค้าตัดของเตรียมด้วย
+  soldOutByPrep?: boolean; // true = ระบบกด "หมด" ให้เพราะของเตรียมเหลือ 0 — เติมแล้วเปิดขายคืนเฉพาะเมนูที่มีธงนี้
 }
 
 export type MenuAvailability = "available" | "soldOut" | "hidden";

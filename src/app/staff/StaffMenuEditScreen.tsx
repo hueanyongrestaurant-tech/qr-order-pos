@@ -6,6 +6,7 @@ import { compressImage, resolvePhoto, uid } from "../utils";
 import { isChoiceClosed, normalizeMenuItem } from "../menuOptions";
 import { LannaBorder } from "../shared";
 import { parseStockInput, stockLevel, type StockEntry } from "../stock";
+import type { PrepEntry } from "../prep";
 
 // ค่าสต็อกจากฟอร์ม — remaining null = ไม่จำกัด | remainingChanged = พนักงานแก้ช่องจำนวนจริง
 // (ไม่แก้ = ไม่เขียนทับ remaining ที่ลูกค้าอาจเพิ่งตัดไประหว่างเปิดหน้านี้ค้างไว้)
@@ -25,6 +26,7 @@ interface StaffMenuEditProps {
   onLangToggle: () => void;
   categories: Category[];
   stock?: StockEntry; // สต็อกปัจจุบันของเมนูนี้ (ไม่มี = ไม่จำกัด)
+  prepMap: Map<string, PrepEntry>; // ของเตรียมทั้งหมด — ติ๊กผูกกับเมนูนี้ได้ในแท็บสต็อก (บันทึกพร้อมปุ่มบันทึก)
   stockEnabled: boolean;
 }
 
@@ -33,7 +35,7 @@ type EditTab = "info" | "stock" | "options";
 const INPUT = "w-full min-w-0 bg-card border-2 border-border rounded-xl px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary";
 const SMALL_INPUT = "w-full min-w-0 bg-background border border-border rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-primary";
 
-export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onCancel, onLangToggle, categories, stock, stockEnabled }: StaffMenuEditProps) {
+export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onCancel, onLangToggle, categories, stock, prepMap, stockEnabled }: StaffMenuEditProps) {
   const t = T[lang];
   const en = lang === "en";
   // ตัวเลือกทั้งหมดอยู่ใน customGroups — เมนูแบบเดิม (ตัวเลือกในตัว) ถูกแปลงเป็นกลุ่มตรงนี้ บันทึกแล้วเป็นแบบใหม่ใน DB เลย
@@ -107,6 +109,10 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
   };
 
   const level = stock ? stockLevel(stock) : null;
+  const prepIds = form.prepIds ?? [];
+  const togglePrep = (id: string) =>
+    update({ prepIds: prepIds.includes(id) ? prepIds.filter((p) => p !== id) : [...prepIds, id] });
+  const sortedPreps = [...prepMap].sort(([, a], [, b]) => a.name.localeCompare(b.name, "th"));
   const tabs: { key: EditTab; label: string; badge?: { text: string; warn?: boolean } }[] = [
     { key: "info", label: en ? "Menu info" : "ข้อมูลเมนู" },
     {
@@ -279,6 +285,41 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
                 : "เว้นว่าง = ไม่จำกัด ตัดทุกครั้งที่สั่ง เหลือ 0 ขึ้น \"หมด\" เอง ใส่จำนวนใหม่ = เปิดขายอีกครั้ง"}
               {!stockEnabled && (en ? " (Stock system is OFF — the number is kept but not used.)" : " (ระบบสต็อกปิดอยู่ — เก็บจำนวนไว้แต่ยังไม่ตัด)")}
             </p>
+
+            {/* ของเตรียมที่เมนูนี้ใช้ — สร้าง/แก้จำนวนที่แท็บ "ของเตรียม" ในหน้าจัดการเมนู */}
+            <div className="mt-6">
+              <label className="text-sm font-semibold text-foreground block mb-1.5">{en ? "Uses prepared items" : "ใช้ของเตรียม"}</label>
+              {sortedPreps.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {en ? "No prepared items yet — add them in Menu → Prepared items." : "ยังไม่มีของเตรียม — เพิ่มได้ที่หน้าจัดการเมนู → แท็บ \"ของเตรียม\""}
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {sortedPreps.map(([id, p]) => {
+                      const on = prepIds.includes(id);
+                      return (
+                        <button
+                          key={id}
+                          onClick={() => togglePrep(id)}
+                          aria-pressed={on}
+                          className={`min-h-[40px] px-3 rounded-full border-2 text-sm font-medium flex items-center gap-1.5 transition-colors active:scale-95 ${on ? "bg-secondary/10 border-secondary text-secondary" : "border-border text-muted-foreground"}`}
+                        >
+                          {on ? <Check size={14} /> : <Plus size={14} />}
+                          {p.name}
+                          <span className="text-[11px] tabular-nums opacity-80">· {p.remaining ?? (en ? "∞" : "ไม่จำกัด")}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    {en
+                      ? "Each plate takes 1 from every ticked item. Sold out when any of them (or this menu's own stock) hits 0."
+                      : "สั่ง 1 จาน หักของเตรียมที่ติ๊กไว้อย่างละ 1 — หมดเมื่ออันใดอันหนึ่ง (หรือสต็อกของเมนูนี้) เหลือ 0"}
+                  </p>
+                </>
+              )}
+            </div>
           </div>
         )}
 

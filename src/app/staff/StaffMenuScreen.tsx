@@ -6,6 +6,8 @@ import { isChoiceClosed, isQuickToggleGroup, requiredGroupAllClosed } from "../m
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
 import { stockLevel, type StockEntry } from "../stock";
+import { prepIsOut, type PrepEntry } from "../prep";
+import { StaffPrepPanel, type PrepFormValue } from "./StaffPrepPanel";
 
 // ─── Drag-to-reorder (mouse + touch via Pointer Events) ──────────────────────
 // เดิมใช้ปุ่มลูกศรขึ้น/ลง เปลี่ยนมาใช้ "จับที่ไอคอน Grip แล้วลาก" แทน
@@ -113,13 +115,24 @@ interface StaffMenuProps {
   stockMap: Map<string, StockEntry>;
   stockEnabled: boolean;
   onSetStockEnabled: (enabled: boolean) => void; // App ถามยืนยันก่อน
+  // แท็บ "ของเตรียม" (ดู StaffPrepPanel / prep.ts)
+  prepMap: Map<string, PrepEntry>;
+  onSavePrep: (prepId: string | null, form: PrepFormValue, menuIds: string[]) => Promise<void>;
+  onAdjustPrep: (prepId: string, delta: 1 | -1) => void;
+  onSetPrepRemaining: (prepId: string, remaining: number | null) => Promise<void>;
+  onDeletePrep: (prepId: string) => void;
 }
+
+// แท็บที่เปิดค้างไว้ — จำข้ามการเข้าไปแก้เมนูแล้วกลับมา (คอมโพเนนต์ถูก mount ใหม่)
+let lastSection: "menu" | "prep" = "menu";
 
 export function StaffMenuScreen({
   lang, items, onAdd, onEdit, onSetAvailability, onSetChoiceClosed, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleRecommended, onReorderRecommended, onReorderCategories, onReorderMenuItems,
-  scrollTopRef, stockMap, stockEnabled, onSetStockEnabled,
+  scrollTopRef, stockMap, stockEnabled, onSetStockEnabled, prepMap, onSavePrep, onAdjustPrep, onSetPrepRemaining, onDeletePrep,
 }: StaffMenuProps) {
   const t = T[lang];
+  const [section, setSectionState] = useState<"menu" | "prep">(lastSection);
+  const setSection = (next: "menu" | "prep") => { lastSection = next; setSectionState(next); };
   const [newCatEn, setNewCatEn] = useState("");
   const [newCatTh, setNewCatTh] = useState("");
 
@@ -151,6 +164,24 @@ export function StaffMenuScreen({
       <StaffHeader lang={lang} activeTab="menu" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="flex gap-1 bg-muted p-1 rounded-2xl mb-4" role="tablist">
+          {([
+            ["menu", lang === "en" ? "Menu" : "เมนู"],
+            ["prep", lang === "en" ? `Prepared items${prepMap.size ? ` (${prepMap.size})` : ""}` : `ของเตรียม${prepMap.size ? ` (${prepMap.size})` : ""}`],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={section === key}
+              onClick={() => setSection(key)}
+              className={`flex-1 min-h-[40px] rounded-xl text-sm font-semibold transition-colors ${section === key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {section === "menu" && (
         <button
           onClick={onAdd}
           className="w-full mb-4 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
@@ -158,6 +189,7 @@ export function StaffMenuScreen({
           <Plus size={16} />
           {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
         </button>
+        )}
 
         {/* สวิตช์ระบบสต็อกทั้งร้าน — ตั้งจำนวนสต็อกที่หน้าแก้เมนู (เว้นว่าง = ไม่จำกัด) */}
         <div className="bg-card border border-border rounded-xl p-3 mb-4 flex items-center gap-3">
@@ -179,6 +211,22 @@ export function StaffMenuScreen({
           </button>
         </div>
 
+        {section === "prep" && (
+          <StaffPrepPanel
+            lang={lang}
+            preps={prepMap}
+            items={items}
+            categories={sortedCategories}
+            stockEnabled={stockEnabled}
+            onSave={onSavePrep}
+            onAdjust={onAdjustPrep}
+            onSetRemaining={onSetPrepRemaining}
+            onDelete={onDeletePrep}
+            onAskConfirm={onAskConfirm}
+          />
+        )}
+
+        {section === "menu" && (<>
         {/* เมนูแนะนำ (แถบแรกของหน้าสั่ง) — ติดดาวที่เมนูด้านล่าง แล้วลาก Grip เรียงลำดับตรงนี้ */}
         <div className="bg-card border border-border rounded-xl p-3 mb-4">
           <h3 className="font-semibold text-foreground text-sm mb-1 flex items-center gap-1.5">
@@ -306,10 +354,12 @@ export function StaffMenuScreen({
               onDelete={onDelete}
               onAskConfirm={onAskConfirm}
               stockMap={stockMap}
+              prepMap={prepMap}
               stockEnabled={stockEnabled}
             />
           );
         })}
+        </>)}
       </div>
     </div>
   );
@@ -339,6 +389,31 @@ function StockBadge({ lang, entry, enabled }: { lang: Language; entry?: StockEnt
   );
 }
 
+// ป้ายของเตรียมที่เมนูนี้ผูกไว้ (ชื่อ + จำนวน) — แดง = หมด (เมนูนี้หมดตามไปด้วย) / ส้ม = ใกล้หมด
+function PrepBadges({ lang, prepIds, prepMap, enabled }: { lang: Language; prepIds?: string[]; prepMap: Map<string, PrepEntry>; enabled: boolean }) {
+  return (
+    <>
+      {(prepIds ?? []).map((id) => {
+        const p = prepMap.get(id);
+        if (!p) return null;
+        const level = p.remaining === undefined ? "ok" : stockLevel({ remaining: p.remaining, alertAt: p.alertAt });
+        const cls = !enabled || p.remaining === undefined
+          ? "bg-muted text-muted-foreground"
+          : prepIsOut(p)
+            ? "bg-destructive text-destructive-foreground"
+            : level === "low"
+              ? "bg-[#D07E35] text-white"
+              : "bg-secondary/15 text-secondary";
+        return (
+          <span key={id} className={`px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums ${cls}`}>
+            {p.name} {p.remaining ?? (lang === "en" ? "∞" : "ไม่จำกัด")}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 // ดาว = อยู่ในแถบ "แนะนำ" — แตะครั้งเดียวสลับ บันทึกทันที (ใช้ทั้งในกล่องเมนูแนะนำและแถวเมนูในหมวด)
 function RecommendedStar({ lang, on, onClick }: { lang: Language; on: boolean; onClick: () => void }) {
   return (
@@ -357,7 +432,7 @@ function RecommendedStar({ lang, on, onClick }: { lang: Language; on: boolean; o
 // เพื่อให้เรียก useDragReorder ได้อย่างถูกต้องตาม Rules of Hooks (1 instance ต่อ 1 หมวดหมู่)
 function CategoryMenuItemsList({
   lang, t, cat, catItems, onReorderMenuItems, onToggleRecommended, onSetAvailability, onSetChoiceClosed, onEdit, onDelete, onAskConfirm,
-  stockMap, stockEnabled,
+  stockMap, prepMap, stockEnabled,
 }: {
   lang: Language;
   t: (typeof T)["en"];
@@ -372,6 +447,7 @@ function CategoryMenuItemsList({
   onDelete: (itemId: string) => void;
   onAskConfirm: (message: string, onConfirm: () => void, labels?: { confirmLabel?: string; cancelLabel?: string }) => void;
   stockMap: Map<string, StockEntry>;
+  prepMap: Map<string, PrepEntry>;
   stockEnabled: boolean;
 }) {
   const itemDrag = useDragReorder(catItems, (orderedIds) => onReorderMenuItems(cat.id, orderedIds));
@@ -410,6 +486,7 @@ function CategoryMenuItemsList({
               <div className="text-muted-foreground text-xs flex items-center gap-1.5 flex-wrap">
                 <span>{t.thb}{item.price}</span>
                 <StockBadge lang={lang} entry={stockMap.get(item.id)} enabled={stockEnabled} />
+                <PrepBadges lang={lang} prepIds={item.prepIds} prepMap={prepMap} enabled={stockEnabled} />
               </div>
             </div>
             <RecommendedStar lang={lang} on={!!item.recommended} onClick={() => onToggleRecommended(item)} />
@@ -469,6 +546,11 @@ function CategoryMenuItemsList({
               </div>
             ))}
             {/* อยู่แถวเต็มความกว้าง ไม่ใช่ใต้ชื่อ — คอลัมน์ชื่อแคบมากบนมือถือ */}
+            {setting === "soldOut" && item.soldOutByPrep && (
+              <div className="basis-full pl-7 text-[11px] font-medium text-primary">
+                {lang === "en" ? "Sold out because a prepared item ran out — reopens when you add more" : "หมดเพราะของเตรียมหมด — เติมของเตรียมแล้วกลับมาขายเอง"}
+              </div>
+            )}
             {choicesOut && (
               <div className="basis-full pl-7 text-[11px] font-medium text-primary">
                 {lang === "en" ? "A required option is all off — customers see Sold out" : "ตัวเลือกที่ต้องเลือกปิดหมดทุกตัว ลูกค้าเห็นว่าหมด"}
