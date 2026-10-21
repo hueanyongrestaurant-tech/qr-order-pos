@@ -2876,6 +2876,7 @@ export default function App() {
           <StaffStatsScreen
             lang={lang}
             categories={allCategories}
+            menuItems={allMenuItems}
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
             onLangToggle={toggleLang}

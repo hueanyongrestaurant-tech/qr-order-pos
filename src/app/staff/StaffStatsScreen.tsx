@@ -2,9 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
-import type { CartItem, Category, Language, Order, StaffTab } from "../types";
+import type { Category, Language, MenuItem, Order, StaffTab } from "../types";
 import { T } from "../translations";
-import { choiceLabels } from "../menuOptions";
+import { menuLookup, selectionKey, selectionLabels } from "../statsInsights";
 import {
   cartItemTotal,
   dayKeysInRange,
@@ -21,23 +21,25 @@ import { StaffHeader } from "./StaffHeader";
 import { StatsInsights } from "./StatsInsights";
 
 // ช่วงของส่วนวิเคราะห์ — แยกจากตัวเลือกวันที่ของส่วนรายได้
-type AnalysisPreset = "all" | "30" | "7" | "custom";
+type AnalysisPreset = "today" | "7" | "30" | "all" | "custom";
 const ANALYSIS_PRESETS: { value: AnalysisPreset; th: string; en: string }[] = [
-  { value: "all", th: "ทั้งหมดที่ผ่านมา", en: "All time" },
-  { value: "30", th: "30 วัน", en: "30 days" },
+  { value: "today", th: "วันนี้", en: "Today" },
   { value: "7", th: "7 วัน", en: "7 days" },
+  { value: "30", th: "30 วัน", en: "30 days" },
+  { value: "all", th: "ทั้งหมด", en: "All time" },
   { value: "custom", th: "เลือกวัน", en: "Pick dates" },
 ];
 
 interface StaffStatsProps {
   lang: Language;
   categories: Category[];
+  menuItems: MenuItem[]; // เมนูปัจจุบัน (รวมที่ซ่อน) — ชื่อในสถิติใช้ของปัจจุบันตาม id
   onTabChange: (tab: StaffTab) => void;
   onLogout: () => void;
   onLangToggle: () => void;
 }
 
-export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
+export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onLogout, onLangToggle }: StaffStatsProps) {
   const t = T[lang];
   const today = formatDateInput(new Date());
   // เปิดหน้ามาแสดง "วันนี้" ก่อน
@@ -91,9 +93,9 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate, retryCount, reloadKey]);
 
-  // ─── ส่วนวิเคราะห์: ช่วงวันที่แยกจากส่วนรายได้ — เริ่มที่ "ทั้งหมดที่ผ่านมา" (ตั้งแต่ออเดอร์แรก) ───
-  // ใช้ cache บนเครื่อง (persist) — เปิดครั้งแรกต่อเครื่องดึงทุกวัน ครั้งต่อไปดึงแค่เมื่อวาน/วันนี้ (ดู fetchPaidOrdersCached)
-  const [analysisPreset, setAnalysisPreset] = useState<AnalysisPreset>("all");
+  // ─── ส่วนวิเคราะห์: ช่วงวันที่แยกจากส่วนรายได้ — เริ่มที่ "วันนี้" (เข้าหน้าแล้วไม่ต้องโหลดออเดอร์ทั้งหมด) ───
+  // "ทั้งหมด" = ตั้งแต่ออเดอร์แรก ใช้ cache บนเครื่อง (persist) — กดครั้งแรกต่อเครื่องดึงทุกวัน ครั้งต่อไปดึงแค่เมื่อวาน/วันนี้
+  const [analysisPreset, setAnalysisPreset] = useState<AnalysisPreset>("today");
   const [customStart, setCustomStart] = useState(today);
   const [customEnd, setCustomEnd] = useState(today);
   const [firstDay, setFirstDay] = useState<string | null | undefined>(undefined); // undefined = ยังไม่รู้
@@ -104,6 +106,7 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
   const analysisForceRef = useRef(false); // true = ปุ่มรีเฟรช — ดึงเมื่อวาน/วันนี้ใหม่ + เช็คบิลย้อนหลังทันที
   const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return formatDateInput(d); };
   const analysisStart = analysisPreset === "all" ? (firstDay ?? today)
+    : analysisPreset === "today" ? today
     : analysisPreset === "30" ? daysAgo(29) : analysisPreset === "7" ? daysAgo(6) : customStart;
   const analysisEnd = analysisPreset === "custom" ? customEnd : today;
   const analysisReady = analysisPreset !== "all" || firstDay !== undefined;
@@ -156,29 +159,24 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
     filtered.filter((o) => !o.isTakeaway).map((o) => o.paymentBatchId || o.id)
   ).size;
 
-  // จัดกลุ่มตามชื่อตัวเลือก (ภาษาไทย) ไม่ใช่ id — ออเดอร์ก่อน/หลังแปลงตัวเลือกในตัวเป็นกลุ่ม รวมเป็นแถวเดียวกัน
-  function optionKey(ci: CartItem): string {
-    return choiceLabels(ci, "th").join(",");
-  }
-
-  function optionLabel(ci: CartItem, lang: Language): string {
-    return choiceLabels(ci, lang).join(", ");
-  }
-
+  // จัดกลุ่มตาม id เมนู + id ตัวเลือก (ไม่ใช่ชื่อตอนสั่ง) — เมนู/ตัวเลือกที่เปลี่ยนชื่อแล้วรวมเป็นแถวเดียว และโชว์ชื่อปัจจุบัน
+  // (เมนูที่ถูกลบแล้วใช้ชื่อจากออเดอร์ล่าสุด) — ออเดอร์แบบเดิม (ตัวเลือกในตัว) ได้ id เดียวกับที่แปลงแล้ว จึงรวมกันด้วย
+  const menus = menuLookup(menuItems);
   const menuCounts: Record<string, { nameEn: string; nameTh: string; optionLabel: string; qty: number; revenue: number }> = {};
-  filtered.forEach((o) => {
+  [...filtered].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()).forEach((o) => {
     o.items.forEach((ci) => {
       if (ci.voided) return; // รายการที่ถูกยกเลิก ไม่นับในสถิติ
-      const key = `${ci.item.id}|${optionKey(ci)}`;
-      if (!menuCounts[key]) {
-        menuCounts[key] = {
-          nameEn: ci.item.name.en,
-          nameTh: ci.item.name.th,
-          optionLabel: optionLabel(ci, lang),
-          qty: 0,
-          revenue: 0,
-        };
-      }
+      const key = `${ci.item.id}|${selectionKey(ci)}`;
+      const current = menus.get(ci.item.id);
+      const name = current?.name ?? ci.item.name;
+      // ชื่อทับด้วยออเดอร์ที่ใหม่กว่าเสมอ (เรียงเก่า→ใหม่แล้ว) — ใช้ตอนเมนู/ตัวเลือกถูกลบไปแล้ว
+      menuCounts[key] = {
+        qty: menuCounts[key]?.qty ?? 0,
+        revenue: menuCounts[key]?.revenue ?? 0,
+        nameEn: name.en,
+        nameTh: name.th,
+        optionLabel: selectionLabels(ci, current, lang).join(", "),
+      };
       menuCounts[key].qty += ci.quantity;
       menuCounts[key].revenue += cartItemTotal(ci);
     });
@@ -344,7 +342,7 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
         {/* ─── ส่วนวิเคราะห์ (ช่วงวันที่ของตัวเอง) ─── */}
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <h3 className="font-semibold text-foreground text-sm">{lang === "en" ? "Insights" : "วิเคราะห์"}</h3>
-          <div className="flex gap-1 bg-muted p-1 rounded-xl" role="radiogroup">
+          <div className="flex flex-wrap gap-1 bg-muted p-1 rounded-xl" role="radiogroup">
             {ANALYSIS_PRESETS.map((p) => (
               <button
                 key={p.value}
@@ -402,7 +400,7 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
             {lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้"}
           </div>
         )}
-        <StatsInsights lang={lang} orders={analysisFiltered} categories={categories} rangeStart={analysisRangeStart} rangeEnd={analysisRangeEnd} />
+        <StatsInsights lang={lang} orders={analysisFiltered} categories={categories} menuItems={menuItems} rangeStart={analysisRangeStart} rangeEnd={analysisRangeEnd} />
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
           {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}

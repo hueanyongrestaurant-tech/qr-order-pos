@@ -1,16 +1,16 @@
 import { Clock, Crown, Utensils } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
-import type { Category, Language, Order } from "../types";
+import type { Category, Language, MenuItem, Order } from "../types";
 import { T } from "../translations";
 import { TABLE_FLOORS } from "../constants";
-import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, parseTableNumber, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
+import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, parseTableNumber, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
 
 // ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
 // คิดจากออเดอร์ที่จ่ายแล้วชุดเดียวกับส่วนรายได้ (ไม่อ่าน Firestore เพิ่ม) — ดู statsInsights.ts
 // ตัวเลขเขียนให้อ่านตรงๆ ทุกจุด แถบ/เส้นเป็นแค่ตัวช่วยเทียบ ไม่ต้องตีความสี
 
-function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string; sub?: string }) {
+function StatCard({ icon, label, value, sub, detail }: { icon: React.ReactNode; label: string; value: string; sub?: string; detail?: string[] }) {
   return (
     <div className="bg-card rounded-2xl border border-border p-4 min-w-0">
       <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1.5">
@@ -19,14 +19,16 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
       </div>
       <div className="font-display font-bold text-xl text-foreground leading-tight line-clamp-2 break-words">{value}</div>
       {sub && <div className="text-muted-foreground text-[11px] mt-1 truncate">{sub}</div>}
+      {detail?.map((d) => <div key={d} className="text-muted-foreground text-[11px] leading-snug mt-0.5">{d}</div>)}
     </div>
   );
 }
 
-export function StatsInsights({ lang, orders, categories, rangeStart, rangeEnd }: {
+export function StatsInsights({ lang, orders, categories, menuItems, rangeStart, rangeEnd }: {
   lang: Language;
   orders: Order[];
   categories: Category[]; // ใช้ตัดหมวดเครื่องดื่ม/ของฝากออกจากการ์ดเมนูขายดี
+  menuItems: MenuItem[];  // เมนูปัจจุบัน — ชื่อ/ตัวเลือกในการ์ดเมนูขายดีใช้ของปัจจุบัน (ดู topItems)
   rangeStart: Date;
   rangeEnd: Date;
 }) {
@@ -40,7 +42,13 @@ export function StatsInsights({ lang, orders, categories, rangeStart, rangeEnd }
   const topTable = tables[0];
   const takeaway = bills.filter((b) => b.isTakeaway);
   const dineInCount = bills.length - takeaway.length;
-  const items = topItems(orders, 1, counterCategoryIds(categories));
+  const menus = menuLookup(menuItems);
+  const items = topItems(orders, 1, counterCategoryIds(categories), menus);
+  // ตัวเลือกยอดนิยมของเมนูอันดับ 1 — บรรทัดละกลุ่ม เช่น "ไก่ 45% · หมู 35% · เนื้อ 20%"
+  const bestChoices = items[0]
+    ? popularChoices(orders, items[0].id, menus).map((g) =>
+      g.choices.map((c) => `${en ? c.labelEn : c.labelTh} ${c.pct}%`).join(" · "))
+    : [];
   const days = rangeDayCount(rangeStart, rangeEnd);
   const perHour = billsPerHour(bills, days);
   const peaks = topHours(perHour, 3);
@@ -105,6 +113,7 @@ export function StatsInsights({ lang, orders, categories, rangeStart, rangeEnd }
           label={en ? "Best seller (food)" : "เมนูขายดีอันดับ 1"}
           value={items[0] ? itemName(items[0]) : "–"}
           sub={items[0] ? (en ? `${items[0].qty} sold` : `ขายได้ ${items[0].qty}`) : undefined}
+          detail={bestChoices}
         />
       </div>
 
