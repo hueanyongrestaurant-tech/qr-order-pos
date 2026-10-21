@@ -6,7 +6,7 @@ import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 await build({
-  entryPoints: ["stockStore.test.mjs", "prepStock.test.mjs", "paidOrdersCache.test.mjs", "menuOptions.test.mjs", "optionsMigration.test.mjs"].map((f) => path.join(here, f)),
+  entryPoints: ["stockStore.test.mjs", "prepStock.test.mjs", "paidOrdersCache.test.mjs", "orderPhotosMigration.test.mjs", "menuOptions.test.mjs", "optionsMigration.test.mjs"].map((f) => path.join(here, f)),
   outdir: path.join(here, "out"),
   outExtension: { ".js": ".mjs" },
   bundle: true,

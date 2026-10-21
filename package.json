@@ -12,7 +12,11 @@
     "options:backup": "node scripts/options-migration/run.mjs backup",
     "options:dry-run": "node scripts/options-migration/run.mjs dry-run",
     "options:apply": "node scripts/options-migration/run.mjs apply",
-    "options:rollback": "node scripts/options-migration/run.mjs rollback"
+    "options:rollback": "node scripts/options-migration/run.mjs rollback",
+    "photos:backup": "node scripts/order-photos-migration/run.mjs backup",
+    "photos:dry-run": "node scripts/order-photos-migration/run.mjs dry-run",
+    "photos:apply": "node scripts/order-photos-migration/run.mjs apply",
+    "photos:rollback": "node scripts/order-photos-migration/run.mjs rollback"
   },
   "dependencies": {
     "@capacitor/android": "7.6.9",

@@ -5,3 +5,5 @@ dist-android
 scripts/options-migration/out
 scripts/options-migration/backups
 mockups
+scripts/order-photos-migration/out
+scripts/order-photos-migration/backups
