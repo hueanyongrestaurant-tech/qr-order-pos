@@ -20,7 +20,13 @@ import {
 import { StaffHeader } from "./StaffHeader";
 import { StatsInsights } from "./StatsInsights";
 
-// ช่วงของส่วนวิเคราะห์ — แยกจากตัวเลือกวันที่ของส่วนรายได้
+type StatsTab = "sales" | "insights";
+const STATS_TABS: { value: StatsTab; th: string; en: string }[] = [
+  { value: "sales", th: "ยอดขาย", en: "Sales" },
+  { value: "insights", th: "วิเคราะห์", en: "Insights" },
+];
+
+// ช่วงของแท็บวิเคราะห์ — แยกจากตัวเลือกวันที่ของแท็บยอดขาย
 type AnalysisPreset = "today" | "7" | "30" | "all" | "custom";
 const ANALYSIS_PRESETS: { value: AnalysisPreset; th: string; en: string }[] = [
   { value: "today", th: "วันนี้", en: "Today" },
@@ -93,7 +99,17 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate, retryCount, reloadKey]);
 
-  // ─── ส่วนวิเคราะห์: ช่วงวันที่แยกจากส่วนรายได้ — เริ่มที่ "วันนี้" (เข้าหน้าแล้วไม่ต้องโหลดออเดอร์ทั้งหมด) ───
+  // แท็บ: ยอดขาย (เปิดมาเป็นแท็บนี้ — ตัวเลือกวันด้านบน) | วิเคราะห์ (ตัวเลือกช่วงของตัวเอง)
+  const [tab, setTab] = useState<StatsTab>("sales");
+  // true = เคยกดเข้าแท็บวิเคราะห์แล้ว — ก่อนหน้านั้นไม่โหลดอะไรของแท็บนี้เลย (สลับไปมาภายหลังไม่โหลดซ้ำ)
+  const [insightsOpened, setInsightsOpened] = useState(false);
+  const openTab = (next: StatsTab) => {
+    setTab(next);
+    if (next === "insights") setInsightsOpened(true);
+    window.scrollTo(0, 0);
+  };
+
+  // ─── แท็บวิเคราะห์: ช่วงวันที่ของตัวเอง — เริ่มที่ "วันนี้" ───
   // "ทั้งหมด" = ตั้งแต่ออเดอร์แรก ใช้ cache บนเครื่อง (persist) — กดครั้งแรกต่อเครื่องดึงทุกวัน ครั้งต่อไปดึงแค่เมื่อวาน/วันนี้
   const [analysisPreset, setAnalysisPreset] = useState<AnalysisPreset>("today");
   const [customStart, setCustomStart] = useState(today);
@@ -102,7 +118,7 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const [analysisOrders, setAnalysisOrders] = useState<Order[]>([]);
   const [analysisLoading, setAnalysisLoading] = useState(true);
   const [analysisFailed, setAnalysisFailed] = useState(false);
-  const [analysisRetry, setAnalysisRetry] = useState(0);
+  const [analysisRetry, setAnalysisRetry] = useState(0); // เพิ่มทีละ 1 = ลองใหม่ / ปุ่มรีเฟรชของแท็บวิเคราะห์
   const analysisForceRef = useRef(false); // true = ปุ่มรีเฟรช — ดึงเมื่อวาน/วันนี้ใหม่ + เช็คบิลย้อนหลังทันที
   const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return formatDateInput(d); };
   const analysisStart = analysisPreset === "all" ? (firstDay ?? today)
@@ -112,7 +128,7 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const analysisReady = analysisPreset !== "all" || firstDay !== undefined;
 
   useEffect(() => {
-    if (analysisPreset !== "all" || firstDay !== undefined) return;
+    if (!insightsOpened || analysisPreset !== "all" || firstDay !== undefined) return;
     let cancelled = false;
     fetchFirstOrderDay()
       .then((d) => { if (!cancelled) setFirstDay(d); })
@@ -121,23 +137,25 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
         if (!cancelled) { setAnalysisFailed(true); setAnalysisLoading(false); }
       });
     return () => { cancelled = true; };
-  }, [analysisPreset, firstDay, analysisRetry]);
+  }, [insightsOpened, analysisPreset, firstDay, analysisRetry]);
 
   useEffect(() => {
-    if (!analysisReady) return;
+    if (!insightsOpened || !analysisReady) return;
     let cancelled = false;
     setAnalysisLoading(true);
     setAnalysisFailed(false);
-    fetchPaidOrdersCached(analysisStart, analysisEnd, reloadKey > 0 && analysisForceRef.current, { persist: true })
+    const force = analysisForceRef.current;
+    analysisForceRef.current = false;
+    fetchPaidOrdersCached(analysisStart, analysisEnd, force, { persist: true })
       .then(({ orders: rows }) => { if (!cancelled) setAnalysisOrders(rows); })
       .catch((err) => {
         console.error("fetchPaidOrders (analysis) failed", err);
         if (!cancelled) setAnalysisFailed(true);
       })
-      .finally(() => { analysisForceRef.current = false; if (!cancelled) setAnalysisLoading(false); });
+      .finally(() => { if (!cancelled) setAnalysisLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisReady, analysisStart, analysisEnd, reloadKey, analysisRetry]);
+  }, [insightsOpened, analysisReady, analysisStart, analysisEnd, analysisRetry]);
   const analysisRangeStart = new Date(`${analysisStart}T00:00:00`);
   const analysisRangeEnd = new Date(`${analysisEnd}T23:59:59`);
   const analysisFiltered = analysisOrders.filter((o) => o.timestamp >= analysisRangeStart && o.timestamp <= analysisRangeEnd);
@@ -237,6 +255,21 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
       <StaffHeader lang={lang} activeTab="stats" onTabChange={onTabChange} onLogout={onLogout} onLangToggle={onLangToggle} />
 
       <div className="flex-1 px-4 py-5 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="flex gap-1 bg-muted p-1 rounded-2xl mb-4" role="tablist">
+          {STATS_TABS.map((tb) => (
+            <button
+              key={tb.value}
+              role="tab"
+              aria-selected={tab === tb.value}
+              onClick={() => openTab(tb.value)}
+              className={`flex-1 min-w-0 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors ${tab === tb.value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              {lang === "en" ? tb.en : tb.th}
+            </button>
+          ))}
+        </div>
+
+        {tab === "sales" && (<>
         <div className="flex items-stretch gap-2 mb-5">
           <input
             type="date"
@@ -261,7 +294,7 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
           <button
-            onClick={() => { forceRefreshRef.current = true; analysisForceRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
+            onClick={() => { forceRefreshRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
             disabled={loading || retrying}
             aria-label={lang === "en" ? "Refresh" : "รีเฟรช"}
             className="h-11 w-11 rounded-xl bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all flex items-center justify-center flex-shrink-0 disabled:opacity-50"
@@ -339,10 +372,49 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
           </div>
         )}
 
-        {/* ─── ส่วนวิเคราะห์ (ช่วงวันที่ของตัวเอง) ─── */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-          <h3 className="font-semibold text-foreground text-sm">{lang === "en" ? "Insights" : "วิเคราะห์"}</h3>
-          <div className="flex flex-wrap gap-1 bg-muted p-1 rounded-xl" role="radiogroup">
+        <h3 className="font-semibold text-foreground text-sm mb-3">
+          {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}
+        </h3>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={lang === "en" ? "Search menu…" : "ค้นหาเมนู…"}
+          className="w-full h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary mb-3"
+        />
+        {topMenus.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
+            {menuSearch
+              ? (lang === "en" ? "No menu items match your search" : "ไม่พบเมนูที่ค้นหา")
+              : (lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้")}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {topMenus.map((m, idx) => (
+              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-primary/10 text-primary font-bold text-xs flex items-center justify-center flex-shrink-0">
+                    {idx + 1}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-foreground">
+                      {lang === "en" ? m.nameEn : m.nameTh}
+                      {m.optionLabel && <span className="text-muted-foreground font-normal"> · {m.optionLabel}</span>}
+                    </div>
+                    <div className="text-muted-foreground text-xs">{m.qty} {t.items}</div>
+                  </div>
+                </div>
+                <div className="font-semibold text-primary text-sm">{t.thb}{m.revenue}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        </>)}
+
+        {/* ─── แท็บวิเคราะห์ (ช่วงวันที่ของตัวเอง) ─── */}
+        {tab === "insights" && (<>
+        <div className="flex items-start gap-2 mb-2">
+          <div className="flex-1 min-w-0 flex flex-wrap gap-1 bg-muted p-1 rounded-xl" role="radiogroup">
             {ANALYSIS_PRESETS.map((p) => (
               <button
                 key={p.value}
@@ -355,6 +427,14 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
               </button>
             ))}
           </div>
+          <button
+            onClick={() => { analysisForceRef.current = true; setAnalysisRetry((n) => n + 1); }}
+            disabled={analysisLoading && !analysisFailed}
+            aria-label={lang === "en" ? "Refresh" : "รีเฟรช"}
+            className="h-11 w-11 rounded-xl bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+          >
+            <RefreshCw size={16} />
+          </button>
         </div>
         {analysisPreset === "custom" && (
           <div className="flex items-center gap-2 mb-2">
@@ -402,43 +482,7 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
         )}
         <StatsInsights lang={lang} orders={analysisFiltered} categories={categories} menuItems={menuItems} rangeStart={analysisRangeStart} rangeEnd={analysisRangeEnd} />
 
-        <h3 className="font-semibold text-foreground text-sm mb-3">
-          {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}
-        </h3>
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={lang === "en" ? "Search menu…" : "ค้นหาเมนู…"}
-          className="w-full h-11 bg-card border-2 border-border rounded-xl px-3 text-sm text-foreground outline-none focus:border-primary mb-3"
-        />
-        {topMenus.length === 0 ? (
-          <div className="text-center py-10 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
-            {menuSearch
-              ? (lang === "en" ? "No menu items match your search" : "ไม่พบเมนูที่ค้นหา")
-              : (lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้")}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {topMenus.map((m, idx) => (
-              <div key={idx} className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-primary/10 text-primary font-bold text-xs flex items-center justify-center flex-shrink-0">
-                    {idx + 1}
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-foreground">
-                      {lang === "en" ? m.nameEn : m.nameTh}
-                      {m.optionLabel && <span className="text-muted-foreground font-normal"> · {m.optionLabel}</span>}
-                    </div>
-                    <div className="text-muted-foreground text-xs">{m.qty} {t.items}</div>
-                  </div>
-                </div>
-                <div className="font-semibold text-primary text-sm">{t.thb}{m.revenue}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        </>)}
       </div>
     </div>
   );
