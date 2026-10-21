@@ -3,6 +3,7 @@ import { closedSelectedChoices, isChoiceClosed, isQuickToggleGroup, requiredGrou
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
+import { clearDiskDays, deleteDiskDays, readDiskDays, readMeta, writeDiskDays, writeMeta } from "./paidOrdersDiskCache";
 import { collection, documentId, getDocs, getDocsFromServer, orderBy, query, where, limit } from "firebase/firestore";
 
 // ─── Utility functions ────────────────────────────────────────────────────────
@@ -582,51 +583,142 @@ export async function fetchPaidOrders(startInclusive: Date, endExclusive: Date):
 // - วันที่ผ่านมาแล้ว: ใช้ cache ไปจนกว่าจะรีเฟรชหน้า/ปิดแอป, กดปุ่มรีเฟรช หรือถูกล้างด้วย invalidatePaidOrdersDay
 //   (บันทึก/ยกเลิกบิลย้อนหลังล้างวันนั้นให้เอง)
 // - วันนี้ (ยังขายอยู่): ใช้ cache ได้ TODAY_PAID_CACHE_TTL_MS แล้วค่อยดึงใหม่ — กดรีเฟรชเพื่อดูล่าสุดทันที
-// ดึงเฉพาะวันที่ขาด เป็น query เดียวตั้งแต่วันแรกที่ขาดถึงวันสุดท้ายที่ขาด (เช่น Stats 7 วัน = ดึงแค่วันนี้)
+// ดึงเฉพาะวันที่ขาด: วันที่ขาดติดกันเป็นช่วงเดียว = query เดียว (เช่น Stats 7 วัน = ดึงแค่วันนี้)
+//
+// persist (หน้าสถิติ): เก็บวันที่ "ปิดแล้วจริง" (เก่ากว่าเมื่อวาน) ลงเครื่องด้วย (paidOrdersDiskCache.ts) — เปิดแอปใหม่ไม่ต้องดึงซ้ำ
+// วันเก่าเปลี่ยนได้ทางเดียวคือบิลย้อนหลัง (บันทึก = backfilledAt, ยกเลิก = cancelledAt) ซึ่งอาจทำจากเครื่องอื่น
+// → syncPaidOrdersDisk ถามหาแค่ออเดอร์ที่ 2 ฟิลด์นี้เปลี่ยนหลังเช็คครั้งก่อน แล้วล้างวันนั้นทิ้ง (ปกติ = 2 reads)
+// กดรีเฟรชในโหมดนี้ = ดึงใหม่เฉพาะเมื่อวาน/วันนี้ + เช็คบิลย้อนหลังทันที (ไม่ดึงทุกวันใหม่หมด)
 const TODAY_PAID_CACHE_TTL_MS = 5 * 60 * 1000;
+const DISK_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const paidOrdersByDay = new Map<string, { orders: Order[]; fetchedAt: number }>();
+let lastDiskSyncAt = 0;
 
 export function invalidatePaidOrdersDay(dateKey: string) {
   paidOrdersByDay.delete(dateKey);
+  void deleteDiskDays([dateKey]);
 }
 
 // "YYYY-MM-DD" ทุกวันตั้งแต่ startKey ถึง endKey (รวมทั้งสองฝั่ง) — ช่วงผิด/ว่าง คืน []
-function dayKeysInRange(startKey: string, endKey: string): string[] {
+export function dayKeysInRange(startKey: string, endKey: string): string[] {
   const keys: string[] = [];
   const cursor = new Date(`${startKey}T00:00:00`);
   const end = new Date(`${endKey}T00:00:00`);
   if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime())) return keys;
-  while (cursor <= end && keys.length < 1000) {
+  while (cursor <= end && keys.length < 2000) {
     keys.push(formatDateInput(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   return keys;
 }
 
+// วันที่เก็บลงเครื่องได้ = เก่ากว่าเมื่อวาน (โต๊ะที่เปิดก่อนเที่ยงคืนอาจจ่ายหลังเที่ยงคืน วันเมื่อวานจึงยังเปลี่ยนได้)
+export function lastPersistableDay(now: Date): string {
+  const d = new Date(now);
+  d.setDate(d.getDate() - 2);
+  return formatDateInput(d);
+}
+
+// แบ่งวันที่ขาด (เรียงแล้ว) เป็นช่วงที่ติดกัน — ช่วงละ 1 query ไม่ดึงวันที่มีอยู่แล้วตรงกลางซ้ำ
+export function contiguousRuns(sortedKeys: string[]): [string, string][] {
+  const runs: [string, string][] = [];
+  sortedKeys.forEach((k) => {
+    const last = runs[runs.length - 1];
+    if (last && formatDateInput(dayAfter(last[1])) === k) last[1] = k;
+    else runs.push([k, k]);
+  });
+  return runs;
+}
+
+// บิลย้อนหลังที่บันทึก/ยกเลิกหลังเช็คครั้งก่อน (จากเครื่องไหนก็ได้) → ล้างวันนั้นทั้งในเครื่องและในหน่วยความจำ
+// ครั้งแรก (ยังไม่เคยเช็ค) ล้าง cache บนเครื่องทั้งหมดก่อน — ไม่รู้ว่าค้างมานานแค่ไหน
+async function syncPaidOrdersDisk(force: boolean): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastDiskSyncAt < DISK_SYNC_INTERVAL_MS) return;
+  const since = await readMeta<number>("lastSync");
+  if (typeof since !== "number") {
+    await clearDiskDays();
+    await writeMeta("lastSync", now);
+    lastDiskSyncAt = now;
+    return;
+  }
+  // ถอยไว้ 2 นาที เผื่อนาฬิกาเครื่องกับ server ไม่ตรงกัน (ล้างซ้ำได้ ไม่เสียหาย)
+  const after = new Date(since - 2 * 60 * 1000);
+  const snaps = await Promise.all(["backfilledAt", "cancelledAt"].map((field) =>
+    getDocs(query(collection(db, "orders"), where(field, ">", after), limit(PAID_ORDERS_QUERY_CAP)))));
+  const changed = [...new Set(snaps.flatMap((sn) => sn.docs.map((d) => mapOrderDoc(d.id, d.data())))
+    .map((o) => formatDateInput(o.timestamp)))];
+  changed.forEach((k) => paidOrdersByDay.delete(k));
+  await deleteDiskDays(changed);
+  await writeMeta("lastSync", now);
+  lastDiskSyncAt = now;
+}
+
+// วันแรกที่มีออเดอร์ (ช่วง "ทั้งหมดที่ผ่านมา") — query ครั้งเดียวต่อเครื่อง (1 read) แล้วจำไว้บนเครื่อง
+// บิลย้อนหลังที่ลงก่อนวันนั้นจะไม่ถูกนับ — ล้างได้ด้วยการลบข้อมูลเว็บของแอป (ร้านไม่ได้ลงบิลก่อนเปิดร้าน)
+export async function fetchFirstOrderDay(): Promise<string | null> {
+  const saved = await readMeta<string>("firstDay");
+  if (typeof saved === "string") return saved;
+  const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "asc"), limit(1)));
+  if (snap.empty) return null;
+  const first = formatDateInput(mapOrderDoc(snap.docs[0].id, snap.docs[0].data()).timestamp);
+  await writeMeta("firstDay", first);
+  return first;
+}
+
 // fetchedAt = เวลาดึงของวันที่เก่าที่สุดในช่วง (ไว้โชว์ "ข้อมูล ณ HH:MM")
-export async function fetchPaidOrdersCached(
+// เรียกทีละคำขอ (ต่อคิว) — หน้าสถิติโหลด 2 ช่วงพร้อมกัน (รายได้ + วิเคราะห์) จะได้ไม่ดึงวันเดียวกันซ้ำสองรอบ
+let paidFetchQueue: Promise<unknown> = Promise.resolve();
+export function fetchPaidOrdersCached(
   startKey: string,
   endKey: string,
   force = false,
+  opts: { persist?: boolean } = {},
+): Promise<{ orders: Order[]; fetchedAt: number }> {
+  const run = paidFetchQueue.then(() => fetchPaidOrdersCachedNow(startKey, endKey, force, opts));
+  paidFetchQueue = run.catch(() => {});
+  return run;
+}
+
+async function fetchPaidOrdersCachedNow(
+  startKey: string,
+  endKey: string,
+  force: boolean,
+  opts: { persist?: boolean },
 ): Promise<{ orders: Order[]; fetchedAt: number }> {
   const days = dayKeysInRange(startKey, endKey);
   const todayKey = formatDateInput(new Date());
   const now = Date.now();
+  const diskUntil = lastPersistableDay(new Date());
+  const persistable = (k: string) => !!opts.persist && k <= diskUntil;
+  if (opts.persist) {
+    try {
+      await syncPaidOrdersDisk(force);
+    } catch (err) {
+      console.error("paid orders disk sync failed — skipping disk cache this time", err);
+    }
+    const notInMemory = days.filter((k) => persistable(k) && !paidOrdersByDay.has(k));
+    if (notInMemory.length > 0) {
+      const fromDisk = await readDiskDays(notInMemory[0], notInMemory[notInMemory.length - 1]);
+      fromDisk.forEach((orders, k) => { if (!paidOrdersByDay.has(k)) paidOrdersByDay.set(k, { orders, fetchedAt: now }); });
+    }
+  }
   const isFresh = (k: string) => {
     const hit = paidOrdersByDay.get(k);
     if (!hit) return false;
     return k < todayKey || now - hit.fetchedAt < TODAY_PAID_CACHE_TTL_MS;
   };
-  const missing = force ? days : days.filter((k) => !isFresh(k));
-  if (missing.length > 0) {
-    const first = missing[0];
-    const last = missing[missing.length - 1];
+  // รีเฟรชในโหมด persist ไม่ดึงวันที่ปิดแล้วใหม่ (บิลย้อนหลังถูกเช็คแยกด้านบนแล้ว)
+  const missing = days.filter((k) => !isFresh(k) || (force && !persistable(k)));
+  for (const [first, last] of contiguousRuns(missing)) {
     const rows = await fetchPaidOrders(new Date(`${first}T00:00:00`), dayAfter(last));
     const fetchedAt = Date.now();
     const byDay = new Map<string, Order[]>(dayKeysInRange(first, last).map((k) => [k, []]));
     // ตัดรูป base64 ของออเดอร์เก่าทิ้งก่อนเก็บ — History/Stats ไม่ได้แสดงรูป ไม่ต้องค้างไว้ในหน่วยความจำ
     rows.forEach((o) => byDay.get(formatDateInput(o.timestamp))?.push({ ...o, items: (o.items || []).map(stripItemPhoto) }));
     byDay.forEach((orders, k) => paidOrdersByDay.set(k, { orders, fetchedAt }));
+    const toDisk = new Map([...byDay].filter(([k]) => persistable(k)));
+    await writeDiskDays(toDisk);
   }
   const hits = days.map((k) => paidOrdersByDay.get(k)).filter((h): h is { orders: Order[]; fetchedAt: number } => !!h);
   return {

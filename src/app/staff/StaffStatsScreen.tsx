@@ -7,6 +7,8 @@ import { T } from "../translations";
 import { choiceLabels } from "../menuOptions";
 import {
   cartItemTotal,
+  dayKeysInRange,
+  fetchFirstOrderDay,
   fetchPaidOrdersCached,
   formatClock,
   FETCH_MAX_AUTO_RETRIES,
@@ -17,6 +19,15 @@ import {
 } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 import { StatsInsights } from "./StatsInsights";
+
+// ช่วงของส่วนวิเคราะห์ — แยกจากตัวเลือกวันที่ของส่วนรายได้
+type AnalysisPreset = "all" | "30" | "7" | "custom";
+const ANALYSIS_PRESETS: { value: AnalysisPreset; th: string; en: string }[] = [
+  { value: "all", th: "ทั้งหมดที่ผ่านมา", en: "All time" },
+  { value: "30", th: "30 วัน", en: "30 days" },
+  { value: "7", th: "7 วัน", en: "7 days" },
+  { value: "custom", th: "เลือกวัน", en: "Pick dates" },
+];
 
 interface StaffStatsProps {
   lang: Language;
@@ -52,7 +63,7 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
     // ผ่าน cache รายวันใน utils — ดึงจริงเฉพาะวันที่ยังไม่มีใน cache (+ วันนี้ถ้า cache เกิน 5 นาที)
     const force = forceRefreshRef.current;
     forceRefreshRef.current = false;
-    fetchPaidOrdersCached(startDate, endDate, force)
+    fetchPaidOrdersCached(startDate, endDate, force, { persist: true })
       .then(({ orders: rows, fetchedAt: at }) => {
         if (cancelled) return;
         setPaidOrders(rows);
@@ -79,6 +90,57 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate, retryCount, reloadKey]);
+
+  // ─── ส่วนวิเคราะห์: ช่วงวันที่แยกจากส่วนรายได้ — เริ่มที่ "ทั้งหมดที่ผ่านมา" (ตั้งแต่ออเดอร์แรก) ───
+  // ใช้ cache บนเครื่อง (persist) — เปิดครั้งแรกต่อเครื่องดึงทุกวัน ครั้งต่อไปดึงแค่เมื่อวาน/วันนี้ (ดู fetchPaidOrdersCached)
+  const [analysisPreset, setAnalysisPreset] = useState<AnalysisPreset>("all");
+  const [customStart, setCustomStart] = useState(today);
+  const [customEnd, setCustomEnd] = useState(today);
+  const [firstDay, setFirstDay] = useState<string | null | undefined>(undefined); // undefined = ยังไม่รู้
+  const [analysisOrders, setAnalysisOrders] = useState<Order[]>([]);
+  const [analysisLoading, setAnalysisLoading] = useState(true);
+  const [analysisFailed, setAnalysisFailed] = useState(false);
+  const [analysisRetry, setAnalysisRetry] = useState(0);
+  const analysisForceRef = useRef(false); // true = ปุ่มรีเฟรช — ดึงเมื่อวาน/วันนี้ใหม่ + เช็คบิลย้อนหลังทันที
+  const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return formatDateInput(d); };
+  const analysisStart = analysisPreset === "all" ? (firstDay ?? today)
+    : analysisPreset === "30" ? daysAgo(29) : analysisPreset === "7" ? daysAgo(6) : customStart;
+  const analysisEnd = analysisPreset === "custom" ? customEnd : today;
+  const analysisReady = analysisPreset !== "all" || firstDay !== undefined;
+
+  useEffect(() => {
+    if (analysisPreset !== "all" || firstDay !== undefined) return;
+    let cancelled = false;
+    fetchFirstOrderDay()
+      .then((d) => { if (!cancelled) setFirstDay(d); })
+      .catch((err) => {
+        console.error("fetchFirstOrderDay failed", err);
+        if (!cancelled) { setAnalysisFailed(true); setAnalysisLoading(false); }
+      });
+    return () => { cancelled = true; };
+  }, [analysisPreset, firstDay, analysisRetry]);
+
+  useEffect(() => {
+    if (!analysisReady) return;
+    let cancelled = false;
+    setAnalysisLoading(true);
+    setAnalysisFailed(false);
+    fetchPaidOrdersCached(analysisStart, analysisEnd, reloadKey > 0 && analysisForceRef.current, { persist: true })
+      .then(({ orders: rows }) => { if (!cancelled) setAnalysisOrders(rows); })
+      .catch((err) => {
+        console.error("fetchPaidOrders (analysis) failed", err);
+        if (!cancelled) setAnalysisFailed(true);
+      })
+      .finally(() => { analysisForceRef.current = false; if (!cancelled) setAnalysisLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisReady, analysisStart, analysisEnd, reloadKey, analysisRetry]);
+  const analysisRangeStart = new Date(`${analysisStart}T00:00:00`);
+  const analysisRangeEnd = new Date(`${analysisEnd}T23:59:59`);
+  const analysisFiltered = analysisOrders.filter((o) => o.timestamp >= analysisRangeStart && o.timestamp <= analysisRangeEnd);
+  const analysisDayCount = dayKeysInRange(analysisStart, analysisEnd).length;
+  const shortDate = (key: string) =>
+    new Date(`${key}T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { day: "numeric", month: "short", year: "2-digit" });
 
   const rangeStart = new Date(`${startDate}T00:00:00`);
   const rangeEnd = new Date(`${endDate}T23:59:59`);
@@ -201,7 +263,7 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
           <button
-            onClick={() => { forceRefreshRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
+            onClick={() => { forceRefreshRef.current = true; analysisForceRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
             disabled={loading || retrying}
             aria-label={lang === "en" ? "Refresh" : "รีเฟรช"}
             className="h-11 w-11 rounded-xl bg-card border-2 border-border text-foreground hover:border-primary/40 transition-all flex items-center justify-center flex-shrink-0 disabled:opacity-50"
@@ -279,7 +341,68 @@ export function StaffStatsScreen({ lang, categories, onTabChange, onLogout, onLa
           </div>
         )}
 
-        <StatsInsights lang={lang} orders={filtered} categories={categories} rangeStart={rangeStart} rangeEnd={rangeEnd} />
+        {/* ─── ส่วนวิเคราะห์ (ช่วงวันที่ของตัวเอง) ─── */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h3 className="font-semibold text-foreground text-sm">{lang === "en" ? "Insights" : "วิเคราะห์"}</h3>
+          <div className="flex gap-1 bg-muted p-1 rounded-xl" role="radiogroup">
+            {ANALYSIS_PRESETS.map((p) => (
+              <button
+                key={p.value}
+                role="radio"
+                aria-checked={analysisPreset === p.value}
+                onClick={() => setAnalysisPreset(p.value)}
+                className={`min-h-[36px] px-2.5 sm:px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${analysisPreset === p.value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+              >
+                {lang === "en" ? p.en : p.th}
+              </button>
+            ))}
+          </div>
+        </div>
+        {analysisPreset === "custom" && (
+          <div className="flex items-center gap-2 mb-2">
+            <input
+              type="date"
+              value={customStart}
+              max={customEnd}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="flex-1 min-w-0 h-11 bg-card border-2 border-border rounded-xl px-2 sm:px-3 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
+            />
+            <span className="text-muted-foreground text-sm">–</span>
+            <input
+              type="date"
+              value={customEnd}
+              min={customStart}
+              max={today}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="flex-1 min-w-0 h-11 bg-card border-2 border-border rounded-xl px-2 sm:px-3 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
+            />
+          </div>
+        )}
+        <div className="text-muted-foreground text-xs mb-3 flex items-center gap-2">
+          {analysisLoading && !analysisFailed && <Loader2 size={13} className="animate-spin" />}
+          {analysisReady && (lang === "en"
+            ? `${shortDate(analysisStart)} – ${shortDate(analysisEnd)} · ${analysisDayCount} days`
+            : `${shortDate(analysisStart)} – ${shortDate(analysisEnd)} · ${analysisDayCount} วัน`)}
+          {analysisLoading && !analysisFailed && analysisPreset === "all" && (lang === "en"
+            ? " · first load on this device can take a while"
+            : " · เปิดครั้งแรกบนเครื่องนี้อาจโหลดนานหน่อย")}
+        </div>
+        {analysisFailed && (
+          <div className="flex items-center justify-between gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5 mb-4">
+            <span className="text-destructive text-xs">
+              {lang === "en" ? "Couldn't load insights. Check the internet and try again." : "โหลดส่วนวิเคราะห์ไม่สำเร็จ เช็คอินเทอร์เน็ตแล้วลองใหม่"}
+            </span>
+            <button onClick={() => setAnalysisRetry((n) => n + 1)} className="text-xs font-semibold text-destructive underline flex-shrink-0">
+              {lang === "en" ? "Retry" : "ลองอีกครั้ง"}
+            </button>
+          </div>
+        )}
+        {!analysisLoading && !analysisFailed && analysisFiltered.length === 0 && (
+          <div className="text-center py-6 mb-6 text-muted-foreground text-sm bg-card rounded-2xl border border-border">
+            {lang === "en" ? "No data for this period" : "ไม่มีข้อมูลในช่วงนี้"}
+          </div>
+        )}
+        <StatsInsights lang={lang} orders={analysisFiltered} categories={categories} rangeStart={analysisRangeStart} rangeEnd={analysisRangeEnd} />
 
         <h3 className="font-semibold text-foreground text-sm mb-3">
           {lang === "en" ? "Items Sold" : "เมนูที่ขายได้"}
