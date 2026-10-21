@@ -16,7 +16,8 @@
     "photos:backup": "node scripts/order-photos-migration/run.mjs backup",
     "photos:dry-run": "node scripts/order-photos-migration/run.mjs dry-run",
     "photos:apply": "node scripts/order-photos-migration/run.mjs apply",
-    "photos:rollback": "node scripts/order-photos-migration/run.mjs rollback"
+    "photos:rollback": "node scripts/order-photos-migration/run.mjs rollback",
+    "photos:size": "node scripts/order-photos-migration/run.mjs size"
   },
   "dependencies": {
     "@capacitor/android": "7.6.9",

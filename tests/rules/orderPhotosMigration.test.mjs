@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, getDoc, setDoc, updateDoc, Timestamp } from "firebase/firestore";
 import {
-  applyPhotoStrip, fingerprint, rollbackPhotoStrip, summarizePhotoBackup, takePhotoBackup,
+  applyPhotoStrip, fingerprint, measureAllOrders, rollbackPhotoStrip, summarizePhotoBackup, takePhotoBackup,
 } from "../../scripts/order-photos-migration/core";
 
 const PHOTO_A = `data:image/jpeg;base64,${"A".repeat(5000)}`;
@@ -106,4 +106,15 @@ test("rollback never overwrites a line that changed (different cartId at that po
   await updateDoc(doc(db, "orders", "old2"), { items: [{ ...cur.items[0], cartId: "other" }] });
   await rollbackPhotoStrip(db, backup);
   assert.equal((await read("old2")).items[0].item.photo, "");
+});
+
+test("size report: per-month counts and bytes, largest first; shrinks after strip", async () => {
+  const before = await measureAllOrders(db);
+  assert.equal(before.count, 4);
+  assert.deepEqual(before.byMonth.map((m) => [m.month, m.count]), [["2026-09", 2], ["2026-10", 2]]);
+  assert.equal(before.largest[0].id, "old1");
+  assert.equal(before.totalBytes, before.byMonth.reduce((s, m) => s + m.bytes, 0));
+  await applyPhotoStrip(db, await takePhotoBackup(db));
+  const after = await measureAllOrders(db);
+  assert.ok(before.totalBytes - after.totalBytes >= PHOTO_A.length * 2 + PHOTO_B.length);
 });

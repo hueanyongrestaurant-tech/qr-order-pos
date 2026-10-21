@@ -175,3 +175,40 @@ export async function rollbackPhotoStrip(db: Firestore, backup: PhotoBackupFile,
   }
   return result;
 }
+
+// ─── ขนาดออเดอร์ (อ่านอย่างเดียว) — ใช้ประเมินว่าเปิดหน้าสถิติ "ทั้งหมดที่ผ่านมา" ครั้งแรกต้องดาวน์โหลดเท่าไหร่ ───
+// bytes = ขนาด JSON ของข้อมูลจริง (UTF-8) — ที่ส่งผ่านเน็ตจริงมากกว่านี้ราว 1.5–2 เท่า (Firestore ห่อทุกค่าด้วยชนิดข้อมูล)
+export interface OrderSizeReport {
+  count: number;
+  totalBytes: number;
+  maxBytes: number;
+  byMonth: { month: string; count: number; bytes: number }[];
+  largest: { id: string; createdAt: string | null; bytes: number }[];
+}
+
+export function measureOrders(docs: { id: string; data: DocData }[], top = 5): OrderSizeReport {
+  const months = new Map<string, { count: number; bytes: number }>();
+  const sized = docs.map(({ id, data }) => {
+    const created = (data.createdAt as { toDate?: () => Date } | undefined)?.toDate?.();
+    const createdAt = created ? created.toISOString() : null;
+    const bytes = Buffer.byteLength(JSON.stringify(toJson(data)), "utf8");
+    const month = createdAt ? createdAt.slice(0, 7) : "ไม่มีวันที่";
+    const m = months.get(month) ?? { count: 0, bytes: 0 };
+    m.count++;
+    m.bytes += bytes;
+    months.set(month, m);
+    return { id, createdAt, bytes };
+  });
+  return {
+    count: sized.length,
+    totalBytes: sized.reduce((s, o) => s + o.bytes, 0),
+    maxBytes: Math.max(0, ...sized.map((o) => o.bytes)),
+    byMonth: [...months].map(([month, v]) => ({ month, ...v })).sort((a, b) => a.month.localeCompare(b.month)),
+    largest: [...sized].sort((a, b) => b.bytes - a.bytes).slice(0, top),
+  };
+}
+
+export async function measureAllOrders(db: Firestore): Promise<OrderSizeReport> {
+  const snap = await getDocs(collection(db, "orders"));
+  return measureOrders(snap.docs.map((d) => ({ id: d.id, data: d.data() })));
+}

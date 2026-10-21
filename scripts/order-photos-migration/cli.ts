@@ -4,6 +4,7 @@
 //   dry-run  : สำรอง + บอกจำนวนออเดอร์และขนาดที่จะลดลง (ไม่เขียนอะไรลง DB)
 //   apply    : สำรอง + สรุป + ถามยืนยัน + ลบรูปจริง
 //   rollback : ใส่รูปกลับจากไฟล์สำรอง (ล่าสุด หรือระบุชื่อไฟล์) — ถามยืนยันก่อน
+//   size     : รายงานขนาดออเดอร์ทั้งหมด แยกรายเดือน + ใบที่ใหญ่สุด (อ่านอย่างเดียว ไม่เขียนไฟล์/DB)
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -11,7 +12,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import {
-  applyPhotoStrip, checkPhotoBackup, rollbackPhotoStrip, summarizePhotoBackup, takePhotoBackup, type PhotoBackupFile,
+  applyPhotoStrip, checkPhotoBackup, measureAllOrders, rollbackPhotoStrip, summarizePhotoBackup, takePhotoBackup, type PhotoBackupFile,
 } from "./core";
 import { STAFF_EMAIL } from "../../src/app/constants";
 
@@ -61,13 +62,14 @@ const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "-");
 function printSummary(backup: PhotoBackupFile) {
   const s = summarizePhotoBackup(backup);
   console.log(`\n=== อ่านออเดอร์ทั้งหมด ${s.scanned} ใบ | มีรูปฝังอยู่ ${s.orders} ใบ (${s.lines} รายการ, รูปไม่ซ้ำ ${s.distinctPhotos} รูป) ===`);
+  // เช็คทุกช่องของทุกออเดอร์ ไม่ใช่แค่รูปในรายการ — แสดงเสมอ (แม้ไม่มีอะไรต้องลบ) จะได้รู้ว่าไม่มีรูปซ่อนอยู่ที่อื่น
+  console.log(backup.otherDataUrls.length
+    ? `หมายเหตุ: มี ${backup.otherDataUrls.length} ออเดอร์ที่มีรูปอยู่ที่อื่น (ไม่ใช่ในรายการ) — สคริปต์นี้ไม่แตะ: ${backup.otherDataUrls.slice(0, 10).join(", ")}`
+    : "ช่องอื่นนอกรายการ: ไม่พบรูป (data:) เลย");
   if (s.orders === 0) return;
   console.log(`ช่วงวันที่ของออเดอร์ที่จะแก้: ${day(s.firstAt)} ถึง ${day(s.lastAt)}`);
   console.log(`ขนาดออเดอร์ที่จะแก้: ${mb(s.bytesBefore)} → ประมาณ ${mb(s.bytesAfter)} (ลดลง ${mb(s.bytesBefore - s.bytesAfter)})`);
   console.log("แก้เฉพาะรูปในรายการ (photo → ว่าง) — ราคา/จำนวน/สถานะ/เวลา/ข้อมูลอื่นไม่แตะ");
-  if (backup.otherDataUrls.length) {
-    console.log(`หมายเหตุ: มี ${backup.otherDataUrls.length} ออเดอร์ที่มีรูปอยู่ที่อื่น (ไม่ใช่ในรายการ) — สคริปต์นี้ไม่แตะ: ${backup.otherDataUrls.slice(0, 10).join(", ")}`);
-  }
 }
 
 // บัญชีเดียวกับหน้าล็อกอินพนักงานในแอป (STAFF_EMAIL) — ถามแค่รหัสผ่าน ผิดพิมพ์ใหม่ได้ 3 ครั้ง
@@ -122,7 +124,21 @@ async function main() {
     return;
   }
 
-  console.log("คำสั่ง: backup | dry-run | apply | rollback [ไฟล์สำรอง]");
+  if (command === "size") {
+    await login();
+    console.log("กำลังอ่านออเดอร์ทั้งหมด (อ่านอย่างเดียว)...");
+    const r = await measureAllOrders(db);
+    const kb = (b: number) => `${(b / 1024).toFixed(1)} KB`;
+    console.log(`\n=== ออเดอร์ทั้งหมด ${r.count} ใบ | รวม ${mb(r.totalBytes)} | เฉลี่ย ${kb(r.count ? r.totalBytes / r.count : 0)} | ใหญ่สุด ${kb(r.maxBytes)} ===`);
+    console.log("\nแยกรายเดือน (เดือนตามเวลาออเดอร์):");
+    r.byMonth.forEach((m) => console.log(`  ${m.month}: ${m.count} ใบ · ${mb(m.bytes)} · เฉลี่ย ${kb(m.bytes / m.count)}`));
+    console.log("\nใบที่ใหญ่สุด:");
+    r.largest.forEach((o) => console.log(`  ${o.id} (${day(o.createdAt)}): ${kb(o.bytes)}`));
+    console.log("\n(ขนาดข้อมูลจริง — ที่ส่งผ่านเน็ตตอนเปิดหน้าสถิติครั้งแรกมากกว่านี้ราว 1.5–2 เท่า)");
+    return;
+  }
+
+  console.log("คำสั่ง: backup | dry-run | apply | rollback [ไฟล์สำรอง] | size");
   process.exitCode = 1;
 }
 
