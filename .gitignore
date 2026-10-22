@@ -7,3 +7,6 @@ scripts/options-migration/backups
 mockups
 scripts/order-photos-migration/out
 scripts/order-photos-migration/backups
+
+# ใบ QR โต๊ะ — ลิงก์ในนี้ = สิทธิ์สั่งเข้าโต๊ะ ห้ามขึ้น GitHub (template, ไฟล์ลิงก์, PNG/PDF ที่สร้าง)
+assets/qr-print/
