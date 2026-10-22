@@ -43,22 +43,11 @@
 import { Capacitor } from "@capacitor/core";
 import { CapacitorThermalPrinter } from "capacitor-thermal-printer";
 import type { Category, Language, Order } from "../types";
-import { T } from "../translations";
-import { cartItemTotal, formatOptionDetails } from "../utils";
 import type { ReceiptData } from "./ticket";
 import { getSelectedPrinter, type PrintRole } from "./printerStore";
 import { layoutTicket, planTickets, type TicketLine } from "./stationTickets";
-
-// characters per printed line at Font A, normal (1x) width, on 58mm paper.
-// Reduced from an initial guess of 32 after real hardware testing showed both
-// dashed separator lines and long price lines wrapping their tail characters
-// onto a second physical line — 30 leaves a safety margin against that.
-const LINE_WIDTH = 30;
-// ตั๋วครัวทั้งใบพิมพ์ที่ GS! 0x10 (กว้าง x2) ตัวอักษรแต่ละตัวเลยกว้างเป็น 2 เท่า จำนวนตัวอักษร
-// ที่พอดีความกว้างกระดาษจริงต่อบรรทัดจึงลดลงครึ่งหนึ่ง — ใช้ค่านี้เฉพาะกับเส้นคั่นของตั๋วครัว
-// ไม่งั้นเส้นคั่นที่คำนวณความยาวไว้สำหรับตัวอักษรขนาดปกติจะกว้างเกินกระดาษจริงเท่าตัว แล้ว wrap
-// ไปพิมพ์ต่อบรรทัดใหม่ ทำให้ดูเหมือนมีเส้นคั่นซ้ำกันสองบรรทัดติดกัน
-const KITCHEN_LINE_WIDTH = Math.floor(LINE_WIDTH / 2);
+import { KITCHEN_LINE_WIDTH, LINE_WIDTH, wrapLine } from "./printText";
+import { layoutReceipt } from "./receiptLayout";
 
 export function isNativePrintAvailable(): boolean {
   return Capacitor.isNativePlatform();
@@ -171,134 +160,7 @@ function groupEmphasisOffCmd(): number[] {
   return USE_INVERSE_FOR_NOTES ? inverseCmd(false) : boldCmd(false);
 }
 
-// ─── Word-aware line wrapping (with a grapheme-safe fallback) ──────────────
-//
-// Real hardware tests found two distinct classes of Thai wrapping bugs, from
-// worse to less bad:
-// 1. A leading vowel (เ/แ/โ/ใ/ไ — these precede the consonant they belong to
-//    in both storage and print order) got separated from its consonant onto
-//    a different line — happened twice, with โ in "โครงหมู" and separately
-//    with เ in "เงี้ยว". A pure grapheme-cluster split (Unicode UAX#29) does
-//    NOT protect against this: a leading vowel is its own independent
-//    grapheme cluster, not bound to the following consonant, so splitting at
-//    cluster boundaries alone still allows this exact failure.
-// 2. Even with no character actually lost, splitting mid-word ("โคร" / "งหมู"
-//    instead of keeping "โครง" together) reads wrong to a Thai reader.
-//
-// Both are fixed by wrapping at WORD boundaries first — Intl.Segmenter's
-// "word" granularity uses ICU's dictionary-based Thai segmentation (built
-// into Android WebView/Chrome/Node, same engine, no dependency needed) to
-// find real lexical words ("ขนมจีน", "น้ำ", "เงี้ยว", "ซี่โครง", "หมู", ...),
-// where a leading vowel is already glued to its consonant as one word. We
-// then lay words onto lines the same way normal English word-wrap does:
-// keep adding whole words while they fit, start a new line when one doesn't.
-//
-// The one remaining edge case: a single "word" that's on its own longer than
-// an entire empty line (a very long compound name, or non-Thai text with no
-// spaces). For that — and only that — we fall back to splitting mid-word at
-// grapheme-cluster boundaries, still gluing any leading vowel to the cluster
-// right after it before measuring, so even the fallback can't strand one.
-function wordSegments(text: string): string[] {
-  const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
-  return Array.from(segmenter.segment(text), (s) => s.segment);
-}
-
-function graphemeClusters(text: string): string[] {
-  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-  return Array.from(segmenter.segment(text), (s) => s.segment);
-}
-
-const LEADING_VOWELS = new Set(["เ", "แ", "โ", "ใ", "ไ"]);
-
-// Grapheme clusters, but with any leading vowel merged into a single unit
-// with the cluster right after it — used only by the mid-word fallback below,
-// so even that last resort can never split a leading vowel from its consonant.
-function graphemeUnitsGluingLeadingVowels(text: string): string[] {
-  const clusters = graphemeClusters(text);
-  const units: string[] = [];
-  for (let i = 0; i < clusters.length; i++) {
-    if (LEADING_VOWELS.has(clusters[i]) && i + 1 < clusters.length) {
-      units.push(clusters[i] + clusters[i + 1]);
-      i++;
-    } else {
-      units.push(clusters[i]);
-    }
-  }
-  return units;
-}
-
-// Fallback: splits a single overlong "word" into <=maxWidth-character chunks,
-// breaking only between grapheme units (leading-vowel-glued, see above).
-function wrapByGrapheme(text: string, maxWidth: number): string[] {
-  const units = graphemeUnitsGluingLeadingVowels(text);
-  const lines: string[] = [];
-  let current = "";
-  for (const unit of units) {
-    if (current.length > 0 && current.length + unit.length > maxWidth) {
-      lines.push(current);
-      current = unit;
-    } else {
-      current += unit;
-    }
-  }
-  if (current.length > 0 || lines.length === 0) lines.push(current);
-  return lines;
-}
-
-// Main entry point: word-wrap first, mid-word grapheme fallback only when a
-// single word can't fit an empty line by itself.
-function wrapLine(text: string, maxWidth: number): string[] {
-  const words = wordSegments(text);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    if (word.length > maxWidth) {
-      if (current.length > 0) {
-        lines.push(current);
-        current = "";
-      }
-      const pieces = wrapByGrapheme(word, maxWidth);
-      for (let i = 0; i < pieces.length - 1; i++) lines.push(pieces[i]);
-      current = pieces[pieces.length - 1] ?? "";
-      continue;
-    }
-    if (current.length + word.length > maxWidth) {
-      lines.push(current);
-      // เริ่มบรรทัดใหม่ — ถ้าคำที่ล้นมาเป็นแค่ช่องว่างเฉยๆ (จาก word segmenter ที่แยก
-      // space เป็น token ของตัวเอง) ก็ตัดทิ้งไปเลย กันบรรทัดใหม่ขึ้นต้นด้วยช่องว่าง
-      current = word.trim().length === 0 ? "" : word;
-      continue;
-    }
-    current += word;
-  }
-  if (current.length > 0 || lines.length === 0) lines.push(current);
-  return lines;
-}
-
-// Grapheme-cluster-safety for padLine()'s truncation below — a plain .slice()
-// there would reintroduce the identical "split mid-cluster" bug for a long
-// item name on the receipt (2-column layout truncates the name to make room
-// for the price). Uses the same leading-vowel-glued units as the fallback
-// above so a truncated name can't end on a stranded leading vowel either.
-function truncateGraphemes(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  const units = graphemeUnitsGluingLeadingVowels(text);
-  let result = "";
-  for (const unit of units) {
-    if (result.length + unit.length > maxLen) break;
-    result += unit;
-  }
-  return result;
-}
-
-function padLine(left: string, right: string, width = LINE_WIDTH): string {
-  const rightStr = right;
-  const maxLeft = Math.max(1, width - rightStr.length - 1);
-  const leftStr = left.length > maxLeft ? truncateGraphemes(left, maxLeft) : left;
-  const gap = Math.max(1, width - leftStr.length - rightStr.length);
-  return leftStr + " ".repeat(gap) + rightStr;
-}
+// การตัดบรรทัด/วัดความกว้างข้อความไทย (wrapLine, columns, displayWidth) อยู่ที่ printText.ts
 
 async function ensurePrinterConnected(): Promise<void> {
   const printer = getSelectedPrinter();
@@ -371,50 +233,23 @@ function emitTicketLines(builder: typeof CapacitorThermalPrinter, lines: TicketL
 }
 
 export async function printReceiptNative(data: ReceiptData, lang: Language): Promise<void> {
-  const t = T[lang];
   await ensurePrinterConnected();
-  const now = new Date();
 
-  // ใบเสร็จทั้งใบใช้ขนาดปกติ GS! 0x00 เท่ากันหมด ไม่ขยายเลยแม้แต่บรรทัดเดียว — ส่ง SIZE_NORMAL
-  // ไว้ตอนต้นเผื่อ session ก่อนหน้า (เช่นพิมพ์ตั๋วครัวที่ตั้ง GS!0x11 ไว้บนการเชื่อมต่อเดิม)
-  // ยังไม่ reset กลับมา เนื้อหา/ลำดับ/ข้อความให้ตรงกับ ReceiptTicket JSX เดิมใน ticket.tsx เป๊ะ
-  const builder = CapacitorThermalPrinter.begin()
-    .raw(selectCodepageCmd(THAI_CODEPAGE_N))
-    .raw(SIZE_NORMAL)
-    .align("center")
-    .raw(boldCmd(true));
-  thaiText(builder, `${t.appName}\n`);
-  builder.raw(boldCmd(false));
-  thaiText(builder, `${data.label}\n`);
-  thaiText(builder, `${now.toLocaleString(lang === "th" ? "th-TH" : "en-US")}\n`);
-  builder.align("left");
-  thaiText(builder, "-".repeat(LINE_WIDTH) + "\n");
-
-  data.items.forEach((ci) => {
-    const name = lang === "en" ? ci.item.name.en : ci.item.name.th;
-    // ชื่อรายการชิดซ้าย/ราคาชิดขวาในบรรทัดเดียวกัน — เทียบเท่า flex justify-between บนเว็บ
-    // (padLine เติม space ให้ราคาไปสุดขวาที่ความกว้างบรรทัดจริงของกระดาษ ไม่ล้นแม้ราคาหลายหลัก)
-    // ฿ อยู่ "หลัง" ตัวเลขตามที่ขอ (เช่น "210฿")
-    thaiText(builder, padLine(`${ci.quantity}x ${name}`, `${cartItemTotal(ci)}${t.thb}`) + "\n");
-    const opt = formatOptionDetails(ci, lang);
-    if (opt) thaiText(builder, `  ${opt}\n`);
-    if (ci.customNote) {
-      thaiText(builder, `  + ${ci.customNote} (+${ci.customAddOnPrice || 0}${t.thb})\n`);
-    }
-  });
-
-  thaiText(builder, "-".repeat(LINE_WIDTH) + "\n");
-
-  // ยอดรวม — ชิดซ้าย/ขวาแบบเดียวกับรายการ ตัวหนา ขนาดปกติ ตรงกับ flex justify-between +
-  // fontWeight:700 ใน ReceiptTicket JSX เดิม (ไม่ขยายขนาดแล้ว ทั้งใบใช้ขนาดปกติเท่ากันหมด)
-  builder.raw(boldCmd(true));
-  thaiText(builder, padLine(lang === "en" ? "Total" : "รวมทั้งหมด", `${data.total}${t.thb}`) + "\n");
-  builder.raw(boldCmd(false));
-  // ไม่พิมพ์ส่วนการชำระเงิน (ชำระโดย/รับเงิน/เงินทอน/ยอดเงินสด-โอน) — ใบเสร็จมีแค่รายการ + ยอดรวม
-
-  thaiText(builder, "-".repeat(LINE_WIDTH) + "\n");
-  builder.align("center");
-  thaiText(builder, `${lang === "en" ? "Thank you for your visit" : "ขอบคุณที่ใช้บริการค่ะ"}\n`);
+  // ใบเสร็จทั้งใบใช้ขนาดปกติ GS! 0x00 — ส่ง SIZE_NORMAL ทุกบรรทัดกันขนาดค้างจากใบก่อนหน้า (ตั๋วครัว
+  // ตั้ง GS! ไว้บน connection เดิม) จัดหน้า/ตัดบรรทัด/ชิดขวาราคาที่ receiptLayout.ts ที่นี่แค่ส่งทีละบรรทัด
+  // บรรทัดละ .raw() ครั้งเดียว (ขนาด + ตัวหนา + ข้อความ) เหตุผลเดียวกับ emitTicketLines
+  const builder = CapacitorThermalPrinter.begin().raw(selectCodepageCmd(THAI_CODEPAGE_N));
+  let align: "left" | "center" | null = null;
+  for (const line of layoutReceipt(data, lang, new Date())) {
+    if (line.align !== align) builder.align((align = line.align));
+    builder.raw([
+      ...SIZE_NORMAL,
+      ...(line.bold ? boldCmd(true) : []),
+      ...thaiRaw(`${line.text}
+`),
+      ...(line.bold ? boldCmd(false) : []),
+    ]);
+  }
   builder.feedCutPaper();
 
   await builder.write();
