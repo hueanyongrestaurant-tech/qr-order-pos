@@ -19,7 +19,8 @@
 export const TABLE_SESSION_MAX_MS = 3 * 60 * 60 * 1000; // หน้าเว็บลูกค้าหมดอายุเองหลังเปิดไว้ 3 ชม.
 export const CLOSURE_CHECK_TIMEOUT_MS = 4000; // อ่านเวลาปิดบิลไม่ทันในเวลานี้ = ปล่อยสั่งได้ตามปกติ
 
-export type ExpiredReason = "closed" | "timeout" | "unknown";
+// moved = โต๊ะถูกย้าย (ต้องสแกน QR ที่โต๊ะใหม่) · revoked = รหัสลิงก์ ?t= ถูกสร้างใหม่แทนแล้ว
+export type ExpiredReason = "closed" | "timeout" | "unknown" | "moved" | "revoked";
 
 export interface TableSession {
   id: string;

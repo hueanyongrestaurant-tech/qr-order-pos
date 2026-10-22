@@ -21,11 +21,31 @@ export const OUTER_KITCHEN_ITEM_PREFIXES = ["ข้าวซอย", "ขนม�
 // categoryId ของรายการ Add-on แยกที่พนักงานพิมพ์เอง (handleManualAddOn ใน App.tsx) — พิมพ์ทุกจุด
 export const ADDON_CATEGORY_ID = "__addon__";
 
-// ผังโต๊ะในร้าน — เลขโต๊ะ = "<ชั้น>-<โต๊ะ>" (ตรงกับ QR และ rules ของ orders) ใช้ทั้งหน้าเลือกโต๊ะและหน้าย้ายโต๊ะ
-export const TABLE_FLOORS: { floor: number; tables: number }[] = [
-  { floor: 1, tables: 5 },
-  { floor: 2, tables: 9 },
+// ─── ผังโต๊ะในร้าน — ตั้งค่าที่นี่ที่เดียว (หน้าเลือกโต๊ะ/ย้ายโต๊ะ/ลิงก์โต๊ะ/สถิติ อ่านจากตรงนี้หมด) ───
+// เลขโต๊ะภายใน = "<zone>-<ลำดับ>" (เช่น 1-3) ต้องเป็นตัวเลขเสมอ ให้ผ่าน rules ของ orders — ห้ามเปลี่ยนเลขโต๊ะที่ใช้อยู่
+// (ออเดอร์เก่า/สถิติผูกกับเลขนี้)
+// โต๊ะที่มีชื่อ (tableNames) แสดงชื่อแทน "โต๊ะ 3-1" ทุกที่ ทั้งหน้าลูกค้า ตั๋วครัว ใบเสร็จ ประวัติ สถิติ
+// เพิ่มโต๊ะ: เพิ่ม tables | เพิ่มโซน: เพิ่มแถวใหม่ด้วย zone เลขที่ยังไม่เคยใช้
+// แล้วไปหน้า "ลิงก์โต๊ะ" ฝั่งพนักงานเพื่อสร้างลิงก์ QR ของโต๊ะใหม่
+export interface TableZoneConfig {
+  zone: number;
+  name: { th: string; en: string };
+  tables: number;
+  tableNames?: Record<number, { th: string; en: string }>;
+}
+export const TABLE_ZONES: TableZoneConfig[] = [
+  { zone: 1, name: { th: "ชั้น 1", en: "Floor 1" }, tables: 5 },
+  { zone: 2, name: { th: "ชั้น 2", en: "Floor 2" }, tables: 9 },
+  {
+    zone: 3,
+    name: { th: "ม้าหินอ่อน", en: "Marble bench" },
+    tables: 1,
+    tableNames: { 1: { th: "ม้าหินอ่อน", en: "Marble bench" } },
+  },
 ];
+
+// หน้าเว็บลูกค้า (ลิงก์ในหน้า "ลิงก์โต๊ะ" ใช้ค่านี้เสมอ — แอป Android ไม่ได้อยู่บนโดเมนนี้ จึงใช้ window.location ไม่ได้)
+export const CUSTOMER_SITE_URL = "https://hueanyongrestaurant-tech.github.io/qr-order-pos/";
 
 export const ADD_ONS = [
   { id: "extra-plate", label: { en: "Extra Plate", th: "จานเปล่าเพิ่ม" }, price: 10 },

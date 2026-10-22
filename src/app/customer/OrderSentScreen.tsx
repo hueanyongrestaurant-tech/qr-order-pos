@@ -1,6 +1,7 @@
-import { CheckCircle } from "lucide-react";
+import { CheckCircle, ReceiptText } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
+import { tableTitle } from "../tables";
 
 // ─── Order Sent Screen ────────────────────────────────────────────────────────
 
@@ -8,9 +9,10 @@ interface OrderSentProps {
   lang: Language;
   tableNumber: string;
   onOrderMore: () => void;
+  onViewOrdered?: () => void; // เฉพาะลิงก์ใหม่ (?t=)
 }
 
-export function OrderSentScreen({ lang, tableNumber, onOrderMore }: OrderSentProps) {
+export function OrderSentScreen({ lang, tableNumber, onOrderMore, onViewOrdered }: OrderSentProps) {
   const t = T[lang];
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-6 text-center">
@@ -34,7 +36,7 @@ export function OrderSentScreen({ lang, tableNumber, onOrderMore }: OrderSentPro
         }}
       >
         <div className="text-secondary font-semibold text-sm">
-          {t.tableLabel} {tableNumber}
+          {tableTitle(tableNumber, lang)}
         </div>
       </div>
 
@@ -51,6 +53,15 @@ export function OrderSentScreen({ lang, tableNumber, onOrderMore }: OrderSentPro
       >
         {t.orderMore}
       </button>
+      {onViewOrdered && (
+        <button
+          onClick={onViewOrdered}
+          className="mt-4 px-8 py-3 rounded-2xl font-semibold text-base text-primary border-2 border-primary/40 hover:bg-primary/5 transition-all active:scale-95 flex items-center gap-2"
+        >
+          <ReceiptText size={18} />
+          {t.orderedView}
+        </button>
+      )}
     </div>
   );
 }

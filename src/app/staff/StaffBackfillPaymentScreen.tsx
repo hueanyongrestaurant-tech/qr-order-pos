@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, ChevronLeft, History, Loader2 } from "lucide-react";
 import type { CartItem, Language, PaymentInput, PaymentMethod } from "../types";
 import { T } from "../translations";
+import { tableTitle } from "../tables";
 import { cartItemTotal, cartTotal, formatOptionDetails } from "../utils";
 import { LannaBorder } from "../shared";
 import { EMPTY_SPLIT, SplitAmountField, type SplitEntry, type SplitSide } from "./StaffPaymentScreen";
@@ -39,7 +40,7 @@ export function StaffBackfillPaymentScreen({
   const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", {
     weekday: "short", day: "numeric", month: "short", year: "numeric",
   });
-  const where = isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : `${t.tableLabel} ${tableNumber}`;
+  const where = isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : tableTitle(tableNumber ?? "", lang);
 
   const handleSave = () => {
     if (!canSave || !method) return;

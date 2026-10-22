@@ -12,6 +12,7 @@
 
 import type { CartItem, Language, Order } from "../types";
 import { cartItemKey, unservedItems } from "../utils";
+import { tableShort } from "../tables";
 
 export interface MoveGroup {
   moveId: string;
@@ -82,5 +83,7 @@ export function buildMoveTicketOrder(group: MoveGroup): Order | null {
 
 // บรรทัดหัวใบ — เครื่องพิมพ์ใช้ codepage TIS-620 ไม่มีลูกศร "→" (จะออกเป็น "?") บนกระดาษจึงใช้ "->"
 export function moveBanner(from: string, to: string, lang: Language): string {
-  return lang === "en" ? `MOVED ${from} -> ${to}` : `ย้ายจาก ${from} -> ${to}`;
+  const f = tableShort(from, lang);
+  const t = tableShort(to, lang);
+  return lang === "en" ? `MOVED ${f} -> ${t}` : `ย้ายจาก ${f} -> ${t}`;
 }

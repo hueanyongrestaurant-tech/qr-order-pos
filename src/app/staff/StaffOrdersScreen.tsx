@@ -3,6 +3,7 @@ import { ArrowRightLeft, Check, Clock, Plus, Printer, RotateCcw, Trash2, X } fro
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
+import { isNamedTable, tableShort, tableTitle } from "../tables";
 import { compareTables, formatClock, lineServedQty, liveItems, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 import type { StockAlert } from "../prep";
@@ -103,7 +104,7 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     onNotice((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err)));
 
   const en = lang === "en";
-  const tableText = (o: Order) => (o.isTakeaway ? o.takeawayLabel || "T" : `${t.tableLabel} ${o.tableNumber}`);
+  const tableText = (o: Order) => (o.isTakeaway ? o.takeawayLabel || "T" : tableTitle(o.tableNumber, lang));
   const itemName = (ci: CartItem) => (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th);
   const itemText = (ci: CartItem) => itemName(ci) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
   const noLabel = en ? "No" : "ไม่";
@@ -602,11 +603,11 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                       style={{ background: "rgba(251, 191, 36, 0.08)", borderColor: "rgba(217, 119, 6, 0.15)" }}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-[#3C2414] text-[#FFF8F0] font-display font-bold text-lg rounded-full flex items-center justify-center flex-shrink-0">
-                          {order.tableNumber}
+                        <div className={`${isNamedTable(order.tableNumber) ? "h-10 px-3 text-sm" : "w-10 h-10 text-lg"} bg-[#3C2414] text-[#FFF8F0] font-display font-bold rounded-full flex items-center justify-center flex-shrink-0`}>
+                          {tableShort(order.tableNumber, lang)}
                         </div>
                         <div>
-                          <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t.tableLabel}</div>
+                          {!isNamedTable(order.tableNumber) && <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t.tableLabel}</div>}
                           <div className="flex items-center gap-1 text-amber-600 text-xs font-medium">
                             <Clock size={12} />
                             <span>{formatClock(order.timestamp)}</span>
@@ -743,11 +744,11 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                       style={{ background: "rgba(74, 103, 65, 0.06)", borderColor: "rgba(74, 103, 65, 0.15)" }}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-secondary text-secondary-foreground font-display font-bold text-lg rounded-full flex items-center justify-center flex-shrink-0">
-                          {tableNum}
+                        <div className={`${isNamedTable(tableNum) ? "h-10 px-3 text-sm" : "w-10 h-10 text-lg"} bg-secondary text-secondary-foreground font-display font-bold rounded-full flex items-center justify-center flex-shrink-0`}>
+                          {tableShort(tableNum, lang)}
                         </div>
                         <div>
-                          <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t.tableLabel}</div>
+                          {!isNamedTable(tableNum) && <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t.tableLabel}</div>}
                           <div className="text-muted-foreground text-sm">
                             {data.orders.length} {data.orders.length === 1 ? t.rounds : t.roundsPlural}
                           </div>

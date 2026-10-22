@@ -2,6 +2,7 @@ import { AlertTriangle, ChevronLeft, Loader2, Minus, Plus, ShoppingCart, X } fro
 import type { CartItem, Language } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
+import { tableTitle } from "../tables";
 import { cartItemMeatLabel, cartItemTotal, cartTotal, resolvePhoto } from "../utils";
 import { LannaBorder } from "../shared";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
@@ -77,7 +78,7 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
             </button>
             <div className="bg-[#4A6741] px-2.5 py-1 rounded-full">
               <span className="text-[#FFF8F0] text-xs font-medium">
-                {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : `${t.tableLabel} ${tableNumber}`}
+                {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : tableTitle(tableNumber, lang)}
               </span>
             </div>
           </div>

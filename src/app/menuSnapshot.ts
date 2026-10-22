@@ -31,7 +31,7 @@ export interface BuiltMenuSnapshot {
 }
 
 // JSON ที่เรียง key เสมอ — เครื่องพนักงานทุกเครื่องได้ hash เดียวกันจากข้อมูลเดียวกัน (ไม่เขียนซ้ำเพราะลำดับ field ต่างกัน)
-function stableStringify(value: unknown): string {
+export function stableStringify(value: unknown): string {
   return JSON.stringify(value, (_key, v) => {
     if (v && typeof v === "object" && !Array.isArray(v)) {
       return Object.keys(v).sort().reduce<Record<string, unknown>>((acc, k) => {
@@ -44,7 +44,7 @@ function stableStringify(value: unknown): string {
 }
 
 // FNV-1a 32-bit — แค่ไว้เทียบว่าเนื้อหาเปลี่ยนหรือยัง ไม่ใช่ความปลอดภัย
-function fnv1a(str: string): string {
+export function fnv1a(str: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);

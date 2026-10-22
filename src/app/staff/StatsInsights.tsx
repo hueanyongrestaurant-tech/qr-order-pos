@@ -3,8 +3,8 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
 import type { Category, Language, MenuItem, Order } from "../types";
 import { T } from "../translations";
-import { TABLE_FLOORS } from "../constants";
-import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, parseTableNumber, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
+import { ZONES, isKnownTable, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
+import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
 
 // ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
 // คิดจากออเดอร์ที่จ่ายแล้วชุดเดียวกับส่วนรายได้ (ไม่อ่าน Firestore เพิ่ม) — ดู statsInsights.ts
@@ -65,23 +65,23 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
   // โต๊ะแยกตามชั้น: แถวเฉพาะโต๊ะที่มีบิล เรียงจากบิลมากไปน้อย — โต๊ะที่ไม่มีบิลรวมไว้บรรทัดเดียวใต้ตาราง
   const byTable = new Map(tables.map((r) => [r.table, r]));
   const dineInRevenue = tables.reduce((s, r) => s + r.revenue, 0);
-  const floors = TABLE_FLOORS.map((f) => {
-    const rows = Array.from({ length: f.tables }, (_, i) => byTable.get(`${f.floor}-${i + 1}`) ?? { table: `${f.floor}-${i + 1}`, bills: 0, revenue: 0 })
+  const floors = ZONES.map((z) => {
+    const label = new Map(z.tables.map((tb) => [tb.id, tableButtonLabel(tb, lang)]));
+    const rows = z.tables.map((tb) => byTable.get(tb.id) ?? { table: tb.id, bills: 0, revenue: 0 })
       .sort((a, b) => b.bills - a.bills || a.revenue - b.revenue || a.table.localeCompare(b.table, undefined, { numeric: true }));
     return {
-      floor: f.floor,
+      floor: z.zone,
+      name: zoneTitle(z, lang),
+      label,
       rows: rows.filter((r) => r.bills > 0),
-      unused: rows.filter((r) => r.bills === 0).map((r) => r.table.split("-")[1]).sort((a, b) => Number(a) - Number(b)),
+      unused: rows.filter((r) => r.bills === 0).sort((a, b) => a.table.localeCompare(b.table, undefined, { numeric: true })).map((r) => label.get(r.table) ?? r.table),
       bills: rows.reduce((s, r) => s + r.bills, 0),
       revenue: rows.reduce((s, r) => s + r.revenue, 0),
       max: Math.max(1, ...rows.map((r) => r.bills)),
     };
   });
   // โต๊ะที่ไม่อยู่ในผัง (เลขโต๊ะเก่า/รูปแบบอื่น) — ยังนับในยอดรวม แค่ไม่มีแถวของตัวเอง
-  const unmappedBills = tables.filter((r) => {
-    const p = parseTableNumber(r.table);
-    return !p || !TABLE_FLOORS.some((f) => f.floor === p.floor && p.table >= 1 && p.table <= f.tables);
-  }).reduce((s, r) => s + r.bills, 0);
+  const unmappedBills = tables.filter((r) => !isKnownTable(r.table)).reduce((s, r) => s + r.bills, 0);
 
   // เวลานั่ง: ข้อความเล็กบรรทัดเดียว เฉพาะตอนข้อมูลยังเก็บไม่ครบช่วง
   const seatingSub = seating.trackedSince && seating.missingPaidAt > 0
@@ -105,7 +105,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
         <StatCard
           icon={<Utensils size={14} />}
           label={en ? "Busiest table" : "โต๊ะยอดนิยม"}
-          value={topTable ? `${t.tableLabel} ${topTable.table}` : "–"}
+          value={topTable ? tableTitle(topTable.table, lang) : "–"}
           sub={topTable ? (en ? `${topTable.bills} bills` : `${topTable.bills} บิล`) : undefined}
         />
         <StatCard
@@ -120,12 +120,12 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
       {/* ─── โต๊ะแยกตามชั้น ─── */}
       {dineInCount > 0 && (
         <div className="bg-card rounded-2xl border border-border p-4">
-          <h3 className="font-semibold text-foreground text-sm mb-3">{en ? "Tables by floor" : "โต๊ะแยกตามชั้น"}</h3>
+          <h3 className="font-semibold text-foreground text-sm mb-3">{en ? "Tables by zone" : "โต๊ะแยกตามโซน"}</h3>
           <div className="grid sm:grid-cols-2 gap-4">
             {floors.map((f) => (
               <div key={f.floor} className="rounded-xl bg-background border border-border p-3">
                 <div className="flex items-baseline justify-between gap-2 mb-2">
-                  <span className="font-semibold text-foreground">{en ? `Floor ${f.floor}` : `ชั้น ${f.floor}`}</span>
+                  <span className="font-semibold text-foreground">{f.name}</span>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {f.bills} {en ? "bills" : "บิล"} · {money(f.revenue)} · {Math.round((f.bills / dineInCount) * 100)}%
                   </span>
@@ -137,7 +137,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
                   <span className="text-[11px] text-muted-foreground text-right">{en ? "Revenue" : "ยอดเงิน"}</span>
                   {f.rows.map((r) => (
                     <div key={r.table} className="contents">
-                      <span className="font-semibold text-foreground tabular-nums">{r.table.split("-")[1]}</span>
+                      <span className="font-semibold text-foreground tabular-nums">{f.label.get(r.table) ?? r.table}</span>
                       <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                         <div className="h-full rounded-full bg-primary" style={{ width: `${(r.bills / f.max) * 100}%` }} />
                       </div>
@@ -149,7 +149,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
                 {f.rows.length === 0 ? (
                   <p className="text-xs text-muted-foreground">{en ? "No bills yet" : "ยังไม่มีบิล"}</p>
                 ) : f.unused.length > 0 && (
-                  <p className="text-[11px] text-muted-foreground mt-2">{en ? `No bills: table ${f.unused.join(", ")}` : `ไม่มีบิล: โต๊ะ ${f.unused.join(", ")}`}</p>
+                  <p className="text-[11px] text-muted-foreground mt-2">{en ? `No bills: ${f.unused.join(", ")}` : `ไม่มีบิล: ${f.unused.join(", ")}`}</p>
                 )}
               </div>
             ))}

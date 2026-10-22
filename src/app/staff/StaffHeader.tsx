@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Printer, WifiOff } from "lucide-react";
+import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Printer, WifiOff, Link2 } from "lucide-react";
 import type { Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { PrinterSettingsModal } from "./PrinterSettingsModal";
+import { TableLinksModal } from "./TableLinksModal";
 import { AUDIT_UI_ENABLED } from "../constants";
 import { useConnectionAlert } from "./connectionStore";
 
@@ -22,6 +23,7 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
   // เก็บ state เปิด/ปิด modal ไว้ในตัวเอง ไม่ผ่าน props — StaffHeader ถูกเรียกใช้จาก 7 หน้าจอ
   // จะได้ไม่ต้องแก้ signature/props ที่ต้นทางทุกที่ที่เรียกใช้
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const [showTableLinks, setShowTableLinks] = useState(false);
   const alert = useConnectionAlert();
   return (
     <div className="bg-[#3C2414] sticky top-0 z-50">
@@ -44,6 +46,13 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
             {t.langSwitch}
           </button>
           <button
+            onClick={() => setShowTableLinks(true)}
+            className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5"
+            title={lang === "en" ? "Table links" : "ลิงก์โต๊ะ"}
+          >
+            <Link2 size={17} />
+          </button>
+          <button
             onClick={() => setShowPrinterSettings(true)}
             className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5"
             title={lang === "en" ? "Printer settings" : "ตั้งค่าเครื่องพิมพ์"}
@@ -59,6 +68,7 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
           )}
         </div>
       </div>
+      {showTableLinks && <TableLinksModal lang={lang} onClose={() => setShowTableLinks(false)} />}
       {showPrinterSettings && (
         <PrinterSettingsModal lang={lang} onClose={() => setShowPrinterSettings(false)} />
       )}

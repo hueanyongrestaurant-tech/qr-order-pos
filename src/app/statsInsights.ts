@@ -115,12 +115,6 @@ export function topHours(perHour: HourStat[], n = 3): HourStat[] {
   return perHour.filter((h) => h.total > 0).sort((a, b) => b.total - a.total || a.hour - b.hour).slice(0, n);
 }
 
-// "1-3" → ชั้น 1 โต๊ะ 3 (ตามผังใน TABLE_FLOORS) — รูปแบบอื่นคืน null
-export function parseTableNumber(tn: string): { floor: number; table: number } | null {
-  const m = /^(\d+)-(\d+)$/.exec(tn);
-  return m ? { floor: Number(m[1]), table: Number(m[2]) } : null;
-}
-
 // ─── ชื่อเมนู/ตัวเลือกในสถิติ: ใช้ "ปัจจุบัน" ตาม id เสมอ ───
 // ออเดอร์เก็บสำเนาเมนูตอนสั่ง (ชื่อ/ตัวเลือกตอนนั้น) — เมนูที่เปลี่ยนชื่อแล้วจะนับรวมกันตาม id และโชว์ชื่อปัจจุบัน
 // เมนู/ตัวเลือกที่ถูกลบไปแล้ว ใช้ชื่อจากออเดอร์ล่าสุดที่มี

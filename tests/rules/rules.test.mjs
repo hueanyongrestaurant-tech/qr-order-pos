@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { test, before, after, beforeEach } from "node:test";
 import { assertFails, assertSucceeds, initializeTestEnvironment } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch, increment, serverTimestamp, runTransaction, Timestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, increment, serverTimestamp, runTransaction, Timestamp } from "firebase/firestore";
 
 let env;
 before(async () => {
@@ -160,4 +160,42 @@ test("staff: manual order + decrement + soldOut in one transaction", async () =>
     tx.update(doc(db, "stock", "padthai"), { remaining: 0, lastOrderId: "s1" });
     tx.update(doc(db, "menuItems", "padthai"), { soldOut: true });
   }));
+});
+
+// ─── ลิงก์โต๊ะ + สรุป "ที่สั่งไปแล้ว" (tableViews) ───
+const seedView = async () => env.withSecurityRulesDisabled(async (ctx) => {
+  await setDoc(doc(ctx.firestore(), "tableViews", "Tok3nAbcdefghijk"), { table: "1-3", version: 1, data: "{}", hash: "x" });
+});
+test("guest: can open a table view when the token is known", async () => {
+  await seedView();
+  await assertSucceeds(getDoc(doc(guest(), "tableViews", "Tok3nAbcdefghijk")));
+});
+test("guest: cannot list table views (would leak every table's token)", async () => {
+  await seedView();
+  await assertFails(getDocs(collection(guest(), "tableViews")));
+});
+test("guest: cannot write table views", async () => {
+  await seedView();
+  await assertFails(setDoc(doc(guest(), "tableViews", "new"), { table: "1-3" }));
+  await assertFails(updateDoc(doc(guest(), "tableViews", "Tok3nAbcdefghijk"), { data: "{\"lines\":[]}" }));
+  await assertFails(deleteDoc(doc(guest(), "tableViews", "Tok3nAbcdefghijk")));
+});
+test("staff: list / create / update / delete table views", async () => {
+  await seedView();
+  const db = staff();
+  await assertSucceeds(getDocs(collection(db, "tableViews")));
+  await assertSucceeds(setDoc(doc(db, "tableViews", "new"), { table: "2-1", version: 1, data: "{}", hash: "y" }));
+  await assertSucceeds(updateDoc(doc(db, "tableViews", "new"), { data: "{}", hash: "z" }));
+  await assertSucceeds(deleteDoc(doc(db, "tableViews", "Tok3nAbcdefghijk")));
+});
+test("guest: orders are still not readable", async () => {
+  await assertFails(getDoc(doc(guest(), "orders", "existing")));
+});
+test("guest: can read the legacy-link switch, cannot change it", async () => {
+  await assertSucceeds(getDoc(doc(guest(), "status", "qrConfig")));
+  await assertFails(setDoc(doc(guest(), "status", "qrConfig"), { legacyTableUrl: true }));
+  await assertSucceeds(setDoc(doc(staff(), "status", "qrConfig"), { legacyTableUrl: false }));
+});
+test("guest: order for ม้าหินอ่อน (3-1) passes the existing orders rule", async () => {
+  await assertSucceeds(setDoc(doc(guest(), "orders", "o31"), order({ tableNumber: "3-1" })));
 });

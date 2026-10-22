@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronLeft, Minus, Plus, ShoppingCart } from "lucide-react";
 import type { CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
+import { tableTitle } from "../tables";
 import { itemPrice, menuAvailability, resolvePhoto, uid } from "../utils";
 import { isChoiceClosed, normalizeMenuItem } from "../menuOptions";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
@@ -100,7 +101,7 @@ export function ItemDetailScreen({
           </button>
           <div className="flex items-center gap-2">
             <div className="bg-black/40 backdrop-blur-sm text-white text-xs font-medium px-3 py-1.5 rounded-full">
-              {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : `${t.tableLabel} ${tableNumber}`}
+              {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : tableTitle(tableNumber, lang)}
             </div>
             <button
               onClick={onLangToggle}

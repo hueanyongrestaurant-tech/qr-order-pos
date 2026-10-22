@@ -127,6 +127,7 @@ import { getPrintRole, getSelectedPrinterAddress } from "./staff/printerStore";
 import { isSoundMuted } from "./staff/soundStore";
 import { connectionAlertFrom, setConnectionAlert } from "./staff/connectionStore";
 import { activeDineInOrders, buildMoveTicketOrder, moveBanner, occupiedTables, takeNewMoves } from "./staff/tableMove";
+import { tableShort, tableTitle } from "./tables";
 import { MenuScreen } from "./customer/MenuScreen";
 import { ItemDetailScreen } from "./customer/ItemDetailScreen";
 import { CartScreen } from "./customer/CartScreen";
@@ -142,6 +143,11 @@ import {
   type SessionStart,
   type TableSession,
 } from "./tableSession";
+import { forgetCachedLink, getCustomerLink } from "./customerLink";
+import { buildTableView, encodeTableView, lineFromCartItem, type SentOrder } from "./tableView";
+import { fetchTableLink, writeTableView } from "./tableViewStore";
+import { refreshTableLinks, useTableLinks } from "./staff/tableLinkStore";
+import { OrderedSheet } from "./customer/OrderedSheet";
 
 // ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
 // แต่ละ Staff*Screen import ตรงจากไฟล์ตัวเอง แยกเป็นคนละ JS chunk ต่อหน้าจอ
@@ -228,18 +234,36 @@ function getInitialSessionStart(): SessionStart | null {
   return (memoSessionStart = start);
 }
 
-// closedAt (ms) ล่าสุดของโต๊ะ — 0 = ไม่เคยปิดบิล, "error" = อ่านไม่ได้/ไม่ทันเวลา (ผู้เรียกต้องปล่อยผ่าน)
-async function fetchTableClosedAt(table: string): Promise<number | "error"> {
+// เวลาปิดบิล/ย้ายโต๊ะล่าสุดของโต๊ะ (ms) — 0 = ไม่เคย, "error" = อ่านไม่ได้/ไม่ทันเวลา (ผู้เรียกต้องปล่อยผ่าน)
+// ย้ายโต๊ะจดทั้ง closedAt (รอบนั่งของโต๊ะเดิมหมดอายุ ต้องสแกน QR ที่โต๊ะใหม่) และ movedAt (บอกลูกค้าว่า "ย้ายแล้ว")
+async function fetchTableClosure(table: string): Promise<{ closedAt: number; movedAt: number } | "error"> {
   try {
     const snap = await Promise.race([
       getDoc(doc(db, "status", TABLE_CLOSURES_DOC)),
       new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("timeout")), CLOSURE_CHECK_TIMEOUT_MS)),
     ]);
-    const ts = snap.data()?.closedAt?.[table];
-    return ts?.toMillis ? ts.toMillis() : 0;
+    const ms = (ts: any) => (ts?.toMillis ? ts.toMillis() : 0);
+    return { closedAt: ms(snap.data()?.closedAt?.[table]), movedAt: ms(snap.data()?.movedAt?.[table]) };
   } catch {
     return "error";
   }
+}
+
+// รายการที่เครื่องนี้ส่งในรอบนั่งนี้ (ลิงก์ ?t= เท่านั้น) — โชว์ "กำลังส่งเข้าร้าน" จนกว่าสรุปของโต๊ะจะมี (ดู tableView.ts)
+const sentOrdersKey = (sessionId: string) => `${STORAGE_PREFIX}:sentOrders:${sessionId}`;
+function readSentOrders(sessionId: string): SentOrder[] {
+  try {
+    const raw = sessionStorage.getItem(sentOrdersKey(sessionId));
+    return raw === null ? [] : (JSON.parse(raw) as SentOrder[]);
+  } catch {
+    return [];
+  }
+}
+function recordSentOrder(sessionId: string, sent: SentOrder) {
+  try {
+    const list = [...readSentOrders(sessionId).filter((s) => s.id !== sent.id), sent].slice(-20);
+    sessionStorage.setItem(sentOrdersKey(sessionId), JSON.stringify(list));
+  } catch { /* ignore */ }
 }
 
 // แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
@@ -409,15 +433,10 @@ function ReasonPickerModal({ title, reasons, onConfirm, onCancel, lang }: Reason
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
+// โต๊ะของลูกค้าจากลิงก์ที่เปิดเข้ามา (?t= หรือ ?table= — main.tsx ตัดสินไว้ก่อน render แล้ว) | null = ฝั่งพนักงาน
 function getTableFromUrl(): string | null {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const raw = params.get("table");
-    if (raw && /^[0-9]+-[0-9]+$/.test(raw)) return raw;
-    return null;
-  } catch {
-    return null;
-  }
+  const link = getCustomerLink();
+  return link.kind === "token" || link.kind === "legacy" ? link.table : null;
 }
 
 // ─── หน้าจอค้าง / จำหน้าล่าสุดตอนรีเฟรช ────────────────────────────────────────
@@ -505,6 +524,8 @@ function prepSyncPatches(
 
 // รอให้การแก้เมนูหลายจุดติดกัน (เช่นลากเรียงลำดับ = เขียนหลาย doc) นิ่งก่อนค่อยเขียน menu snapshot ครั้งเดียว
 const MENU_SNAPSHOT_DEBOUNCE_MS = 2000;
+// ออเดอร์เปลี่ยนติดๆ กัน (เสิร์ฟทีละรายการ) รวมเป็นการเขียนสรุปโต๊ะครั้งเดียว
+const TABLE_VIEW_DEBOUNCE_MS = 1000;
 // ลูกค้ากดส่งออเดอร์แล้ว server ไม่ตอบภายในนี้ = ขึ้น "ส่งไม่สำเร็จ" (ตะกร้ายังอยู่ กดส่งใหม่ได้ ดู handleConfirmOrder)
 const ORDER_SEND_TIMEOUT_MS = 10000;
 // listener ออเดอร์ฝั่งพนักงาน error แล้ว รอเท่านี้ก่อน subscribe ใหม่ (ไม่ยิงถี่ — แต่ละรอบอ่านออเดอร์ค้างใหม่ทั้งชุด)
@@ -561,7 +582,17 @@ export default function App() {
     }
     setExpiredReason(reason);
     setView("link-expired");
+    setShowOrdered(false);
   };
+  const revokeCustomerLink = () => {
+    const link = getCustomerLink();
+    if (link.kind === "token") forgetCachedLink(link.token);
+    expireTableSession("revoked");
+  };
+  // "ที่สั่งไปแล้ว" — เฉพาะลิงก์ใหม่ (?t=) ลิงก์แบบเดิม (?table=) ไม่มี
+  const customerLink = getCustomerLink();
+  const customerToken = customerLink.kind === "token" ? customerLink.token : null;
+  const [showOrdered, setShowOrdered] = useState(false);
 
   // Customer state
   const [cart, setCart] = useState<CartItem[]>(() =>
@@ -602,6 +633,9 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   // สัญญาณการเชื่อมต่อฝั่งพนักงาน (ดู connectionStore) — ordersRetry เพิ่มทีละ 1 เพื่อ subscribe listener ออเดอร์ใหม่หลัง error
   const [ordersFromCache, setOrdersFromCache] = useState(false);
+  // true = orders listener ได้ข้อมูลจาก server แล้วอย่างน้อย 1 ครั้ง — gate การเขียนสรุป "ที่สั่งไปแล้ว"
+  // (ก่อนหน้านั้น orders ว่าง/มาจาก cache — ห้ามเขียนสรุปว่างทับของจริง)
+  const [ordersSynced, setOrdersSynced] = useState(false);
   const [ordersListenerError, setOrdersListenerError] = useState(false);
   const [ordersRetry, setOrdersRetry] = useState(0);
   const [browserOffline, setBrowserOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
@@ -791,6 +825,35 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [staffLoggedIn, staffMenuSynced, staffCategoriesSynced, serverMenuSnapshotHash, allMenuItems, allCategories]);
 
+  // ─── สรุป "ที่สั่งไปแล้ว" ของแต่ละโต๊ะ (tableViews — ดู tableView.ts / tableViewStore.ts) ───
+  // ทุกเครื่องพนักงานที่เปิดอยู่ช่วยเขียน: คำนวณจากออเดอร์ค้างใน listener เดิม (ไม่อ่านเพิ่ม) เขียนเฉพาะโต๊ะที่สรุปเปลี่ยน
+  // รหัสของทุกโต๊ะอ่านครั้งเดียวตอนเปิดแอป (~1 read ต่อโต๊ะ) ไม่ฟังค้าง — เขียนแล้วไม่มี read ตามมา
+  // ปิดบิล/ย้ายโต๊ะ: ออเดอร์หายจาก listener (หรือย้ายไปโต๊ะใหม่) → สรุปของโต๊ะเดิมว่างแล้วเขียนทับเอง
+  const tableLinks = useTableLinks();
+  const writtenTableViewHashRef = useRef(new Map<string, string>()); // token → hash ที่เขียนไปแล้ว/กำลังเขียน
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !everAuthed) return;
+    refreshTableLinks().catch((err) => console.error("read tableViews failed", err));
+  }, [everAuthed]);
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !everAuthed || !ordersSynced || !tableLinks) return;
+    const timer = window.setTimeout(() => {
+      tableLinks.forEach((link, table) => {
+        const encoded = encodeTableView(buildTableView(orders, table));
+        const written = writtenTableViewHashRef.current;
+        if ((written.get(link.token) ?? link.hash) === encoded.hash) return;
+        written.set(link.token, encoded.hash);
+        writeTableView(link.token, encoded).catch((err) => {
+          if (written.get(link.token) === encoded.hash) written.delete(link.token); // ลองใหม่รอบหน้า
+          // อีกเครื่องสร้างรหัสใหม่ให้โต๊ะนี้ไปแล้ว (doc เดิมถูกลบ) — อ่านรหัสใหม่ แล้ว effect นี้จะเขียนให้เอง
+          if (err?.code === "not-found") refreshTableLinks().catch(() => { });
+          else console.error("write tableView failed", table, err);
+        });
+      });
+    }, TABLE_VIEW_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [everAuthed, ordersSynced, tableLinks, orders]);
+
   // รีเฟรชตอนอยู่หน้ารายละเอียดเมนู: menuItems ยังโหลดไม่มา ต้องรอแล้วค่อยหา item ที่จำไว้กลับมาใส่
   useEffect(() => {
     if (view !== "item-detail" || selectedItem || manualSelectedItem || menuItems.length === 0) return;
@@ -824,10 +887,10 @@ export default function App() {
   useEffect(() => {
     if (initialSessionStart?.action !== "new") return;
     let cancelled = false;
-    fetchTableClosedAt(initialSessionStart.session.table).then((closedAt) => {
+    fetchTableClosure(initialSessionStart.session.table).then((closure) => {
       const cur = tableSessionRef.current;
-      if (cancelled || closedAt === "error" || !cur || cur.baselineClosedAt !== undefined) return;
-      tableSessionRef.current = { ...cur, baselineClosedAt: closedAt };
+      if (cancelled || closure === "error" || !cur || cur.baselineClosedAt !== undefined) return;
+      tableSessionRef.current = { ...cur, baselineClosedAt: closure.closedAt };
       writeTableSession(tableSessionRef.current);
     });
     return () => { cancelled = true; };
@@ -919,6 +982,7 @@ export default function App() {
     // error = listener ถูกปิดไปแล้ว → ขึ้นแถบเตือน แล้ว subscribe ใหม่หลัง ORDERS_RETRY_MS (ordersRetry ใน deps)
     const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       setOrdersFromCache(snapshot.metadata.fromCache);
+      if (!snapshot.metadata.fromCache) setOrdersSynced(true);
       setOrdersListenerError(false);
       if (!isFirstOrdersSnapshotRef.current && snapshot.docChanges().length === 0) return; // metadata อย่างเดียว
 
@@ -1311,19 +1375,35 @@ export default function App() {
     if (soldOutIds.length > 0) patchLocalMenu(localSoldOutPatch(allMenuItems, soldOutIds));
   };
 
-  // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 3 ชม. / โต๊ะถูกปิดบิลไปหลังลูกค้าเปิดหน้า → หน้าให้สแกน QR ใหม่
-  // อ่านเวลาปิดบิลไม่ได้/ไม่ทัน → ปล่อยสั่งได้ตามปกติ (ไม่ให้ปัญหาเน็ตทำให้ลูกค้าจริงสั่งไม่ได้)
+  // เวลาของสรุป "ที่สั่งไปแล้ว" ที่อ่านได้ตอนเช็คก่อนส่งรอบล่าสุด (ดู pendingSentOrders)
+  const viewUpdatedAtBeforeSendRef = useRef<number | undefined>(undefined);
+  // เช็ครอบนั่งก่อนส่งออเดอร์: หมดอายุ 3 ชม. / โต๊ะถูกปิดบิลหรือย้ายไปหลังลูกค้าเปิดหน้า / ลิงก์ ?t= ถูกสร้างใหม่แทน
+  // → หน้าให้สแกน QR ใหม่ | อ่านไม่ได้/ไม่ทัน → ปล่อยสั่งได้ตามปกติ (ไม่ให้ปัญหาเน็ตทำให้ลูกค้าจริงสั่งไม่ได้)
   const tableSessionExpiredBeforeOrder = async (): Promise<boolean> => {
     const session = tableSessionRef.current;
     if (!session) return false;
     if (session.expired) { expireTableSession(session.expired); return true; }
     if (isSessionTimedOut(session, Date.now())) { expireTableSession("timeout"); return true; }
-    const result = checkClosure(session, await fetchTableClosedAt(session.table));
+    // ลิงก์ ?t=: รหัสยังใช้ได้ไหม (พนักงานกดสร้างรหัสใหม่ = ลิงก์เดิมใช้ไม่ได้) — อ่านไม่ได้ = ปล่อยผ่านเหมือนเวลาปิดบิล
+    const link = getCustomerLink();
+    const [closure, linkNow] = await Promise.all([
+      fetchTableClosure(session.table),
+      link.kind === "token" ? fetchTableLink(link.token, CLOSURE_CHECK_TIMEOUT_MS).catch(() => "error" as const) : Promise.resolve("error" as const),
+    ]);
+    if (link.kind === "token" && (linkNow === null || (linkNow !== "error" && linkNow.table !== session.table))) {
+      revokeCustomerLink();
+      return true;
+    }
+    viewUpdatedAtBeforeSendRef.current = linkNow && linkNow !== "error" ? linkNow.updatedAtMs : undefined;
+    const result = checkClosure(session, closure === "error" ? "error" : closure.closedAt);
     if (result.session !== session) {
       tableSessionRef.current = result.session;
       writeTableSession(result.session);
     }
-    if (result.expired) { expireTableSession("closed"); return true; }
+    if (result.expired) {
+      expireTableSession(closure !== "error" && closure.movedAt > 0 && closure.movedAt >= closure.closedAt ? "moved" : "closed");
+      return true;
+    }
     return false;
   };
 
@@ -1337,6 +1417,16 @@ export default function App() {
   const orderSignature = (items: CartItem[]) =>
     JSON.stringify([tableNumber, (JSON.parse(JSON.stringify(items)) as CartItem[]).map(stripItemPhoto)]);
   const finishOrderSent = () => {
+    const attempt = orderAttemptRef.current;
+    const session = tableSessionRef.current;
+    if (customerToken && attempt && session) {
+      recordSentOrder(session.id, {
+        id: attempt.id,
+        sentAt: Date.now(),
+        lines: cartRef.current.map(lineFromCartItem),
+        viewUpdatedAtMs: viewUpdatedAtBeforeSendRef.current,
+      });
+    }
     orderAttemptRef.current = null;
     setOrderSendFailed(false);
     setCart([]);
@@ -2029,10 +2119,10 @@ export default function App() {
       if (err instanceof CloseTableError) {
         setNotice(
           err.code === "pending"
-            ? (en ? `Table ${tableNum} has items not served yet. Serve all items first.` : `โต๊ะ ${tableNum} ยังเสิร์ฟไม่ครบ เสิร์ฟให้ครบก่อนปิดบิล`)
+            ? (en ? `${tableTitle(tableNum, lang)} has items not served yet. Serve all items first.` : `${tableTitle(tableNum, lang)} ยังเสิร์ฟไม่ครบ เสิร์ฟให้ครบก่อนปิดบิล`)
             : err.code === "changed"
-              ? (en ? `Table ${tableNum}'s bill just changed. Check the total and close again.` : `บิลโต๊ะ ${tableNum} เพิ่งมีการเปลี่ยนแปลง ตรวจยอดแล้วกดปิดบิลอีกครั้ง`)
-              : (en ? `Table ${tableNum}'s bill is already closed.` : `บิลโต๊ะ ${tableNum} ถูกปิดไปแล้ว`),
+              ? (en ? `${tableTitle(tableNum, lang)}'s bill just changed. Check the total and close again.` : `บิล${tableTitle(tableNum, lang)} เพิ่งมีการเปลี่ยนแปลง ตรวจยอดแล้วกดปิดบิลอีกครั้ง`)
+              : (en ? `${tableTitle(tableNum, lang)}'s bill is already closed.` : `บิล${tableTitle(tableNum, lang)} ถูกปิดไปแล้ว`),
         );
       } else {
         setNotice((en ? "Could not close the bill: " : "ปิดบิลไม่สำเร็จ: ") + (err?.message || String(err)));
@@ -2070,6 +2160,8 @@ export default function App() {
         tx.update(s.ref, { tableNumber: to, moveId, movedFrom: from, movedAt: serverTimestamp() }),
       );
       tx.set(guardRef, { lastMoveId: moveId, lastFrom: from, lastTo: to, lastMoveAt: serverTimestamp() }, { merge: true });
+      // มือถือลูกค้าที่โต๊ะเดิมสั่งต่อไม่ได้ — ต้องสแกน QR ที่โต๊ะใหม่ (ไม่งั้นของจะเข้าโต๊ะเดิมที่ว่างแล้ว)
+      tx.set(doc(db, "status", TABLE_CLOSURES_DOC), { closedAt: { [from]: serverTimestamp() }, movedAt: { [from]: serverTimestamp() } }, { merge: true });
       const action: ActivityAction = "table_moved";
       tx.set(doc(collection(db, "activityLogs")), {
         action,
@@ -2087,9 +2179,9 @@ export default function App() {
     setMoveFromTable(null);
     const t = T[lang];
     const n = activeDineInOrders(orders, from).length;
-    askConfirm(t.moveTableConfirm(n, from, to), () => {
+    askConfirm(t.moveTableConfirm(n, tableShort(from, lang), tableShort(to, lang)), () => {
       handleMoveTable(from, to).catch((err) => {
-        if (err instanceof MoveTableError) setNotice(err.code === "occupied" ? t.moveTableOccupied(to) : t.moveTableNothing(from));
+        if (err instanceof MoveTableError) setNotice(err.code === "occupied" ? t.moveTableOccupied(tableTitle(to, lang)) : t.moveTableNothing(tableTitle(from, lang)));
         else setNotice(t.moveTableFailed + (err?.message || String(err)));
       });
     }, { confirmLabel: t.moveTableConfirmYes });
@@ -2633,6 +2725,7 @@ export default function App() {
           onLangToggle={toggleLang}
           categories={categories}
           isBusy={isBusy}
+          onViewOrdered={customerToken ? () => setShowOrdered(true) : undefined}
         />
       );
       break;
@@ -2694,6 +2787,7 @@ export default function App() {
           lang={lang}
           tableNumber={tableNumber!}
           onOrderMore={() => setView("menu")}
+          onViewOrdered={customerToken ? () => setShowOrdered(true) : undefined}
         />
       );
       break;
@@ -3052,6 +3146,17 @@ export default function App() {
         />
       )}
       {notice && <NoticeModal message={notice} lang={lang} onClose={() => setNotice(null)} />}
+      {showOrdered && customerToken && tableNumber && tableSessionRef.current && (
+        <OrderedSheet
+          lang={lang}
+          token={customerToken}
+          table={tableNumber}
+          baselineClosedAt={tableSessionRef.current.baselineClosedAt ?? null}
+          sentOrders={readSentOrders(tableSessionRef.current.id)}
+          onRevoked={revokeCustomerLink}
+          onClose={() => setShowOrdered(false)}
+        />
+      )}
       {moveFromTable && (
         <Suspense fallback={null}>
           <MoveTableModal

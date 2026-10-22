@@ -3,7 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { LannaBorder } from "../shared";
-import { TABLE_FLOORS } from "../constants";
+import { ZONES, tableButtonLabel, zoneTitle } from "../tables";
 
 // ใช้ร่วมกับหน้าตั้งค่าบิลย้อนหลัง: title/topSlot (ช่องเวลา) แทรกด้านบน และ disabled ปิดปุ่มโต๊ะจนกว่าจะกรอกครบ
 export function StaffManualTableScreen({
@@ -45,20 +45,18 @@ export function StaffManualTableScreen({
           {lang === "en" ? "Takeaway" : "กลับบ้าน"}
         </button>
 
-        {TABLE_FLOORS.map((f) => (
-          <div key={f.floor} className="mb-6">
-            <h3 className="font-semibold text-foreground text-sm mb-3">
-              {lang === "en" ? `Floor ${f.floor}` : `ชั้น ${f.floor}`}
-            </h3>
+        {ZONES.map((z) => (
+          <div key={z.zone} className="mb-6">
+            <h3 className="font-semibold text-foreground text-sm mb-3">{zoneTitle(z, lang)}</h3>
             <div className="grid grid-cols-4 gap-2.5">
-              {Array.from({ length: f.tables }, (_, i) => i + 1).map((n) => (
+              {z.tables.map((tb) => (
                 <button
-                  key={n}
-                  onClick={() => onSelect(`${f.floor}-${n}`)}
+                  key={tb.id}
+                  onClick={() => onSelect(tb.id)}
                   disabled={disabled}
-                  className="aspect-square rounded-2xl text-lg font-semibold bg-card text-foreground border border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
+                  className={`${tb.name ? "col-span-2 aspect-[2/1] text-base px-2" : "aspect-square text-lg"} rounded-2xl font-semibold bg-card text-foreground border border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none`}
                 >
-                  {n}
+                  {tableButtonLabel(tb, lang)}
                 </button>
               ))}
             </div>

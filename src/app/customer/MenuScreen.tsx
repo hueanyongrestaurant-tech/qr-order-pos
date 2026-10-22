@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, Flame, Plus, ShoppingCart, Star, Utensils, X } from "lucide-react";
+import { ChevronLeft, Flame, Plus, ReceiptText, ShoppingCart, Star, Utensils, X } from "lucide-react";
 import type { Category, CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
+import { tableTitle } from "../tables";
 import { cartTotal, menuAvailability, resolvePhoto } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
@@ -27,11 +28,12 @@ interface MenuProps {
   onExit?: () => void;
   onAddOn?: () => void; // จุดเข้าไปหน้า "Add-on" (staff-only) — ส่งมาเฉพาะตอน staff ลงออเดอร์แทนลูกค้าเท่านั้น ห้ามส่งให้ฝั่งลูกค้าเด็ดขาด
   notice?: string; // แถบข้อความใต้หัวจอ (staff-only) — ใช้บอกว่ากำลังลงบิลย้อนหลังของวัน/เวลาไหน
+  onViewOrdered?: () => void; // ปุ่ม "ที่สั่งไปแล้ว" — เฉพาะลูกค้าที่เข้าด้วยลิงก์ใหม่ (?t=)
 }
 
 export function MenuScreen({
   lang, tableNumber, cart, menuItems, categories, activeCategory,
-  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit, onAddOn, notice
+  onCategoryChange, onItemClick, onViewCart, onLangToggle, isTakeaway, isBusy, onExit, onAddOn, notice, onViewOrdered
 }: MenuProps) {
   const t = T[lang];
   const [busyDismissed, setBusyDismissed] = useState(false);
@@ -60,6 +62,15 @@ export function MenuScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategory, hasRecommended, firstCategoryId]);
 
+  const tableChip = (
+    <div className="flex items-center gap-1 bg-[#4A6741] px-2.5 py-1 rounded-full flex-shrink-0">
+      <Utensils size={11} className="text-[#FFF8F0]" />
+      <span className="text-[#FFF8F0] text-xs font-medium whitespace-nowrap">
+        {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : tableTitle(tableNumber, lang)}
+      </span>
+    </div>
+  );
+
   return (
     <>
       <div className="min-h-screen bg-background flex flex-col">
@@ -76,18 +87,24 @@ export function MenuScreen({
               <RestaurantLogo dark lang={lang} />
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-[#4A6741] px-2.5 py-1 rounded-full">
-                <Utensils size={11} className="text-[#FFF8F0]" />
-                <span className="text-[#FFF8F0] text-xs font-medium">
-                  {isTakeaway ? (lang === "en" ? "Takeaway" : "กลับบ้าน") : `${t.tableLabel} ${tableNumber}`}
-                </span></div>
+              {/* ลิงก์ใหม่ (?t=) มีปุ่ม "ที่สั่งไปแล้ว" ข้างตะกร้า — ป้ายโต๊ะย้ายลงไปบรรทัดถัดไป ไม่งั้นจอ 360px ไม่พอ */}
+              {!onViewOrdered && tableChip}
               <button
                 onClick={onLangToggle}
-                className="text-[#D07E35] text-[11px] font-semibold px-2 py-1 hover:text-[#FFF8F0] transition-colors"
+                className="text-[#D07E35] text-[11px] font-semibold px-2 py-1 hover:text-[#FFF8F0] transition-colors flex-shrink-0"
               >
                 {t.langSwitch}
               </button>
-              <button onClick={onViewCart} className="relative p-1.5 text-[#FFF8F0] hover:text-[#D07E35] transition-colors">
+              {onViewOrdered && (
+                <button
+                  onClick={onViewOrdered}
+                  className="flex items-center gap-1 flex-shrink-0 border border-[#D07E35] text-[#FFF8F0] text-[11px] font-medium px-2 py-1 rounded-full hover:bg-[#D07E35]/20 transition-colors"
+                >
+                  <ReceiptText size={13} />
+                  <span className="whitespace-nowrap">{t.orderedButton}</span>
+                </button>
+              )}
+              <button onClick={onViewCart} className="relative p-1.5 text-[#FFF8F0] hover:text-[#D07E35] transition-colors flex-shrink-0">
                 <ShoppingCart size={22} />
                 {cartCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[10px] w-4.5 h-4.5 min-w-[18px] min-h-[18px] rounded-full flex items-center justify-center font-bold px-0.5">
@@ -97,6 +114,7 @@ export function MenuScreen({
               </button>
             </div>
           </div>
+          {onViewOrdered && <div className="px-4 pb-2 -mt-1 flex">{tableChip}</div>}
 
           {/* Category tabs */}
           <div

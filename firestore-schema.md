@@ -71,13 +71,37 @@
 
 ---
 
+## `tableViews/{token}` — ลิงก์โต๊ะ (`?t=<token>`) + สรุป "ที่สั่งไปแล้ว"
+
+1 doc ต่อโต๊ะ — id ของ doc คือรหัสสุ่ม 16 ตัวในลิงก์/QR (ดู `src/app/tableView.ts`, `src/app/tableViewStore.ts`)
+ลูกค้า `get` ได้เฉพาะ doc ที่รู้รหัส แต่ `list` ไม่ได้ (rules) — เดารหัสโต๊ะอื่นไม่ได้ ลูกค้ายังอ่าน `orders` ไม่ได้เหมือนเดิม
+
+```
+{
+  table: string,        // เลขโต๊ะภายใน เช่น "1-3", "3-1" (ม้าหินอ่อน) — ชื่อที่แสดงอยู่ใน TABLE_ZONES (constants.ts)
+  version: 1,
+  data: string,         // JSON ของ TableViewData { lines: [{ th, en, optTh, optEn, qty, amount }], total, orderIds }
+                        // ไม่มีสถานะเสิร์ฟ ไม่มีรายการที่ยกเลิก เฉพาะออเดอร์ที่ยังไม่ปิดบิล (in-progress/awaiting-payment)
+  hash: string,         // hash ของ data — เครื่องพนักงานเทียบก่อนเขียน
+  createdAt: Timestamp,
+  updatedAt: Timestamp  // ลูกค้าเทียบกับเวลาปิดบิลตอนเริ่มรอบนั่ง — สรุปเก่ากว่านั้น = ของบิลก่อน ไม่แสดง
+}
+```
+
+- ผู้เขียน: ทุกเครื่องพนักงานที่เปิดอยู่ คำนวณจาก orders listener เดิม เขียนด้วย `updateDoc` เฉพาะโต๊ะที่เปลี่ยน
+- สร้างลิงก์ใหม่ = สร้าง doc ใหม่ + ลบ doc เก่าใน batch เดียว (ลิงก์/QR เดิมใช้ไม่ได้ทันที)
+
+---
+
 ## collection อื่น (ไม่เปลี่ยนแปลง)
 
 - `menuItems/{id}` — เมนู (`name`, `description`, `price`, `photo` base64, option groups, `active`, `order`, `recommended` + `recommendedOrder` = แถบ "แนะนำ" และลำดับในแถบ)
 - `categories/{id}` — หมวดหมู่ (`nameEn`, `nameTh`, `order`, `active`; `signature` = "เมนูเด่น" ทั้งหมวด เลิกใช้แล้ว อาจค้างใน doc เก่า)
 - `status/live` — `{ busyTables, busyItems }` แบนเนอร์ "ร้านยุ่ง"
-- `status/tableClosures` — `{ closedAt: { "<โต๊ะ>": Timestamp } }` เวลาปิดบิลล่าสุดของแต่ละโต๊ะ เขียนใน transaction เดียวกับการปิดบิล
-  หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ปิดบิลหลังลูกค้าเปิดหน้า = ให้สแกน QR ใหม่) (ดู `src/app/tableSession.ts`)
+- `status/tableClosures` — `{ closedAt: { "<โต๊ะ>": Timestamp }, movedAt: { "<โต๊ะ>": Timestamp } }` เวลาปิดบิลล่าสุดของแต่ละโต๊ะ
+  เขียนใน transaction เดียวกับการปิดบิล — การย้ายโต๊ะเขียนทั้ง `closedAt` และ `movedAt` ของโต๊ะต้นทาง (มือถือที่โต๊ะเดิมต้องสแกน QR ที่โต๊ะใหม่)
+  หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ปิดบิล/ย้ายโต๊ะหลังลูกค้าเปิดหน้า = ให้สแกน QR ใหม่) (ดู `src/app/tableSession.ts`)
+- `status/qrConfig` — `{ legacyTableUrl: boolean }` สวิตช์ลิงก์แบบเดิม `?table=1-3` (ไม่มี doc/ฟิลด์ = เปิด) ตั้งจากหน้า "ลิงก์โต๊ะ" ฝั่งพนักงาน
 - `counters/takeaway-YYYY-MM-DD` — `{ count }` ตัวนับคิวกลับบ้าน (บิลย้อนหลังไม่ใช้ — label คงที่ `"กลับบ้าน"`)
 - `counters/table-moves` — guard ของการย้ายโต๊ะ `{ lastMoveId, lastFrom, lastTo, lastMoveAt }` ทุกการย้ายอ่าน+เขียน doc นี้ใน transaction เพื่อให้การย้ายพร้อมกันชนกันแล้ว retry (กันสองเครื่องย้ายเข้าโต๊ะเดียวกัน)
 - `expenses/YYYY-MM-DD` — บัญชีรายจ่ายรายวัน `{ date, items: ExpenseLineItem[], totalAmount, updatedAt }`

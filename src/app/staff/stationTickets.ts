@@ -18,6 +18,7 @@
 // เป็น ESC/POS ส่วนการทดสอบแปลงเป็นข้อความธรรมดาได้โดยตรง
 
 import type { CartItem, Category, Language, Order } from "../types";
+import { tableShort } from "../tables";
 import { T } from "../translations";
 import { liveItems } from "../utils";
 import { kitchenOptionSummary } from "./ticket";
@@ -132,7 +133,7 @@ const SECTION_TITLES: Record<SectionKind, { th: string; en: string }> = {
 
 export function ticketLabel(order: Order, lang: Language): string {
   // ไม่มีคำว่า "โต๊ะ" นำหน้า — เหลือแค่เลขโต๊ะ/ป้าย takeaway (ดูประวัติใน nativePrinter.ts)
-  return order.isTakeaway ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน") : order.tableNumber;
+  return order.isTakeaway ? order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน") : tableShort(order.tableNumber, lang);
 }
 
 // banner = บรรทัดใต้เลขโต๊ะ (ใบย้ายโต๊ะ: "ย้ายจาก 1-3 -> 2-5" ให้ครัวรู้ว่าไม่ใช่ออเดอร์ใหม่)

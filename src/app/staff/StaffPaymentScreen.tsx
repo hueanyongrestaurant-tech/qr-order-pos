@@ -3,6 +3,7 @@ import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, X }
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, ConfirmOptions, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
+import { tableShort, tableTitle } from "../tables";
 import { cartItemKey, cartItemTotal, compareTables, formatClock, formatOptionDetails, liveItemCount, orderTotal, unservedItems } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 import type { ReceiptData } from "./ticket";
@@ -170,7 +171,7 @@ function PaymentCard({
     <div className="bg-card rounded-2xl border-2 overflow-hidden" style={{ borderColor: isSelected ? "rgba(192,90,37,0.6)" : "rgba(60,36,20,0.15)" }}>
       <button onClick={() => select(keyId)} className="w-full px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#3C2414] text-[#FFF8F0] font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0">
+          <div className="min-w-10 h-10 px-2 bg-[#3C2414] text-[#FFF8F0] font-display font-bold text-sm rounded-full flex items-center justify-center flex-shrink-0 whitespace-nowrap">
             {label}
           </div>
           <div className="text-left">
@@ -471,7 +472,7 @@ export function StaffPaymentScreen({
   const askServePending = (order: Order, ci: CartItem) => {
     const en = lang === "en";
     const name = (en ? ci.item.name.en || ci.item.name.th : ci.item.name.th) + (ci.quantity > 1 ? ` ×${ci.quantity}` : "");
-    const table = `${t.tableLabel} ${order.tableNumber}`;
+    const table = tableTitle(order.tableNumber, lang);
     onAskConfirm(
       en ? `Serve ${name} (${table})?` : `เสิร์ฟ ${name} (${table}) ใช่ไหม?`,
       () => {
@@ -554,7 +555,7 @@ export function StaffPaymentScreen({
                       <PaymentCard
                         key={g.tableNumber}
                         keyId={`table:${g.tableNumber}`}
-                        label={g.tableNumber}
+                        label={tableShort(g.tableNumber, lang)}
                         subtitle={`${g.rounds} ${g.rounds === 1 ? t.rounds : t.roundsPlural} · ${g.itemCount} ${t.items}`}
                         total={g.total}
                         total2={g.total}
@@ -567,15 +568,15 @@ export function StaffPaymentScreen({
                         pending={g.pending}
                         onServePending={askServePending}
                         onVoidPending={askVoidPending}
-                        billName={`${t.tableLabel} ${g.tableNumber}`}
+                        billName={tableTitle(g.tableNumber, lang)}
                         onAskConfirm={onAskConfirm}
                         restoreAction={(ci) => {
                           const order = g.orders.find((o) => o.items.some((x) => x.cartId === ci.cartId));
-                          if (order) askRestore(order, ci, `${t.tableLabel} ${g.tableNumber}`);
+                          if (order) askRestore(order, ci, tableTitle(g.tableNumber, lang));
                         }}
                         printReceiptAction={() =>
                           handlePrintReceipt({
-                            label: `${t.tableLabel} ${g.tableNumber}`,
+                            label: tableTitle(g.tableNumber, lang),
                             items: g.items,
                             total: g.total,
                           })
@@ -656,7 +657,7 @@ export function StaffPaymentScreen({
         const en = lang === "en";
         const ordered = order.items.find((x) => x.cartId === ci.cartId)?.quantity ?? ci.quantity;
         const left = ci.quantity;
-        const head = `${en ? ci.item.name.en || ci.item.name.th : ci.item.name.th} (${t.tableLabel} ${order.tableNumber})`;
+        const head = `${en ? ci.item.name.en || ci.item.name.th : ci.item.name.th} (${tableTitle(order.tableNumber, lang)})`;
         return (
           <QtyPickerModal
             lang={lang}

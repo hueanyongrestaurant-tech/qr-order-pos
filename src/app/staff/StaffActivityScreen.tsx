@@ -4,6 +4,7 @@ import { db } from "../../lib/firebase";
 import { collection, onSnapshot, query, orderBy, where, limit } from "firebase/firestore";
 import type { ActivityAction, ActivityLog, Language, StaffTab } from "../types";
 import { T } from "../translations";
+import { tableTitle } from "../tables";
 import { formatClock, formatDateInput } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 
@@ -177,7 +178,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                 </div>
 
                 <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5">
-                  {l.tableNumber && <span>{lang === "en" ? "Table" : "โต๊ะ"}: {l.tableNumber}</span>}
+                  {l.tableNumber && <span>{tableTitle(l.tableNumber, lang)}</span>}
                   {l.itemName && <span className="text-foreground">{l.itemName}</span>}
                   {typeof l.amount === "number" && (
                     <span className="font-semibold text-foreground">

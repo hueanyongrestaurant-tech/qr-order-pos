@@ -90,6 +90,16 @@ service cloud.firestore {
       allow write: if request.auth != null;
     }
 
+    // ─── ลิงก์โต๊ะ + สรุป "ที่สั่งไปแล้ว" (tableViews/{รหัสสุ่มในลิงก์ ?t=}) — เครื่องพนักงานเขียน ลูกค้าเปิดดู ───
+    // get = เปิด doc เดียวที่ต้องรู้ id (รหัสในลิงก์/QR) — ลูกค้าทำได้
+    // list = ไล่ดูทั้ง collection — เฉพาะพนักงาน ไม่งั้นคนนอกได้รหัสของทุกโต๊ะ
+    // (ห้ามย้ายไปไว้ใน /status — status ให้ทุกคน list ได้)
+    match /tableViews/{token} {
+      allow get: if true;
+      allow list: if request.auth != null;
+      allow create, update, delete: if request.auth != null;
+    }
+
     // ─── ตัวนับคิวกลับบ้าน (T-1, T-2, ...) — เฉพาะพนักงาน ───
     match /counters/{docId} {
       allow read, write: if request.auth != null;
