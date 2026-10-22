@@ -147,6 +147,7 @@ import { forgetCachedLink, getCustomerLink } from "./customerLink";
 import { buildTableView, encodeTableView, lineFromCartItem, type SentOrder } from "./tableView";
 import { fetchTableLink, writeTableView } from "./tableViewStore";
 import { refreshTableLinks, useTableLinks } from "./staff/tableLinkStore";
+import { setStockSwitch } from "./staff/stockSwitchStore";
 import { OrderedSheet } from "./customer/OrderedSheet";
 
 // ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
@@ -2426,6 +2427,25 @@ export default function App() {
     await batch.commit();
   };
 
+  // สวิตช์ระบบสต็อกอยู่ในหน้าตั้งค่าเครื่องพิมพ์ (StaffHeader → PrinterSettingsModal) — ส่งค่า+ตัวกดผ่าน stockSwitchStore
+  // ถามยืนยันก่อนเขียนเหมือนเดิม (ConfirmModal ของ App วาดทับหน้าตั้งค่าได้ เพราะอยู่ท้าย DOM)
+  const handleSetStockEnabledRef = useRef(handleSetStockEnabled);
+  handleSetStockEnabledRef.current = handleSetStockEnabled;
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !staffLoggedIn) { setStockSwitch(null); return; }
+    setStockSwitch({
+      enabled: stockEnabled,
+      stockCount: stockMap.size,
+      onToggle: (enabled) =>
+        askConfirm(
+          enabled
+            ? (lang === "en" ? "Turn the stock system ON? Orders will take from stock again." : "เปิดระบบสต็อก? ออเดอร์จะกลับมาตัดสต็อก")
+            : (lang === "en" ? "Turn the stock system OFF? Orders stop taking from stock (numbers are kept)." : "ปิดระบบสต็อก? ออเดอร์จะไม่ตัดสต็อก (จำนวนที่ตั้งไว้ยังเก็บอยู่)"),
+          () => { handleSetStockEnabledRef.current(enabled).catch((err) => setNotice(String(err?.message || err))); },
+        ),
+    });
+  }, [staffLoggedIn, stockEnabled, stockMap.size, lang]);
+
   // ─── ของเตรียม (แท็บในหน้าจัดการเมนู) — ดู prep.ts ───
   // การผูกของเตรียม prepId ให้ตรงกับที่ต้องการ (ทั้งเมนู = wantMenus, ตัวเลือก = wantChoices) → patch ต่อเมนูที่เปลี่ยน
   // ทั้งเมนูใช้ arrayUnion/arrayRemove (ไม่ทับการผูกของเตรียมอื่นที่เครื่องอื่นเพิ่งทำ) | ตัวเลือกต้องเขียน customGroups ทั้งก้อน
@@ -2916,13 +2936,6 @@ export default function App() {
             onSetPrepRemaining={handleSetPrepRemaining}
             onDeletePrep={(prepId) => { handleDeletePrep(prepId).catch((err) => setNotice(String(err?.message || err))); }}
             stockEnabled={stockEnabled}
-            onSetStockEnabled={(enabled) =>
-              askConfirm(
-                enabled
-                  ? (lang === "en" ? "Turn the stock system ON? Orders will take from stock again." : "เปิดระบบสต็อก? ออเดอร์จะกลับมาตัดสต็อก")
-                  : (lang === "en" ? "Turn the stock system OFF? Orders stop taking from stock (numbers are kept)." : "ปิดระบบสต็อก? ออเดอร์จะไม่ตัดสต็อก (จำนวนที่ตั้งไว้ยังเก็บอยู่)"),
-                () => { handleSetStockEnabled(enabled).catch((err) => setNotice(String(err?.message || err))); },
-              )}
           />
         </Suspense>
       );

@@ -114,7 +114,6 @@ interface StaffMenuProps {
   scrollTopRef: React.MutableRefObject<number>;
   stockMap: Map<string, StockEntry>;
   stockEnabled: boolean;
-  onSetStockEnabled: (enabled: boolean) => void; // App ถามยืนยันก่อน
   // แท็บ "ของเตรียม" (ดู StaffPrepPanel / prep.ts)
   prepMap: Map<string, PrepEntry>;
   onSavePrep: (prepId: string | null, form: PrepFormValue, links: PrepLinks) => Promise<void>;
@@ -128,7 +127,7 @@ let lastSection: "menu" | "prep" = "menu";
 
 export function StaffMenuScreen({
   lang, items, onAdd, onEdit, onSetAvailability, onSetChoiceClosed, onDelete, onTabChange, onLogout, onLangToggle, onAskConfirm, categories, onAddCategory, onDeleteCategory, onToggleRecommended, onReorderRecommended, onReorderCategories, onReorderMenuItems,
-  scrollTopRef, stockMap, stockEnabled, onSetStockEnabled, prepMap, onSavePrep, onAdjustPrep, onSetPrepRemaining, onDeletePrep,
+  scrollTopRef, stockMap, stockEnabled, prepMap, onSavePrep, onAdjustPrep, onSetPrepRemaining, onDeletePrep,
 }: StaffMenuProps) {
   const t = T[lang];
   const [section, setSectionState] = useState<"menu" | "prep">(lastSection);
@@ -190,26 +189,6 @@ export function StaffMenuScreen({
           {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
         </button>
         )}
-
-        {/* สวิตช์ระบบสต็อกทั้งร้าน — ตั้งจำนวนสต็อกที่หน้าแก้เมนู (เว้นว่าง = ไม่จำกัด) */}
-        <div className="bg-card border border-border rounded-xl p-3 mb-4 flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold text-foreground text-sm">{lang === "en" ? "Stock system" : "ระบบสต็อก"}</div>
-            <div className="text-[11px] text-muted-foreground">
-              {stockEnabled
-                ? (lang === "en" ? `On · ${stockMap.size} item(s) with stock set` : `เปิดอยู่ · ตั้งสต็อกไว้ ${stockMap.size} เมนู`)
-                : (lang === "en" ? "Off · orders don't take from stock" : "ปิดอยู่ · ออเดอร์ไม่ตัดสต็อก")}
-            </div>
-          </div>
-          <button
-            role="switch"
-            aria-checked={stockEnabled}
-            onClick={() => onSetStockEnabled(!stockEnabled)}
-            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${stockEnabled ? "bg-secondary" : "bg-muted"}`}
-          >
-            <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${stockEnabled ? "left-[22px]" : "left-0.5"}`} />
-          </button>
-        </div>
 
         {section === "prep" && (
           <StaffPrepPanel

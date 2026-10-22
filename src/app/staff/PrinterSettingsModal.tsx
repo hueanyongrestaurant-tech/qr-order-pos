@@ -13,6 +13,7 @@ import {
   type SavedPrinter,
 } from "./printerStore";
 import { isSoundMuted, setSoundMuted } from "./soundStore";
+import { useStockSwitch } from "./stockSwitchStore";
 
 // ─── Printer Settings Modal (per-device: which printer THIS device prints to) ─
 //
@@ -35,6 +36,7 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
   const [isTesting, setIsTesting] = useState(false);
   const [soundOn, setSoundOn] = useState(() => !isSoundMuted());
   const [role, setRole] = useState<PrintRole>(getPrintRole());
+  const stock = useStockSwitch();
 
   const handleRole = (next: PrintRole) => {
     setRole(next);
@@ -262,6 +264,32 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
           </div>
         )}
         {testStatus && <p className="text-xs text-muted-foreground mt-2 text-center">{testStatus}</p>}
+
+        {/* ระบบสต็อกทั้งร้าน (ไม่ใช่ค่าของเครื่องนี้) — ตั้งจำนวนสต็อกที่หน้าแก้เมนู (เว้นว่าง = ไม่จำกัด) */}
+        {stock && (
+          <div className="mt-5 pt-4 border-t border-border">
+            <h4 className="text-sm font-semibold text-foreground mb-2">{lang === "en" ? "Stock system" : "ระบบสต็อก"}</h4>
+            <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-foreground">{lang === "en" ? "Whole shop" : "ทั้งร้าน"}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {stock.enabled
+                    ? (lang === "en" ? `On · ${stock.stockCount} item(s) with stock set` : `เปิดอยู่ · ตั้งสต็อกไว้ ${stock.stockCount} เมนู`)
+                    : (lang === "en" ? "Off · orders don't take from stock" : "ปิดอยู่ · ออเดอร์ไม่ตัดสต็อก")}
+                </div>
+              </div>
+              <button
+                role="switch"
+                aria-checked={stock.enabled}
+                aria-label={lang === "en" ? "Stock system" : "ระบบสต็อก"}
+                onClick={() => stock.onToggle(!stock.enabled)}
+                className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${stock.enabled ? "bg-secondary" : "bg-muted"}`}
+              >
+                <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${stock.enabled ? "left-[22px]" : "left-0.5"}`} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
