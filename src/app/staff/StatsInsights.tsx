@@ -1,10 +1,10 @@
-import { Clock, Crown, Utensils } from "lucide-react";
+import { Clock, Crown, Timer, Utensils } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
 import type { Category, Language, MenuItem, Order } from "../types";
 import { T } from "../translations";
 import { ZONES, isKnownTable, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
-import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, rangeDayCount, seatingSummary, tableStats, topHours, topItems } from "../statsInsights";
+import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, rangeDayCount, seatingSummary, serveSummary, SERVE_MAX_MINUTES, tableStats, topHours, topItems } from "../statsInsights";
 
 // ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
 // คิดจากออเดอร์ที่จ่ายแล้วชุดเดียวกับส่วนรายได้ (ไม่อ่าน Firestore เพิ่ม) — ดู statsInsights.ts
@@ -90,6 +90,17 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
       ? (en ? "no data yet" : "ยังไม่มีข้อมูล")
       : undefined;
 
+  // สั่ง → เสิร์ฟ เฉลี่ยต่อชิ้น (ดู serveSummary) — "<1 นาที" แทน "0 นาที"
+  const serve = serveSummary(orders, categories, menus);
+  const serveValue = (c: { avgMinutes: number | null }) =>
+    c.avgMinutes === null ? "–" : c.avgMinutes < 1 ? (en ? "<1 min" : "<1 นาที") : formatMinutes(c.avgMinutes, lang);
+  const serveRows = [
+    { key: "food", label: en ? "Food" : "อาหาร", cells: serve.food },
+    { key: "drink", label: en ? "Drinks" : "เครื่องดื่ม", cells: serve.drink },
+  ];
+  const serveHasData = serveRows.some((r) => r.cells.dineIn.pieces + r.cells.takeaway.pieces > 0);
+  const maxHours = SERVE_MAX_MINUTES / 60;
+
   return (
     <div className="space-y-6 mb-6">
       {/* ─── การ์ดสรุป ─── */}
@@ -115,6 +126,46 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
           sub={items[0] ? (en ? `${items[0].qty} sold` : `ขายได้ ${items[0].qty}`) : undefined}
           detail={bestChoices}
         />
+      </div>
+
+      {/* ─── สั่ง → เสิร์ฟ ─── */}
+      <div className="bg-card rounded-2xl border border-border p-4">
+        <h3 className="font-semibold text-foreground text-sm mb-3 flex items-center gap-1.5">
+          <Timer size={14} className="text-primary" />
+          {en ? "Order → served (avg per piece)" : "สั่ง → เสิร์ฟ (เฉลี่ยต่อชิ้น)"}
+        </h3>
+        {serveHasData ? (
+          <div className="grid grid-cols-[auto_1fr_1fr] gap-x-3 gap-y-2 items-center">
+            <span />
+            <span className="text-[11px] text-muted-foreground">{en ? "Dine-in" : "ทานที่ร้าน"}</span>
+            <span className="text-[11px] text-muted-foreground">{en ? "Takeaway" : "กลับบ้าน"}</span>
+            {serveRows.map((r) => (
+              <div key={r.key} className="contents">
+                <span className="text-sm font-semibold text-foreground">{r.label}</span>
+                {[r.cells.dineIn, r.cells.takeaway].map((c, i) => (
+                  <div key={i} className="rounded-xl bg-background border border-border px-3 py-2 min-w-0">
+                    <div className="font-display font-bold text-lg text-foreground leading-tight tabular-nums whitespace-nowrap">{serveValue(c)}</div>
+                    <div className="text-[11px] text-muted-foreground tabular-nums">{c.pieces > 0 ? (en ? `${c.pieces} pcs` : `${c.pieces} ชิ้น`) : (en ? "no data" : "ไม่มีข้อมูล")}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {en ? "No serve times in this period yet — recorded from this app version on." : "ยังไม่มีเวลาเสิร์ฟในช่วงนี้ — เริ่มเก็บตั้งแต่แอปเวอร์ชันนี้"}
+          </p>
+        )}
+        <p className="text-[11px] text-muted-foreground mt-3 leading-snug">
+          {en
+            ? `Not counted: voided items · backfilled bills · souvenirs · served before ordering or after ${maxHours} h`
+            : `ไม่นับ: รายการที่ยกเลิก · บิลย้อนหลัง · ของฝาก · เสิร์ฟก่อนสั่ง/นานเกิน ${maxHours} ชม.`}
+          {serve.outliers > 0 && (en ? ` (${serve.outliers} pcs dropped)` : ` (ตัดไป ${serve.outliers} ชิ้น)`)}
+          {/* ข้อมูลไม่ครบ: เริ่มเก็บกลางช่วง = บอกวันที่เริ่ม | ไม่งั้นบอกจำนวนชิ้นที่ไม่มีเวลา (เช่นแท็บเล็ตที่ยังเป็นแอปเก่า) */}
+          {serveHasData && serve.missing > 0 && serve.trackedSince && (serve.trackedSince > rangeStart && rangeDayCount(rangeStart, serve.trackedSince) > 1
+            ? (en ? ` · recorded since ${shortDate(serve.trackedSince)}` : ` · เริ่มเก็บ ${shortDate(serve.trackedSince)}`)
+            : (en ? ` · ${serve.missing} pcs without a time` : ` · ไม่มีเวลา ${serve.missing} ชิ้น`))}
+        </p>
       </div>
 
       {/* ─── โต๊ะแยกตามชั้น ─── */}

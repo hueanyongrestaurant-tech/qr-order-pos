@@ -200,6 +200,32 @@ export function servedQtyOf(order: ServeState, ci: CartItem): number {
   return order.status !== "in-progress" ? ci.quantity : lineServedQty(order, ci);
 }
 
+// ─── บันทึกเวลาเสิร์ฟทีละชุด (Order.serveLog) — เขียนทั้ง array ของบรรทัดนั้นทุกครั้ง ───
+// รับได้ทั้งข้อมูลดิบ (at เป็น Firestore Timestamp) และ Order ที่ map แล้ว (at เป็น Date) — ค่าเดิมเขียนกลับตามเดิม
+type RawServeBatch = { n?: unknown; at?: unknown };
+const batchesOf = (log: unknown): { n: number; at: unknown }[] =>
+  (Array.isArray(log) ? (log as RawServeBatch[]) : [])
+    .map((b) => ({ n: Math.max(0, Math.floor(Number(b?.n) || 0)), at: b?.at }))
+    .filter((b) => b.n > 0 && b.at);
+
+export function serveLogAppend(log: unknown, n: number, at: Date): { n: number; at: unknown }[] {
+  const prev = batchesOf(log);
+  return n > 0 ? [...prev, { n: Math.floor(n), at }] : prev;
+}
+
+// เหลือไว้ keep ชิ้นแรก (ตัดชุดท้ายๆ ออก — ย้อนเสิร์ฟย้อนชุดล่าสุดก่อนเสมอ)
+export function serveLogTrim(log: unknown, keep: number): { n: number; at: unknown }[] {
+  const out: { n: number; at: unknown }[] = [];
+  let left = Math.max(0, Math.floor(keep));
+  for (const b of batchesOf(log)) {
+    if (left <= 0) break;
+    const n = Math.min(b.n, left);
+    out.push({ n, at: b.at });
+    left -= n;
+  }
+  return out;
+}
+
 // คำนวณการเสิร์ฟเพิ่ม want ชิ้น (ตัดให้อยู่ใน 1..ที่เหลือ) — null = ไม่มีอะไรให้เสิร์ฟ
 // complete = บรรทัดนี้ครบแล้ว (ต้องจด servedAt), orderComplete = ทุกบรรทัดที่ไม่ void ครบ (เปลี่ยน status)
 export function planServe(state: ServeState, items: CartItem[], cartId: string, want: number):
@@ -477,6 +503,14 @@ export function mapOrderDoc(id: string, raw: any): Order {
         )
       : undefined,
     servedUnits: raw.servedUnits || undefined,
+    serveLog: raw.serveLog
+      ? Object.fromEntries(
+          Object.entries(raw.serveLog).map(([k, v]) => [
+            k,
+            (Array.isArray(v) ? v : []).map((b: any) => ({ n: Number(b?.n) || 0, at: b?.at?.toDate ? b.at.toDate() : new Date(b?.at) })),
+          ]),
+        )
+      : undefined,
     paymentMethod: raw.paymentMethod,
     cashReceived: raw.cashReceived,
     transferAmount: raw.transferAmount,

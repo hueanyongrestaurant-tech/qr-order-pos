@@ -161,6 +161,12 @@ export interface ServedUnits {
   last?: number;
 }
 
+// เสิร์ฟ 1 ครั้ง: n ชิ้น เวลา at (เวลาเครื่องที่กด) — ดู Order.serveLog
+export interface ServeBatch {
+  n: number;
+  at: Date;
+}
+
 export interface Order {
   id: string;
   tableNumber: string;
@@ -175,6 +181,9 @@ export interface Order {
   // เสิร์ฟครบ: servedAt ถูกจด + เหลือแค่ { last } ไว้ย้อนตามจำนวนที่เพิ่งเสิร์ฟ (ไม่มี count — servedAt บอกว่าครบ)
   // ข้อมูลเดิมไม่มี field นี้ = servedAt แบบทั้งบรรทัดเหมือนเดิม
   servedUnits?: Record<string, ServedUnits>;
+  // เวลาเสิร์ฟทีละชุด (key = cartId) เรียงเก่า→ใหม่ — ใช้แค่สถิติ "สั่ง → เสิร์ฟ" (ดู serveTimes ใน statsInsights.ts)
+  // เริ่มเก็บเวอร์ชันนี้ ออเดอร์เก่าไม่มี | ย้อนเสิร์ฟ = ตัดชุดท้ายออก (serveLogTrim) ผลรวม n ไม่เกินจำนวนที่เสิร์ฟแล้ว
+  serveLog?: Record<string, ServeBatch[]>;
   paymentMethod?: PaymentMethod;
   cashReceived?: number;
   // split เท่านั้น: ส่วนที่เป็นเงินโอนของ "ออเดอร์ใบนี้" (ไม่ใช่ทั้งบิล) — ส่วนเงินสด = orderTotal - transferAmount

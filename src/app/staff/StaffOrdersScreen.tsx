@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowRightLeft, Check, Clock, Plus, Printer, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Check, ChevronDown, ChevronUp, Clock, Plus, Printer, RotateCcw, Trash2, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, Category, ConfirmOptions, Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
 import { isNamedTable, tableShort, tableTitle } from "../tables";
 import { compareTables, formatClock, lineServedQty, liveItems, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
-import type { StockAlert } from "../prep";
+import type { ClosedAlert, StockAlert } from "../prep";
+
+// แถบ "หมดแล้ว": ยาวเกินนี้ย่อไว้ก่อน (แตะ "ดูทั้งหมด" เพื่อกาง) — นับเป็นรายการ ไม่ใช่บรรทัด
+const SOLD_OUT_PREVIEW = 8;
+const CLOSED_CHOICE_PREVIEW = 5;
 
 // แถบย้อนกลับค้างไว้ 10 วิ หลังกดเสิร์ฟ/พร้อมรับ/ยกเลิกรายการ
 const UNDO_MS = 10000;
@@ -61,12 +65,14 @@ interface StaffOrdersProps {
   onStartManualOrder: () => void;
   onMoveTable: (table: string) => void; // ย้ายทุกออเดอร์ค้างของโต๊ะนี้ (ไม่ใช่แค่การ์ดใบที่กด) — App ถามโต๊ะปลายทาง/ยืนยันเอง
   categories: Category[]; // ทุกหมวด (รวมที่ซ่อน) — ใช้แยกรายการตามจุดตอนกดพิมพ์
-  // แถบเตือนสต็อก: หมดแล้ว (สต็อกเมนู/ของเตรียม ≤ 0) + ใกล้หมด — App คำนวณให้ (buildStockAlerts) ว่างทั้งคู่ = ไม่ขึ้นแถบ
-  stockAlerts: { out: StockAlert[]; low: StockAlert[] };
+  // แถบเตือน: หมดแล้ว (สต็อกเมนู/ของเตรียม ≤ 0) + ใกล้หมด — App คำนวณให้ (buildStockAlerts)
+  // + closed = กด "หมด" เอง / ตัวเลือกที่ปิด (buildClosedAlerts แสดงแม้ปิดระบบสต็อก) ว่างทั้งหมด = ไม่ขึ้นแถบ
+  stockAlerts: { out: StockAlert[]; low: StockAlert[]; closed: ClosedAlert[] };
 }
 
 export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories, stockAlerts }: StaffOrdersProps) {
   const t = T[lang];
+  const [alertsExpanded, setAlertsExpanded] = useState(false);
 
   // กดเสิร์ฟแล้วนับ/ย้ายโซนทันทีบนเครื่องนี้ ไม่ต้องรอ transaction วิ่งไป server กลับมา (เน็ตร้านช้าอาจกินเวลา
   // หลายวิ ระหว่างนั้นพนักงานจะกดซ้ำ) — key = "orderId:cartId" → จำนวนชิ้นที่เสิร์ฟแล้วที่คาดว่า server จะเห็น
@@ -448,6 +454,16 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
     );
   }
 
+  // แถบหมดแล้ว: สต็อก (out) ก่อน แล้วเมนูที่กดหมดเอง — ตัวเลือกที่ปิดอยู่แถวของตัวเอง
+  const closedMenus = stockAlerts.closed.filter((a) => !a.choices);
+  const closedChoices = stockAlerts.closed.filter((a) => !!a.choices);
+  const soldOutCount = stockAlerts.out.length + closedMenus.length;
+  const soldOutLimit = alertsExpanded ? Infinity : SOLD_OUT_PREVIEW;
+  const shownStockOut = stockAlerts.out.slice(0, soldOutLimit);
+  const shownClosedMenus = closedMenus.slice(0, Math.max(0, soldOutLimit - shownStockOut.length));
+  const shownClosedChoices = closedChoices.slice(0, alertsExpanded ? Infinity : CLOSED_CHOICE_PREVIEW);
+  const alertsHidden = soldOutCount - shownStockOut.length - shownClosedMenus.length + closedChoices.length - shownClosedChoices.length;
+
   return (
     <>
       <div className="min-h-screen bg-background flex flex-col">
@@ -464,16 +480,17 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
           style={{ scrollbarWidth: "none" }}
         >
 
-          {/* แถบเตือนสต็อก (เฉพาะพนักงาน): หมดแล้ว (แดง) อยู่บน ใกล้หมด (ส้ม) อยู่ล่าง — ระบบสต็อกปิด = ไม่มีแถบ */}
-          {(stockAlerts.out.length > 0 || stockAlerts.low.length > 0) && (
+          {/* แถบเตือน (เฉพาะพนักงาน): หมดแล้ว (แดง: สต็อก + กดหมดเอง) → ปิดตัวเลือก → ใกล้หมด (ส้ม)
+              ยาวเกิน SOLD_OUT_PREVIEW / CLOSED_CHOICE_PREVIEW ย่อไว้ แตะ "ดูทั้งหมด" กาง */}
+          {(soldOutCount > 0 || closedChoices.length > 0 || stockAlerts.low.length > 0) && (
             <div role="status" className="mb-4 rounded-xl border border-border bg-card text-sm divide-y divide-border overflow-hidden">
-              {stockAlerts.out.length > 0 && (
+              {soldOutCount > 0 && (
                 <div className="px-3 py-2.5 flex items-start gap-2 bg-destructive/10">
                   <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-bold bg-destructive text-destructive-foreground">
                     {lang === "en" ? "Sold out" : "หมดแล้ว"}
                   </span>
                   <div className="flex-1 min-w-0 flex flex-wrap gap-x-3 gap-y-1 leading-6">
-                    {stockAlerts.out.map((a) => (
+                    {shownStockOut.map((a) => (
                       <span key={a.id} className="font-semibold text-foreground">
                         {a.name}
                         {(a.remaining < 0 || !!a.menuCount) && (
@@ -486,9 +503,36 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
                         )}
                       </span>
                     ))}
+                    {shownClosedMenus.map((a) => (
+                      <span key={a.id} className="font-semibold text-foreground">{a.name}</span>
+                    ))}
                   </div>
                 </div>
               )}
+              {closedChoices.length > 0 && (
+                <div className="px-3 py-2.5 flex items-start gap-2 bg-destructive/5">
+                  <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-bold border border-destructive/50 text-destructive">
+                    {lang === "en" ? "Options off" : "ปิดตัวเลือก"}
+                  </span>
+                  <div className="flex-1 min-w-0 flex flex-wrap gap-x-3 gap-y-1 leading-6">
+                    {shownClosedChoices.map((a) => (
+                      <span key={a.id} className="text-foreground">
+                        {a.name}: <span className="font-semibold">{(a.choices ?? []).join(", ")}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {soldOutCount > SOLD_OUT_PREVIEW || closedChoices.length > CLOSED_CHOICE_PREVIEW ? (
+                <button
+                  onClick={() => setAlertsExpanded((v) => !v)}
+                  className="w-full px-3 py-1.5 flex items-center justify-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                >
+                  {alertsExpanded
+                    ? <>{lang === "en" ? "Show less" : "ย่อ"}<ChevronUp size={14} /></>
+                    : <>{lang === "en" ? `Show all (+${alertsHidden})` : `ดูทั้งหมด (+${alertsHidden})`}<ChevronDown size={14} /></>}
+                </button>
+              ) : null}
               {stockAlerts.low.length > 0 && (
                 <div className="px-3 py-2.5 flex items-start gap-2 bg-[#D07E35]/10">
                   <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-bold bg-[#D07E35] text-white">

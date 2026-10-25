@@ -9,7 +9,7 @@
 // กติกาเหมือนสต็อกรายเมนู: หักเฉพาะตอนกดสั่ง ไม่คืนเมื่อยกเลิก ใช้สวิตช์ระบบสต็อกตัวเดียวกัน
 // เมนูมีทั้งสต็อกของตัวเองและของเตรียมได้ — หมดเมื่ออันใดอันหนึ่งเหลือ 0
 
-import type { CartItem, CustomGroup, MenuItem } from "./types";
+import type { CartItem, CustomChoice, CustomGroup, MenuItem } from "./types";
 import type { StockEntry } from "./stock";
 import { cartItemSelections, isChoiceClosed, normalizeMenuItem } from "./menuOptions";
 
@@ -224,4 +224,40 @@ export function buildStockAlerts(
   });
   const byName = (a: StockAlert, b: StockAlert) => a.name.localeCompare(b.name, "th");
   return { out: out.sort(byName), low: low.sort((a, b) => a.remaining - b.remaining || byName(a, b)) };
+}
+
+// ปิดขายที่ไม่ได้มาจากสต็อก (แถบ "หมดแล้ว" หน้าออเดอร์ แสดงต่อจาก out ของ buildStockAlerts) — ไม่ขึ้นกับสวิตช์ระบบสต็อก
+// • choices ไม่มี = ทั้งเมนูหมด (พนักงานกด "หมด" เอง หรือหมดเพราะสต็อกตอนระบบสต็อกปิดอยู่)
+// • choices = ตัวเลือกที่ปิดอยู่ เช่น แกงอ่อม: เนื้อ (เมนูยังขาย)
+// ระบบสต็อกเปิด: เมนู/ตัวเลือกที่หมดเพราะสต็อกของตัวเองหรือของเตรียมที่ out แสดงอยู่แล้ว ไม่ซ้ำ | เมนูที่ซ่อนไม่แสดง
+export interface ClosedAlert {
+  id: string;
+  name: string;
+  choices?: string[];
+}
+
+export function buildClosedAlerts(
+  enabled: boolean,
+  menus: MenuItem[],
+  stockMap: Map<string, StockEntry>,
+  prepMap: Map<string, PrepEntry>,
+  nameOf: (m: MenuItem) => string,
+  labelOf: (c: CustomChoice) => string = (c) => c.labelTh || c.labelEn,
+): ClosedAlert[] {
+  const prepOut = (ids: string[] | undefined) => enabled && (ids ?? []).some((p) => prepIsOut(prepMap.get(p)));
+  const out: ClosedAlert[] = [];
+  menus.forEach((m) => {
+    if (m.active === false) return;
+    if (m.soldOut) {
+      const own = stockMap.get(m.id);
+      const byStock = enabled && ((own !== undefined && own.remaining <= 0) || prepOut(m.prepIds));
+      if (!byStock) out.push({ id: m.id, name: nameOf(m) });
+      return;
+    }
+    const choices = groupsOf(m).flatMap((g) =>
+      g.choices.filter((c) => isChoiceClosed(c) && !(c.soldOutByPrep && prepOut(c.prepIds))).map(labelOf));
+    if (choices.length > 0) out.push({ id: m.id, name: nameOf(m), choices: unique(choices) });
+  });
+  // ทั้งเมนูก่อน แล้วค่อยตัวเลือก — ในแต่ละกลุ่มเรียงตามชื่อ
+  return out.sort((a, b) => Number(!!a.choices) - Number(!!b.choices) || a.name.localeCompare(b.name, "th"));
 }

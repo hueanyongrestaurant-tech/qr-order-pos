@@ -48,7 +48,7 @@ import { shouldTrackStock, soldOutAfterStockSet, stockNeeds, type StockEntry } f
 import type { StockFormValue } from "./staff/StaffMenuEditScreen";
 import { createOrderTakingStock, runStockTransaction, STOCK_CONFIG_REF, StockShortError } from "./stockStore";
 import {
-  allPrepLinks, buildStockAlerts, choiceKey, guestLineDocIds, isPrepId, localSoldOutPatch, prepIsOut, prepSoldOutChanges, prepTrackedFor,
+  allPrepLinks, buildClosedAlerts, buildStockAlerts, choiceKey, guestLineDocIds, isPrepId, localSoldOutPatch, prepIsOut, prepSoldOutChanges, prepTrackedFor,
   setPrepOnChoices, staffLineDocIds, PREP_ID_PREFIX, type ChoiceRef, type PrepEntry,
 } from "./prep";
 
@@ -91,6 +91,8 @@ import {
   lineFullyServed,
   planServe,
   planUnserve,
+  serveLogAppend,
+  serveLogTrim,
   planVoid,
   planAdjustQty,
   type LineChangePlan,
@@ -1697,8 +1699,18 @@ export default function App() {
     }
   };
 
+  // "เสิร์ฟทั้งหมด" / "พร้อมรับ" — จดเวลาเสิร์ฟของชิ้นที่ยังไม่เสิร์ฟลง serveLog ด้วย (สถิติ) คิดจากออเดอร์ในเครื่อง
+  // ไม่ใช้ transaction ให้กดได้แม้เน็ตหลุด (เขียนตามทีหลังเหมือนเดิม) — คลาดนิดหน่อยได้ สถิติไม่นับเกินจำนวนที่สั่งอยู่แล้ว
   const handleMarkServed = async (orderId: string) => {
-    await updateDoc(doc(db, "orders", orderId), { status: "awaiting-payment" });
+    const local = orders.find((o) => o.id === orderId);
+    const now = new Date();
+    const logArgs = local && local.status === "in-progress"
+      ? liveItems(local.items).flatMap((ci) => {
+        const left = ci.quantity - lineServedQty(local, ci);
+        return left > 0 ? [new FieldPath("serveLog", ci.cartId), serveLogAppend(local.serveLog?.[ci.cartId], left, now)] : [];
+      })
+      : [];
+    await updateDoc(doc(db, "orders", orderId), "status", "awaiting-payment", ...logArgs);
   };
 
   // เสิร์ฟทีละรายการ/ทีละจำนวน (qty ชิ้น) — เขียนแค่ key ของรายการนั้นใน servedUnits/servedAt (ไม่แตะ items[]
@@ -1716,11 +1728,12 @@ export default function App() {
       const plan = planServe(raw, items, cartId, qty);
       if (!plan) return null;
       const units = new FieldPath("servedUnits", cartId);
+      const log = [new FieldPath("serveLog", cartId), serveLogAppend(raw.serveLog?.[cartId], plan.add, new Date())];
       if (plan.complete) {
-        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp(), units, { last: plan.add },
+        tx.update(ref, new FieldPath("servedAt", cartId), serverTimestamp(), units, { last: plan.add }, ...log,
           ...(plan.orderComplete ? ["status", "awaiting-payment"] : []));
       } else {
-        tx.update(ref, units, { count: plan.count, last: plan.add });
+        tx.update(ref, units, { count: plan.count, last: plan.add }, ...log);
       }
       return plan.add;
     });
@@ -1771,6 +1784,7 @@ export default function App() {
         ref,
         new FieldPath("servedAt", cartId), deleteField(),
         new FieldPath("servedUnits", cartId), plan.count > 0 ? { count: plan.count } : deleteField(),
+        new FieldPath("serveLog", cartId), plan.count > 0 ? serveLogTrim(raw.serveLog?.[cartId], plan.count) : deleteField(),
         ...(raw.status === "awaiting-payment" ? ["status", "in-progress", ...keepServedArgs(raw, items, cartId)] : []),
       );
       return { raw, target, plan };
@@ -1807,7 +1821,11 @@ export default function App() {
         .filter((r) => r.back > 0);
       // ทุกรายการเสิร์ฟทีละรายการครบแล้ว — ไม่มีอะไรให้ย้อน (ถ้าดึง status กลับจะได้การ์ดค้างที่ไม่มีรายการ)
       if (reverted.length === 0) return null;
-      tx.update(ref, { status: "in-progress" });
+      // เวลาเสิร์ฟที่ "เสิร์ฟทั้งหมด" จดไว้ ตัดออกตามจำนวนที่ย้อน (เหลือเท่าที่เสิร์ฟทีละรายการไว้ก่อน)
+      tx.update(ref, "status", "in-progress", ...reverted.flatMap(({ ci, back }) => {
+        const keep = ci.quantity - back;
+        return [new FieldPath("serveLog", ci.cartId), keep > 0 ? serveLogTrim(raw.serveLog?.[ci.cartId], keep) : deleteField()];
+      }));
       return { raw, reverted };
     });
     if (done) {
@@ -1856,8 +1874,13 @@ export default function App() {
   };
 
   // แถบเตือนหน้าออเดอร์: หมดแล้ว (สต็อกเมนู/ของเตรียมเหลือ ≤ 0) + ใกล้หมด — ดู buildStockAlerts ใน prep.ts
-  const stockAlerts = buildStockAlerts(stockEnabled, allMenuItems, stockMap, prepMap,
-    (m) => (lang === "en" ? m.name.en || m.name.th : m.name.th));
+  // + ปิดขายที่ไม่ได้มาจากสต็อก (กด "หมด" เอง / ตัวเลือกที่ปิด) แสดงเสมอแม้ปิดระบบสต็อก — ดู buildClosedAlerts
+  const alertName = (m: MenuItem) => (lang === "en" ? m.name.en || m.name.th : m.name.th);
+  const stockAlerts = {
+    ...buildStockAlerts(stockEnabled, allMenuItems, stockMap, prepMap, alertName),
+    closed: buildClosedAlerts(stockEnabled, allMenuItems, stockMap, prepMap, alertName,
+      (c) => (lang === "en" ? c.labelEn || c.labelTh : c.labelTh || c.labelEn)),
+  };
 
   // ยอดบิลที่พนักงานเห็น ณ ตอนกด — โต๊ะ = รวมทุกออเดอร์ค้างของโต๊ะ (รวมรอบที่ยังเตรียมอยู่) / กลับบ้าน = ใบเดียว
   // ใช้บันทึก "ยอดบิลเดิม → ใหม่" ลง log ของการยกเลิก/ปรับจำนวน

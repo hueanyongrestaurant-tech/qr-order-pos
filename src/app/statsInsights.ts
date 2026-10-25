@@ -238,3 +238,74 @@ export function formatMinutes(min: number, lang: "th" | "en"): string {
 export function counterCategoryIds(categories: Category[]): Set<string> {
   return new Set(categories.filter((c) => COUNTER_CATEGORY_PREFIXES.some((p) => (c.nameTh || "").startsWith(p))).map((c) => c.id));
 }
+
+// ─── เวลาสั่ง → เสิร์ฟ (เฉลี่ยต่อชิ้น) ───
+// นับทีละชิ้น: เวลาสั่ง (createdAt ของออเดอร์) → เวลาที่ชิ้นนั้นถูกเสิร์ฟ (serveLog — เสิร์ฟทีละจำนวนได้เวลาของแต่ละชุด)
+// ออเดอร์ก่อนมี serveLog: ใช้ servedAt ได้เฉพาะชุดสุดท้ายของบรรทัด (servedUnits.last ชิ้น) ที่เหลือ = ไม่มีเวลา
+// ไม่นับ: รายการที่ยกเลิก, บิลย้อนหลัง, ของฝาก, Add-on ที่พนักงานพิมพ์เอง, ค่าผิดปกติ (เสิร์ฟก่อนสั่ง / นานเกิน 3 ชม.)
+// เครื่องดื่ม = หมวดที่ชื่อขึ้นต้นด้วย "เครื่องดื่ม" (หมวดปัจจุบันของเมนู) ที่เหลือ = อาหาร
+export const SERVE_MAX_MINUTES = 3 * 60;
+
+export interface ServeCell { avgMinutes: number | null; pieces: number }
+export interface ServeSummary {
+  food: { dineIn: ServeCell; takeaway: ServeCell };
+  drink: { dineIn: ServeCell; takeaway: ServeCell };
+  outliers: number;          // ชิ้นที่ตัดทิ้งเพราะค่าผิดปกติ
+  missing: number;           // ชิ้นที่ไม่มีเวลาเสิร์ฟ (ออเดอร์เก่า / กด "เสิร์ฟทั้งหมด" ในแอปเวอร์ชันเก่า)
+  trackedSince: Date | null; // ออเดอร์แรกในช่วงที่มีเวลาเสิร์ฟ — ใช้บอก "เริ่มเก็บ …" ตอนข้อมูลยังไม่ครบช่วง
+}
+
+// เวลาเสิร์ฟของแต่ละชุดของบรรทัดนี้ (รวมไม่เกินจำนวนที่สั่ง) + จำนวนชิ้นที่ไม่มีเวลา
+export function serveTimes(order: Order, ci: CartItem): { batches: { n: number; at: Date }[]; missing: number } {
+  const batches: { n: number; at: Date }[] = [];
+  let left = ci.quantity;
+  const log = order.serveLog?.[ci.cartId];
+  if (log && log.length > 0) {
+    log.forEach((b) => {
+      const n = Math.min(b.n, left);
+      if (n > 0 && b.at instanceof Date && !isNaN(b.at.getTime())) { batches.push({ n, at: b.at }); left -= n; }
+    });
+  } else if (order.servedAt?.[ci.cartId]) {
+    const n = Math.max(1, Math.min(order.servedUnits?.[ci.cartId]?.last ?? ci.quantity, ci.quantity));
+    batches.push({ n, at: order.servedAt[ci.cartId] });
+    left -= n;
+  }
+  return { batches, missing: Math.max(0, left) };
+}
+
+export function serveSummary(orders: Order[], categories: Category[], menus?: MenuLookup): ServeSummary {
+  const catName = new Map(categories.map((c) => [c.id, c.nameTh || ""]));
+  const acc = { food: { dineIn: [0, 0], takeaway: [0, 0] }, drink: { dineIn: [0, 0], takeaway: [0, 0] } }; // [นาทีรวม, ชิ้น]
+  let outliers = 0;
+  let missing = 0;
+  let trackedSince: Date | null = null;
+  orders.forEach((o) => {
+    if (o.backfilled) return;
+    (o.items || []).forEach((ci) => {
+      if (ci.voided) return;
+      const categoryId = menus?.get(ci.item.id)?.categoryId ?? ci.item.categoryId;
+      if (categoryId === ADDON_CATEGORY_ID) return;
+      const name = catName.get(categoryId) ?? "";
+      if (name.startsWith("ของฝาก")) return;
+      const kind = name.startsWith("เครื่องดื่ม") ? "drink" : "food";
+      const cell = acc[kind][o.isTakeaway ? "takeaway" : "dineIn"];
+      const t = serveTimes(o, ci);
+      missing += t.missing;
+      t.batches.forEach((b) => {
+        const m = (b.at.getTime() - o.timestamp.getTime()) / 60000;
+        if (m < 0 || m > SERVE_MAX_MINUTES) { outliers += b.n; return; }
+        cell[0] += m * b.n;
+        cell[1] += b.n;
+      });
+      if (t.batches.length > 0 && (!trackedSince || o.timestamp < trackedSince)) trackedSince = o.timestamp;
+    });
+  });
+  const out = (c: number[]): ServeCell => ({ avgMinutes: c[1] > 0 ? c[0] / c[1] : null, pieces: c[1] });
+  return {
+    food: { dineIn: out(acc.food.dineIn), takeaway: out(acc.food.takeaway) },
+    drink: { dineIn: out(acc.drink.dineIn), takeaway: out(acc.drink.takeaway) },
+    outliers,
+    missing,
+    trackedSince,
+  };
+}

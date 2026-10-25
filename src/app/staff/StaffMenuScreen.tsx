@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { GripVertical, Plus, Star, Trash2, Utensils } from "lucide-react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { FileText, GripVertical, Plus, Star, Trash2, Utensils } from "lucide-react";
 import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from "../types";
 import { menuAvailabilitySetting } from "../utils";
 import { isChoiceClosed, isQuickToggleGroup, requiredGroupAllClosed } from "../menuOptions";
@@ -8,6 +8,9 @@ import { StaffHeader } from "./StaffHeader";
 import { stockLevel, type StockEntry } from "../stock";
 import { allPrepLinks, prepIsOut, type PrepEntry } from "../prep";
 import { StaffPrepPanel, type PrepFormValue, type PrepLinks } from "./StaffPrepPanel";
+
+// หน้า "พิมพ์เมนู" A4 — โหลดเมื่อกดเปิดเท่านั้น
+const PrintMenuScreen = lazy(() => import("./PrintMenuScreen").then((m) => ({ default: m.PrintMenuScreen })));
 
 // ─── Drag-to-reorder (mouse + touch via Pointer Events) ──────────────────────
 // เดิมใช้ปุ่มลูกศรขึ้น/ลง เปลี่ยนมาใช้ "จับที่ไอคอน Grip แล้วลาก" แทน
@@ -132,6 +135,7 @@ export function StaffMenuScreen({
   const t = T[lang];
   const [section, setSectionState] = useState<"menu" | "prep">(lastSection);
   const setSection = (next: "menu" | "prep") => { lastSection = next; setSectionState(next); };
+  const [showPrintMenu, setShowPrintMenu] = useState(false);
   const [newCatEn, setNewCatEn] = useState("");
   const [newCatTh, setNewCatTh] = useState("");
 
@@ -181,13 +185,28 @@ export function StaffMenuScreen({
         </div>
 
         {section === "menu" && (
-        <button
-          onClick={onAdd}
-          className="w-full mb-4 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
-        >
-          <Plus size={16} />
-          {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
-        </button>
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={onAdd}
+            className="flex-1 bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center gap-2"
+          >
+            <Plus size={16} />
+            {lang === "en" ? "Add New Item" : "เพิ่มเมนูใหม่"}
+          </button>
+          {/* เมนูกระดาษ A4 สำหรับลูกค้าที่สั่งกับพนักงาน — สร้างจากเมนูในระบบ (ดู PrintMenuScreen) */}
+          <button
+            onClick={() => setShowPrintMenu(true)}
+            className="px-4 bg-card border-2 border-border text-foreground rounded-xl font-semibold text-sm hover:border-primary/40 transition-all active:scale-95 flex items-center justify-center gap-2"
+          >
+            <FileText size={16} />
+            {lang === "en" ? "Print menu" : "พิมพ์เมนู"}
+          </button>
+        </div>
+        )}
+        {showPrintMenu && (
+          <Suspense fallback={null}>
+            <PrintMenuScreen lang={lang} categories={categories} items={items} onClose={() => setShowPrintMenu(false)} />
+          </Suspense>
         )}
 
         {section === "prep" && (
