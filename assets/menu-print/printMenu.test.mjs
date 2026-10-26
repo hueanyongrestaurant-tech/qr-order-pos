@@ -1,7 +1,7 @@
 // เมนูกระดาษ A4: แยกชุด / ราคาตามตัวเลือก / จัดหน้า (src/app/printMenu.ts) ไม่ต้องใช้ emulator
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildPrintMenu, packMenu, printPrice } from "../../src/app/printMenu";
+import { buildPrintMenu, packMenu, printPrice } from "./printMenu";
 import { BUILTIN_GROUP_IDS } from "../../src/app/menuOptions";
 
 const noBuiltins = { hasMeatChoice: false, hasSpice: false, hasPortion: false, hasEggAddon: false, hasPlainAddOns: false };

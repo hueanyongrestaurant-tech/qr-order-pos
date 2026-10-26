@@ -6,9 +6,9 @@
 // • ตัวเลือกที่ราคาต่างกัน: กลุ่ม "ต้องเลือก" แบบเลือกได้ 1 ที่ราคาไม่เท่ากัน → แยกราคา เช่น "หมู/ไก่ 79 · ทะเล 99"
 //   ตัวเลือกเสริมที่มีราคา (ไข่ดาว ฯลฯ) → บรรทัดเล็ก "เพิ่ม: ไข่ดาว +15" | จาน/ช้อน/แก้วเปล่า ไม่พิมพ์
 
-import type { Category, CustomGroup, MenuItem } from "./types";
-import { ADDON_CATEGORY_ID, COUNTER_CATEGORY_PREFIXES } from "./constants";
-import { BUILTIN_GROUP_IDS, normalizeMenuItem } from "./menuOptions";
+import type { Category, CustomGroup, MenuItem } from "../../src/app/types";
+import { ADDON_CATEGORY_ID, COUNTER_CATEGORY_PREFIXES } from "../../src/app/constants";
+import { BUILTIN_GROUP_IDS, normalizeMenuItem } from "../../src/app/menuOptions";
 
 export type PrintSet = "food" | "drinks";
 

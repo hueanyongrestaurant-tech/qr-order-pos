@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Printer } from "lucide-react";
-import logoImg from "../../assets/logo-black.png";
-import type { Category, Language, MenuItem } from "../types";
-import { buildPrintMenu, packMenu, type PackPage, type PrintItem, type PrintSection, type PrintSet } from "../printMenu";
+import logoImg from "../../src/assets/logo-black.png";
+import type { Category, Language, MenuItem } from "../../src/app/types";
+import { buildPrintMenu, packMenu, type PackPage, type PrintItem, type PrintSection, type PrintSet } from "./printMenu";
 
 // ─── หน้า "พิมพ์เมนู" — เมนูกระดาษ A4 สำหรับลูกค้าที่สั่งกับพนักงาน (ดู printMenu.ts) ───
 // แสดงตัวอย่างบนจอ = หน้าที่จะพิมพ์จริง (portal ไปที่ body: ตอนพิมพ์ซ่อนแอปทั้งหมด เหลือแค่หน้ากระดาษ)
