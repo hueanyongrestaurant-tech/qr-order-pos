@@ -1024,7 +1024,14 @@ export default function App() {
         import("./staff/nativePrinter").then(({ isNativePrintAvailable, printStationTicketsNative }) => {
           if (!isNativePrintAvailable()) return;
           addedDocs.forEach((change) => {
-            const order = mapOrderDoc(change.doc.id, change.doc.data());
+            const data = change.doc.data();
+            // กันชั้นสุดท้าย: ออเดอร์ที่เคยปิดบิล/ยกเลิกมาแล้ว (มี paidAt/cancelledAt) แล้วถูกดึงกลับมาค้าง
+            // ไม่ใช่ออเดอร์ใหม่ — ห้ามปริ้นซ้ำเข้าครัว (เคส 2-2 วันที่ 30 ต.ค. 69)
+            if (data.paidAt || data.cancelledAt) {
+              console.warn("Skip auto-print: order was closed before", change.doc.id);
+              return;
+            }
+            const order = mapOrderDoc(change.doc.id, data);
             // พิมพ์เฉพาะส่วนของจุดที่เครื่องนี้รับผิดชอบ (หน้าที่ตั้งใน PrinterSettingsModal) — ออเดอร์ที่
             // ไม่มีอะไรของจุดนี้ไม่พิมพ์ ยังโหลดหมวดไม่เสร็จ (ref ว่าง) พิมพ์ใบ "ทุกรายการ" แทน
             printStationTicketsNative(order, getPrintRole(), allCategoriesRef.current, langRef.current).catch((err) => {
@@ -1699,18 +1706,27 @@ export default function App() {
     }
   };
 
-  // "เสิร์ฟทั้งหมด" / "พร้อมรับ" — จดเวลาเสิร์ฟของชิ้นที่ยังไม่เสิร์ฟลง serveLog ด้วย (สถิติ) คิดจากออเดอร์ในเครื่อง
-  // ไม่ใช้ transaction ให้กดได้แม้เน็ตหลุด (เขียนตามทีหลังเหมือนเดิม) — คลาดนิดหน่อยได้ สถิติไม่นับเกินจำนวนที่สั่งอยู่แล้ว
+  // "เสิร์ฟทั้งหมด" / "พร้อมรับ" — จดเวลาเสิร์ฟของชิ้นที่ยังไม่เสิร์ฟลง serveLog ด้วย (สถิติ)
+  // ทำใน transaction อ่านสถานะล่าสุดจาก server ก่อนเสมอ — เดิมเขียนตรง (updateDoc) จากข้อมูลบนจอ ทำให้เครื่องที่จอค้าง
+  // (พักแอปไว้แล้วเปิดกลับมา ข้อมูลยังไม่อัปเดต) กดแล้วดึงบิลที่จ่ายไปแล้วกลับมาเป็น "รอชำระ" → ปริ้นซ้ำทุกจุด
+  // + ไปรวมในบิลโต๊ะเดียวกันรอบถัดไป (เคส 2-2 วันที่ 30 ต.ค. 69) — บิลปิดแล้ว = แจ้งเตือน ไม่เขียนอะไรเลย
+  // แลกกับ: กดตอนเน็ตหลุดไม่ได้ (ขึ้นแจ้งเตือนให้ลองใหม่) แทนการเขียนตามทีหลัง
   const handleMarkServed = async (orderId: string) => {
-    const local = orders.find((o) => o.id === orderId);
-    const now = new Date();
-    const logArgs = local && local.status === "in-progress"
-      ? liveItems(local.items).flatMap((ci) => {
-        const left = ci.quantity - lineServedQty(local, ci);
-        return left > 0 ? [new FieldPath("serveLog", ci.cartId), serveLogAppend(local.serveLog?.[ci.cartId], left, now)] : [];
-      })
-      : [];
-    await updateDoc(doc(db, "orders", orderId), "status", "awaiting-payment", ...logArgs);
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const raw = snap.data();
+      if (raw.status === "awaiting-payment") return; // อีกเครื่องกดไปแล้ว
+      if (raw.status !== "in-progress") throw closedOnServerError(raw.status);
+      const items: CartItem[] = raw.items || [];
+      const now = new Date();
+      const logArgs = liveItems(items).flatMap((ci) => {
+        const left = ci.quantity - lineServedQty(raw, ci);
+        return left > 0 ? [new FieldPath("serveLog", ci.cartId), serveLogAppend(raw.serveLog?.[ci.cartId], left, now)] : [];
+      });
+      tx.update(ref, "status", "awaiting-payment", ...logArgs);
+    });
   };
 
   // เสิร์ฟทีละรายการ/ทีละจำนวน (qty ชิ้น) — เขียนแค่ key ของรายการนั้นใน servedUnits/servedAt (ไม่แตะ items[]
@@ -1744,6 +1760,13 @@ export default function App() {
   // ทุกตัวเป็น transaction อ่านสถานะล่าสุดจาก server ก่อน — บิลที่จ่าย/ยกเลิกไปแล้ว (อาจจากอีกเครื่อง) ย้อนไม่ได้
   // สถานะสลับแค่ระหว่าง in-progress ↔ awaiting-payment ซึ่งอยู่ใน query ของ listener ทั้งคู่ → docChanges เป็น
   // "modified" ไม่ใช่ "added" จึงไม่ auto-print/ไม่มีเสียงซ้ำ ส่วนตัวนับร้านยุ่งคิดจาก orders ใหม่เองอัตโนมัติ
+  // บิลที่ปิดไปแล้วบน server แต่จอเครื่องนี้ยังเห็นค้างอยู่ — ใช้กับปุ่มที่เปลี่ยนสถานะออเดอร์จากข้อมูลบนจอ
+  const closedOnServerError = (status: unknown) =>
+    new Error(
+      status === "cancelled"
+        ? (lang === "en" ? "This order was already cancelled. This screen is out of date — close and reopen the app." : "ออเดอร์นี้ถูกยกเลิกไปแล้ว หน้าจอเครื่องนี้ไม่อัปเดต ปิดแอปแล้วเปิดใหม่")
+        : (lang === "en" ? "This bill was already paid. This screen is out of date — close and reopen the app." : "บิลนี้ชำระเงินไปแล้ว หน้าจอเครื่องนี้ไม่อัปเดต ปิดแอปแล้วเปิดใหม่"),
+    );
   const notUndoableError = (status: unknown) =>
     new Error(
       status === "cancelled"
@@ -1969,9 +1992,25 @@ export default function App() {
   const handleRemoveOrderItem = (orderId: string, cartId: string, reason: string, qty?: number) =>
     voidOrderItem(orderId, cartId, reason, { qty });
 
+  const cancelFailed = (err: unknown) =>
+    setNotice((lang === "en" ? "Could not cancel: " : "ยกเลิกไม่สำเร็จ: ") + ((err as Error)?.message || String(err)));
   const handleCancelOrder = async (orderId: string, reason: string) => {
     const order = orders.find((o) => o.id === orderId);
     if (!order) return;
+    // transaction: บิลที่จ่าย/ยกเลิกไปแล้วบน server (จอเครื่องนี้ค้าง) ห้ามถูกยกเลิกทับ — ยอดขายจะหายเงียบ ๆ
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const raw = snap.data();
+      if (raw.status !== "in-progress" && raw.status !== "awaiting-payment") throw closedOnServerError(raw.status);
+      tx.update(ref, {
+        status: "cancelled",
+        ...(reason ? { cancelReason: reason } : {}),
+        cancelledAt: new Date(),
+        items: ((raw.items || []) as CartItem[]).map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
+      });
+    });
     await logActivity({
       action: "cancel_order",
       orderId,
@@ -1990,12 +2029,6 @@ export default function App() {
       },
     });
     await addVoidReason(reason);
-    await updateDoc(doc(db, "orders", orderId), {
-      status: "cancelled",
-      ...(reason ? { cancelReason: reason } : {}),
-      cancelledAt: new Date(),
-      items: order.items.map(stripItemPhoto), // ออเดอร์ที่ถูกยกเลิก ไม่เก็บรูปไว้เลย
-    });
   };
 
   // ฟิลด์การชำระเงินที่เขียนลงออเดอร์ 1 ใบ — transferAmount คือส่วนโอนของ "ใบนี้" (split เท่านั้น)
@@ -2212,10 +2245,18 @@ export default function App() {
   };
 
   const handleCloseTakeawayOrder = async (orderId: string, payment: PaymentInput) => {
-    await updateDoc(doc(db, "orders", orderId), {
-      status: "paid",
-      paidAt: serverTimestamp(),
-      ...paymentFields(payment, payment.transferAmount),
+    // transaction: จอค้าง/กดซ้ำจากอีกเครื่อง — บิลที่ปิดแล้วห้ามถูกเขียนทับ (เวลา/วิธีจ่ายเดิมจะหาย)
+    const ref = doc(db, "orders", orderId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const status = snap.data().status;
+      if (status !== "in-progress" && status !== "awaiting-payment") throw closedOnServerError(status);
+      tx.update(ref, {
+        status: "paid",
+        paidAt: serverTimestamp(),
+        ...paymentFields(payment, payment.transferAmount),
+      });
     });
   };
 
@@ -2870,7 +2911,7 @@ export default function App() {
               if (target) askVoidQty(target, picked, (reason) => onVoided(handleRemoveOrderItem(orderId, cartId, reason, qty)));
             }}
             onCancelOrder={(orderId) =>
-              askCancelOrder((reason) => handleCancelOrder(orderId, reason))
+              askCancelOrder((reason) => handleCancelOrder(orderId, reason).catch(cancelFailed))
             }
             onTabChange={handleStaffTabChange}
             onLogout={handleLogout}
@@ -2893,7 +2934,11 @@ export default function App() {
             lang={lang}
             orders={orders}
             onCloseTable={closeTableWithNotice}
-            onCloseTakeaway={handleCloseTakeawayOrder}
+            onCloseTakeaway={(orderId, payment) =>
+              handleCloseTakeawayOrder(orderId, payment).catch((err) =>
+                setNotice((lang === "en" ? "Could not close the bill: " : "ปิดบิลไม่สำเร็จ: ") + (err?.message || String(err))),
+              )
+            }
             onServeItem={handleServeItem}
             onRemoveItem={(orderId, cartId, qty, picked) => {
               const target = orders.find((o) => o.id === orderId)?.items.find((ci) => ci.cartId === cartId);
@@ -2909,11 +2954,11 @@ export default function App() {
             onAdjustTakeawayItem={handleAdjustTakeawayItem}
             onRestoreItem={handleRestoreItem}
             onCancelOrder={(orderId) =>
-              askCancelOrder((reason) => handleCancelOrder(orderId, reason))
+              askCancelOrder((reason) => handleCancelOrder(orderId, reason).catch(cancelFailed))
             }
             onCancelOrders={(orderIds) =>
               askCancelOrder((reason) =>
-                orderIds.forEach((id) => handleCancelOrder(id, reason))
+                orderIds.forEach((id) => handleCancelOrder(id, reason).catch(cancelFailed))
               )
             }
             onAskConfirm={askConfirm}

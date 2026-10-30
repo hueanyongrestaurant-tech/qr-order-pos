@@ -34,8 +34,20 @@ service cloud.firestore {
                       )
                     );
       allow read: if request.auth != null;
-      allow update: if request.auth != null;
+      allow update: if request.auth != null && closedOrderStaysClosed();
       allow delete: if false;   // ห้ามลบออเดอร์ทิ้งถาวรเด็ดขาด — บังคับผ่าน update สถานะ "cancelled" เท่านั้น
+
+      // บิลที่จ่ายแล้ว / ยกเลิกแล้ว ห้ามเปลี่ยนสถานะอีก (แก้ช่องอื่นได้ เช่นวิธีจ่าย) — กันเครื่องที่จอค้าง
+      // กดเสิร์ฟ/ยกเลิกจากข้อมูลเก่า แล้วดึงบิลเก่ากลับมาเป็นออเดอร์ค้าง → ปริ้นซ้ำทุกจุด + ไปรวมบิลรอบถัดไป
+      // (เคส 2-2 วันที่ 30 ต.ค. 69) ข้อยกเว้นเดียว: ยกเลิกบิลขายย้อนหลัง (backfilled) จากหน้าประวัติ
+      // แก้ใน Firebase Console ไม่ผ่าน rules นี้ (แก้มือได้ตามเดิม)
+      function closedOrderStaysClosed() {
+        let before = resource.data.status;
+        let after = request.resource.data.status;
+        return !(before in ['paid', 'cancelled'])
+          || after == before
+          || (before == 'paid' && after == 'cancelled' && resource.data.get('backfilled', false) == true);
+      }
     }
 
     match /activityLogs/{logId} {

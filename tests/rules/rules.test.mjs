@@ -199,3 +199,39 @@ test("guest: can read the legacy-link switch, cannot change it", async () => {
 test("guest: order for ม้าหินอ่อน (3-1) passes the existing orders rule", async () => {
   await assertSucceeds(setDoc(doc(guest(), "orders", "o31"), order({ tableNumber: "3-1" })));
 });
+
+// ─── บิลที่ปิดแล้วต้องปิดอยู่ (เคส 2-2 วันที่ 30 ต.ค. 69: จอค้างกด "เสิร์ฟทั้งหมด" ดึงบิลจ่ายแล้วกลับมา) ───
+const seedClosed = () => env.withSecurityRulesDisabled(async (ctx) => {
+  const db = ctx.firestore();
+  await setDoc(doc(db, "orders", "paid1"), { tableNumber: "2-2", status: "paid", items: [], paidAt: Timestamp.now(), paymentMethod: "cash" });
+  await setDoc(doc(db, "orders", "cancel1"), { tableNumber: "2-2", status: "cancelled", items: [] });
+  await setDoc(doc(db, "orders", "backfill1"), { tableNumber: "2-2", status: "paid", backfilled: true, items: [] });
+});
+test("staff: paid bill cannot go back to awaiting-payment / in-progress", async () => {
+  await seedClosed();
+  const db = staff();
+  await assertFails(updateDoc(doc(db, "orders", "paid1"), { status: "awaiting-payment" }));
+  await assertFails(updateDoc(doc(db, "orders", "paid1"), { status: "in-progress" }));
+});
+test("staff: cancelled order cannot be revived or turned into paid", async () => {
+  await seedClosed();
+  const db = staff();
+  await assertFails(updateDoc(doc(db, "orders", "cancel1"), { status: "awaiting-payment" }));
+  await assertFails(updateDoc(doc(db, "orders", "cancel1"), { status: "paid" }));
+});
+test("staff: normal paid bill cannot be cancelled; backfilled one can (history page)", async () => {
+  await seedClosed();
+  const db = staff();
+  await assertFails(updateDoc(doc(db, "orders", "paid1"), { status: "cancelled" }));
+  await assertSucceeds(updateDoc(doc(db, "orders", "backfill1"), { status: "cancelled" }));
+});
+test("staff: closed bills can still have other fields edited (status unchanged)", async () => {
+  await seedClosed();
+  await assertSucceeds(updateDoc(doc(staff(), "orders", "paid1"), { paymentMethod: "transfer" }));
+});
+test("staff: active orders still move freely between in-progress / awaiting-payment / paid / cancelled", async () => {
+  const db = staff();
+  await assertSucceeds(updateDoc(doc(db, "orders", "existing"), { status: "awaiting-payment" }));
+  await assertSucceeds(updateDoc(doc(db, "orders", "existing"), { status: "in-progress" }));
+  await assertSucceeds(updateDoc(doc(db, "orders", "existing"), { status: "paid" }));
+});
