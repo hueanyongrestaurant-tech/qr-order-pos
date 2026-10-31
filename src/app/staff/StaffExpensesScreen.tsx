@@ -225,6 +225,17 @@ export function StaffExpensesScreen({
           </button>
         </div>
 
+        {/* ยอดรวมของช่วงที่เลือก — ตัวใหญ่ไว้บนสุด อ่านได้ทันทีไม่ต้องเลื่อนลงไปท้ายรายการ */}
+        <div className="bg-card border border-border rounded-xl px-4 py-3 mb-5 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-muted-foreground text-xs">{lang === "en" ? "Total spent" : "รวมรายจ่าย"}</div>
+            <div className="text-muted-foreground text-[11px] truncate">{isSingleDay ? startDate : `${startDate} – ${endDate}`}</div>
+          </div>
+          <div className="font-display font-bold text-3xl text-destructive tabular-nums leading-none whitespace-nowrap">
+            {t.thb}{rangeTotal.toLocaleString()}
+          </div>
+        </div>
+
         {/* ฟอร์มกรอกของที่ซื้อ — บันทึกลงวันที่ {entryDate} (วันสุดท้ายของช่วงที่เลือกด้านบน) */}
         <div className="bg-card border border-border rounded-xl p-3 mb-6">
           <h3 className="font-semibold text-foreground text-sm mb-2.5">
