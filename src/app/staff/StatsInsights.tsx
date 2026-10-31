@@ -13,11 +13,12 @@ import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup
 
 // การ์ดเวลา (เวลานั่ง + สั่ง → เสิร์ฟ) แสดงค่าไหน — สลับทีเดียวทุกการ์ด จำไว้ในเครื่องนี้ (localStorage)
 type TimeMode = "avg" | "min" | "max";
+// ค่าที่เก็บ (avg/min/max) ห้ามเปลี่ยน — เครื่องที่เลือกไว้แล้วจำค่านี้ไว้ เปลี่ยนได้แค่ชื่อปุ่ม
 const TIME_MODE_KEY = "statsTimeMode";
 const TIME_MODES: { value: TimeMode; th: string; en: string }[] = [
   { value: "avg", th: "เฉลี่ย", en: "Avg" },
-  { value: "min", th: "เร็วสุด", en: "Fastest" },
-  { value: "max", th: "ช้าสุด", en: "Slowest" },
+  { value: "min", th: "สั้นสุด", en: "Shortest" },
+  { value: "max", th: "นานสุด", en: "Longest" },
 ];
 function readTimeMode(): TimeMode {
   try {
@@ -107,7 +108,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
   const unmappedBills = tables.filter((r) => !isKnownTable(r.table)).reduce((s, r) => s + r.bills, 0);
 
   // เวลานั่ง: ข้อความเล็กบรรทัดเดียว เฉพาะตอนข้อมูลยังเก็บไม่ครบช่วง
-  // ค่าตามปุ่ม เฉลี่ย | เร็วสุด | ช้าสุด (ข้อมูลชุดเดียวกัน) — "<1 นาที" แทน "0 นาที"
+  // ค่าตามปุ่ม เฉลี่ย | สั้นสุด | นานสุด (ข้อมูลชุดเดียวกัน) — "<1 นาที" แทน "0 นาที"
   const mins = (m: number | null) => m === null ? "–" : m < 1 ? (en ? "<1 min" : "<1 นาที") : formatMinutes(m, lang);
   const pick = (c: { avgMinutes: number | null; minMinutes: number | null; maxMinutes: number | null }) =>
     mins(timeMode === "min" ? c.minMinutes : timeMode === "max" ? c.maxMinutes : c.avgMinutes);
@@ -130,7 +131,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
 
   return (
     <div className="space-y-6 mb-6">
-      {/* ─── เฉลี่ย | เร็วสุด | ช้าสุด — ใช้กับการ์ดเวลาทุกใบ ─── */}
+      {/* ─── เฉลี่ย | สั้นสุด | นานสุด — ใช้กับการ์ดเวลาทุกใบ ─── */}
       <div className="flex rounded-full bg-muted p-0.5 w-fit" role="radiogroup">
         {TIME_MODES.map((m) => (
           <button
