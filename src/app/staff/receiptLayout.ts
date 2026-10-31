@@ -1,5 +1,6 @@
 // ─── ใบเสร็จ: จัดหน้าเป็นบรรทัดข้อความ (ฟังก์ชันล้วน) — nativePrinter.ts แปลงเป็น ESC/POS ─────
 // ทั้งใบขนาดปกติ ตัวเลขเงินทุกบรรทัด (รายการ + ยอดรวม) ชิดขวาที่ช่อง LINE_WIDTH ตรงคอลัมน์เดียวกัน
+// ไม่มี ฿ ที่ตัวเลข — บอกหน่วยครั้งเดียวที่หัวคอลัมน์ "(บาท)" / "(THB)"
 // ชื่อเมนูยาวตัดขึ้นบรรทัดใหม่ใต้ชื่อ (เยื้องตรงหลัง "2x ") ราคายังอยู่บรรทัดแรก
 
 import type { Language } from "../types";
@@ -26,6 +27,7 @@ export function layoutReceipt(data: ReceiptData, lang: Language, now: Date): Rec
     center(data.label),
     center(now.toLocaleString(lang === "th" ? "th-TH" : "en-US")),
     left(RULE),
+    ...columns(lang === "en" ? "Item" : "รายการ", lang === "en" ? "(THB)" : "(บาท)").map((l) => left(l)),
   ];
   const detail = (text: string) =>
     wrapLine(text, LINE_WIDTH - displayWidth(DETAIL_INDENT)).forEach((l) => lines.push(left(DETAIL_INDENT + l)));
@@ -33,17 +35,16 @@ export function layoutReceipt(data: ReceiptData, lang: Language, now: Date): Rec
   data.items.forEach((ci) => {
     const name = lang === "en" ? ci.item.name.en : ci.item.name.th;
     const qty = `${ci.quantity}x `;
-    // ฿ อยู่ "หลัง" ตัวเลขตามที่ขอ (เช่น "210฿")
-    columns(`${qty}${name}`, `${cartItemTotal(ci)}${t.thb}`, LINE_WIDTH, " ".repeat(displayWidth(qty))).forEach((l) =>
+    columns(`${qty}${name}`, String(cartItemTotal(ci)), LINE_WIDTH, " ".repeat(displayWidth(qty))).forEach((l) =>
       lines.push(left(l)),
     );
     const opt = formatOptionDetails(ci, lang);
     if (opt) detail(opt);
-    if (ci.customNote) detail(`+ ${ci.customNote} (+${ci.customAddOnPrice || 0}${t.thb})`);
+    if (ci.customNote) detail(`+ ${ci.customNote} (+${ci.customAddOnPrice || 0})`);
   });
 
   lines.push(left(RULE));
-  columns(lang === "en" ? "Total" : "รวมทั้งหมด", `${data.total}${t.thb}`).forEach((l) => lines.push(left(l, true)));
+  columns(lang === "en" ? "Total" : "รวมทั้งหมด", String(data.total)).forEach((l) => lines.push(left(l, true)));
   // ไม่พิมพ์ส่วนการชำระเงิน (ชำระโดย/รับเงิน/เงินทอน/ยอดเงินสด-โอน) — ใบเสร็จมีแค่รายการ + ยอดรวม
   lines.push(left(RULE));
   lines.push(center(lang === "en" ? "Thank you for your visit" : "ขอบคุณที่ใช้บริการค่ะ"));

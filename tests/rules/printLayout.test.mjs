@@ -53,11 +53,14 @@ test("displayWidth: สระบน/ล่าง/วรรณยุกต์ไ�
   assert.equal(displayWidth("120฿"), 4);
 });
 
-test("receipt: every money figure ends exactly at column LINE_WIDTH (th + en)", () => {
+test("receipt: every money figure ends exactly at column LINE_WIDTH (th + en), no ฿ anywhere", () => {
   for (const lang of ["th", "en"]) {
     const lines = layoutReceipt(receipt(lang), lang, NOW);
     preview(`ใบเสร็จ (${lang})`, lines);
-    const money = lines.filter((l) => /\d+฿$/.test(l.text) && !l.text.includes("(+"));
+    lines.forEach((l) => assert.ok(!l.text.includes("฿"), `${lang}: ฿ in "${l.text}"`));
+    const head = lines.find((l) => l.text.endsWith(lang === "en" ? "(THB)" : "(บาท)"));
+    assert.ok(head && displayWidth(head.text) === LINE_WIDTH, `${lang}: unit in the column header`);
+    const money = lines.filter((l) => /\s\d+$/.test(l.text) && !l.text.includes("(+"));
     assert.equal(money.length, items.length + 1, `${lang}: one price per item + total`);
     money.forEach((l) => assert.equal(displayWidth(l.text), LINE_WIDTH, `${lang}: "${l.text}"`));
     // ไม่มีบรรทัดไหนเกินความกว้างกระดาษ
@@ -69,10 +72,10 @@ test("receipt: every money figure ends exactly at column LINE_WIDTH (th + en)", 
 test("receipt: long name wraps under the name, price stays on the first line, nothing lost", () => {
   const lines = layoutReceipt(receipt("th"), "th", NOW).map((l) => l.text);
   const i = lines.findIndex((l) => l.startsWith("3x ขนมจีน"));
-  assert.ok(lines[i].endsWith("360฿"));
-  assert.ok(lines[i + 1].startsWith("   ") && !/฿/.test(lines[i + 1]), lines[i + 1]);
+  assert.ok(lines[i].endsWith(" 360"));
+  assert.ok(lines[i + 1].startsWith("   ") && !/\d$/.test(lines[i + 1]), lines[i + 1]);
   const end = lines.findIndex((l, k) => k > i && /^\d+x /.test(l));
-  const joined = lines.slice(i, end).map((l) => l.replace(/\s*\d+฿$/, "")).join("").replace(/\s/g, "");
+  const joined = lines.slice(i, end).map((l) => l.replace(/\s+\d+$/, "")).join("").replace(/\s/g, "");
   assert.equal(joined, "3xขนมจีนน้ำเงี้ยวซี่โครงหมูตุ๋นพิเศษใส่เลือด");
   // leading vowel ไม่หลุดไปท้ายบรรทัด
   lines.forEach((l) => assert.ok(!/[เแโใไ]$/.test(l.trimEnd()), `stranded leading vowel: "${l}"`));
