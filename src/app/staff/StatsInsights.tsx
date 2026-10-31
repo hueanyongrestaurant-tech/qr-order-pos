@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Clock, Crown, Timer, Utensils } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
@@ -9,6 +10,23 @@ import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup
 // ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
 // คิดจากออเดอร์ที่จ่ายแล้วชุดเดียวกับส่วนรายได้ (ไม่อ่าน Firestore เพิ่ม) — ดู statsInsights.ts
 // ตัวเลขเขียนให้อ่านตรงๆ ทุกจุด แถบ/เส้นเป็นแค่ตัวช่วยเทียบ ไม่ต้องตีความสี
+
+// การ์ดเวลา (เวลานั่ง + สั่ง → เสิร์ฟ) แสดงค่าไหน — สลับทีเดียวทุกการ์ด จำไว้ในเครื่องนี้ (localStorage)
+type TimeMode = "avg" | "min" | "max";
+const TIME_MODE_KEY = "statsTimeMode";
+const TIME_MODES: { value: TimeMode; th: string; en: string }[] = [
+  { value: "avg", th: "เฉลี่ย", en: "Avg" },
+  { value: "min", th: "เร็วสุด", en: "Fastest" },
+  { value: "max", th: "ช้าสุด", en: "Slowest" },
+];
+function readTimeMode(): TimeMode {
+  try {
+    const v = localStorage.getItem(TIME_MODE_KEY);
+    return v === "min" || v === "max" ? v : "avg";
+  } catch {
+    return "avg";
+  }
+}
 
 function StatCard({ icon, label, value, sub, detail }: { icon: React.ReactNode; label: string; value: string; sub?: string; detail?: string[] }) {
   return (
@@ -34,6 +52,11 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
 }) {
   const t = T[lang];
   const en = lang === "en";
+  const [timeMode, setTimeModeState] = useState<TimeMode>(readTimeMode);
+  const setTimeMode = (m: TimeMode) => {
+    setTimeModeState(m);
+    try { localStorage.setItem(TIME_MODE_KEY, m); } catch { /* ใช้ไม่ได้ก็แค่ไม่จำ */ }
+  };
   const bills = groupBills(orders);
   if (bills.length === 0) return null;
 
@@ -84,10 +107,11 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
   const unmappedBills = tables.filter((r) => !isKnownTable(r.table)).reduce((s, r) => s + r.bills, 0);
 
   // เวลานั่ง: ข้อความเล็กบรรทัดเดียว เฉพาะตอนข้อมูลยังเก็บไม่ครบช่วง
-  // เร็วสุด · ช้าสุด จากข้อมูลชุดเดียวกับค่าเฉลี่ย — "<1 นาที" แทน "0 นาที"
+  // ค่าตามปุ่ม เฉลี่ย | เร็วสุด | ช้าสุด (ข้อมูลชุดเดียวกัน) — "<1 นาที" แทน "0 นาที"
   const mins = (m: number | null) => m === null ? "–" : m < 1 ? (en ? "<1 min" : "<1 นาที") : formatMinutes(m, lang);
-  const range = (c: { minMinutes: number | null; maxMinutes: number | null }) =>
-    en ? `fastest ${mins(c.minMinutes)} · slowest ${mins(c.maxMinutes)}` : `เร็วสุด ${mins(c.minMinutes)} · ช้าสุด ${mins(c.maxMinutes)}`;
+  const pick = (c: { avgMinutes: number | null; minMinutes: number | null; maxMinutes: number | null }) =>
+    mins(timeMode === "min" ? c.minMinutes : timeMode === "max" ? c.maxMinutes : c.avgMinutes);
+  const modeLabel = TIME_MODES.find((m) => m.value === timeMode)!;
 
   const seatingSub = seating.trackedSince && seating.missingPaidAt > 0
     ? (en ? `since ${shortDate(seating.trackedSince)}` : `เก็บตั้งแต่ ${shortDate(seating.trackedSince)}`)
@@ -106,15 +130,29 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
 
   return (
     <div className="space-y-6 mb-6">
+      {/* ─── เฉลี่ย | เร็วสุด | ช้าสุด — ใช้กับการ์ดเวลาทุกใบ ─── */}
+      <div className="flex rounded-full bg-muted p-0.5 w-fit" role="radiogroup">
+        {TIME_MODES.map((m) => (
+          <button
+            key={m.value}
+            role="radio"
+            aria-checked={timeMode === m.value}
+            onClick={() => setTimeMode(m.value)}
+            className={`text-sm px-4 py-1.5 rounded-full font-medium transition-colors ${timeMode === m.value ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground"}`}
+          >
+            {en ? m.en : m.th}
+          </button>
+        ))}
+      </div>
+
       {/* ─── การ์ดสรุป ─── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="col-span-2 sm:col-span-1 grid">
         <StatCard
           icon={<Clock size={14} />}
-          label={en ? "Avg. time at table" : "เวลานั่งเฉลี่ย"}
-          value={seating.avgMinutes !== null ? formatMinutes(seating.avgMinutes, lang) : "–"}
+          label={en ? `Time at table (${modeLabel.en.toLowerCase()})` : `เวลานั่ง (${modeLabel.th})`}
+          value={pick(seating)}
           sub={seatingSub}
-          detail={[range(seating)]}
         />
         </div>
         <StatCard
@@ -136,7 +174,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
       <div className="bg-card rounded-2xl border border-border p-4">
         <h3 className="font-semibold text-foreground text-sm mb-3 flex items-center gap-1.5">
           <Timer size={14} className="text-primary" />
-          {en ? "Order → served (avg per piece)" : "สั่ง → เสิร์ฟ (เฉลี่ยต่อชิ้น)"}
+          {en ? `Order → served (${modeLabel.en.toLowerCase()}, per piece)` : `สั่ง → เสิร์ฟ (${modeLabel.th} ต่อชิ้น)`}
         </h3>
         {serveHasData ? (
           <div className="grid grid-cols-[auto_1fr_1fr] gap-x-3 gap-y-2 items-center">
@@ -148,8 +186,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
                 <span className="text-sm font-semibold text-foreground">{r.label}</span>
                 {[r.cells.dineIn, r.cells.takeaway].map((c, i) => (
                   <div key={i} className="rounded-xl bg-background border border-border px-3 py-2 min-w-0">
-                    <div className="font-display font-bold text-lg text-foreground leading-tight tabular-nums whitespace-nowrap">{mins(c.avgMinutes)}</div>
-                    <div className="text-[11px] text-muted-foreground tabular-nums leading-snug">{range(c)}</div>
+                    <div className="font-display font-bold text-lg text-foreground leading-tight tabular-nums whitespace-nowrap">{pick(c)}</div>
                     <div className="text-[11px] text-muted-foreground tabular-nums">{c.pieces > 0 ? (en ? `${c.pieces} pcs` : `${c.pieces} ชิ้น`) : (en ? "no data" : "ไม่มีข้อมูล")}</div>
                   </div>
                 ))}
