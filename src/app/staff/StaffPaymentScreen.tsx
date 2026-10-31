@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, Split, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, ConfirmOptions, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
@@ -9,6 +9,8 @@ import { StaffHeader } from "./StaffHeader";
 import type { ReceiptData } from "./ticket";
 import { useSelectedPrinterAddress } from "./printerStore";
 import { QtyPickerModal, qtyInfo } from "./QtyPickerModal";
+import { SplitBillPanel } from "./SplitBillPanel";
+import { EMPTY_SPLIT_BILL, reconcileSplit, splitLines, type SplitLine, type SplitState } from "./splitBill";
 
 // ─── Staff Payment Screen ─────────────────────────────────────────────────────
 
@@ -72,6 +74,8 @@ interface PaymentCardProps {
   setCashInput: (v: string) => void;
   splitEntry: SplitEntry;
   setSplitEntry: (v: SplitEntry) => void;
+  // เครื่องคิดเลขแยกจ่าย — เฉพาะบิลโต๊ะ (ไม่ส่ง = ไม่มีปุ่ม "แยกจ่าย")
+  splitBill?: { open: boolean; lines: SplitLine[]; state: SplitState; onToggle: () => void; onChange: (s: SplitState) => void };
   lang: Language;
   t: typeof T["en"];
 }
@@ -122,7 +126,7 @@ export function SplitAmountField({
 
 function PaymentCard({
   keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, pending, onServePending, onVoidPending, billName, onAskConfirm, restoreAction, cancelAction, moveAction, printReceiptAction, printDisabled,
-  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, lang, t,
+  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, splitBill, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
   const [restorePick, setRestorePick] = useState<string | null>(null);
@@ -188,8 +192,11 @@ function PaymentCard({
 
       {isSelected && (
         <div className="px-4 pb-4 border-t border-border pt-3">
+          {splitBill?.open && (
+            <SplitBillPanel lang={lang} lines={splitBill.lines} state={splitBill.state} onChange={splitBill.onChange} onAskConfirm={onAskConfirm} />
+          )}
           <div className="space-y-2 mb-3">
-            {items.map((ci, ciIdx) => {
+            {!splitBill?.open && items.map((ci, ciIdx) => {
               const key = cartItemKey(ci);
               return (
                 <div key={ciIdx} className="flex items-center justify-between py-1">
@@ -304,13 +311,27 @@ function PaymentCard({
             </div>
           )}
 
-          {(cancelAction || moveAction) && (
+          {(cancelAction || moveAction || splitBill) && (
             <div className="flex items-center justify-between gap-2 mb-3">
               {cancelAction ? (
                 <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium">
                   {t.cancelOrder}
                 </button>
               ) : <span />}
+              <div className="flex items-center gap-2">
+              {splitBill && (
+                <button
+                  onClick={splitBill.onToggle}
+                  aria-pressed={splitBill.open}
+                  className={`min-h-[36px] px-3 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-all ${splitBill.open
+                    ? "bg-primary text-primary-foreground"
+                    : "text-foreground bg-muted hover:bg-muted/80"
+                    }`}
+                >
+                  <Split size={13} />
+                  {splitBill.open ? (lang === "en" ? "Close split" : "ปิดแยกจ่าย") : (lang === "en" ? "Split bill" : "แยกจ่าย")}
+                </button>
+              )}
               {moveAction && (
                 <button
                   onClick={moveAction}
@@ -320,6 +341,7 @@ function PaymentCard({
                   {t.moveTable}
                 </button>
               )}
+              </div>
             </div>
           )}
 
@@ -492,6 +514,12 @@ export function StaffPaymentScreen({
     else onRemoveItem(order.id, ci.cartId, 1, false);
   };
 
+  // แยกจ่ายของแต่ละโต๊ะ (key = เลขโต๊ะ) — อยู่ในหน่วยความจำหน้านี้เท่านั้น ไม่เขียนที่ไหน ดู splitBill.ts
+  // พับการ์ด/ปิดโหมดแยกจ่ายแล้วกลับมา = ยังอยู่ | โต๊ะหายจากหน้านี้ (ปิดบิล/ย้ายโต๊ะ) = ทิ้ง
+  const [splitBills, setSplitBills] = useState<Record<string, { open: boolean; state: SplitState }>>({});
+  const updateSplit = (tn: string, patch: Partial<{ open: boolean; state: SplitState }>) =>
+    setSplitBills((prev) => ({ ...prev, [tn]: { ...(prev[tn] ?? { open: false, state: EMPTY_SPLIT_BILL }), ...patch } }));
+
   const select = (key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
     setPaymentMethod("cash");
@@ -528,8 +556,26 @@ export function StaffPaymentScreen({
       pending: orders
         .filter((o) => o.tableNumber === tn && !o.isTakeaway && o.status === "in-progress")
         .flatMap((o) => unservedItems(o).map((ci) => ({ order: o, ci }))),
+      splitLines: splitLines(allItems),
     };
   });
+
+  // บิลเปลี่ยนระหว่างแยกจ่าย (สั่งเพิ่ม/ยกเลิก/โต๊ะปิดไปแล้ว): คิดใหม่ ทิ้งที่เลือกของรายการที่หายไป
+  // ตอนแสดงผลก็ reconcile อยู่แล้ว (ไม่กระพริบ) — ตรงนี้แค่เก็บผลลง state ให้รายการที่กลับมาทีหลังไม่ติดค่าเก่า
+  useEffect(() => {
+    setSplitBills((prev) => {
+      let changed = false;
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([tn, v]) => {
+        const g = tableGroups.find((x) => x.tableNumber === tn);
+        if (!g) { changed = true; return; }
+        const state = reconcileSplit(v.state, g.splitLines);
+        if (state !== v.state) changed = true;
+        next[tn] = state === v.state ? v : { ...v, state };
+      });
+      return changed ? next : prev;
+    });
+  }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -595,6 +641,13 @@ export function StaffPaymentScreen({
                         setCashInput={setCashInput}
                         splitEntry={splitEntry}
                         setSplitEntry={setSplitEntry}
+                        splitBill={{
+                          open: !!splitBills[g.tableNumber]?.open,
+                          lines: g.splitLines,
+                          state: reconcileSplit(splitBills[g.tableNumber]?.state ?? EMPTY_SPLIT_BILL, g.splitLines),
+                          onToggle: () => updateSplit(g.tableNumber, { open: !splitBills[g.tableNumber]?.open }),
+                          onChange: (state) => updateSplit(g.tableNumber, { state }),
+                        }}
                         lang={lang}
                         t={t}
                       />
