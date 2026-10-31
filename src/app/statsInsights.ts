@@ -46,6 +46,8 @@ export const SEATING_MAX_MINUTES = 6 * 60;
 
 export interface SeatingSummary {
   avgMinutes: number | null; // null = ไม่มีบิลที่คิดได้
+  minMinutes: number | null; // เร็วสุด/ช้าสุด จากบิลชุดเดียวกับค่าเฉลี่ย
+  maxMinutes: number | null;
   count: number;
   missingPaidAt: number;     // บิลโต๊ะที่ไม่มีเวลาปิด (ก่อนเริ่มเก็บ)
   trackedSince: Date | null; // paidAt เก่าสุดในช่วงนี้ — ใช้บอก "เริ่มเก็บข้อมูลวันที่ …"
@@ -65,6 +67,8 @@ export function seatingSummary(bills: Bill[]): SeatingSummary {
   });
   return {
     avgMinutes: minutes.length > 0 ? minutes.reduce((s, m) => s + m, 0) / minutes.length : null,
+    minMinutes: minutes.length > 0 ? Math.min(...minutes) : null,
+    maxMinutes: minutes.length > 0 ? Math.max(...minutes) : null,
     count: minutes.length,
     missingPaidAt,
     trackedSince,
@@ -246,7 +250,8 @@ export function counterCategoryIds(categories: Category[]): Set<string> {
 // เครื่องดื่ม = หมวดที่ชื่อขึ้นต้นด้วย "เครื่องดื่ม" (หมวดปัจจุบันของเมนู) ที่เหลือ = อาหาร
 export const SERVE_MAX_MINUTES = 3 * 60;
 
-export interface ServeCell { avgMinutes: number | null; pieces: number }
+// min/max = ชิ้นที่เร็วสุด/ช้าสุด จากชิ้นชุดเดียวกับค่าเฉลี่ย (ไม่มีข้อมูล = null)
+export interface ServeCell { avgMinutes: number | null; minMinutes: number | null; maxMinutes: number | null; pieces: number }
 export interface ServeSummary {
   food: { dineIn: ServeCell; takeaway: ServeCell };
   drink: { dineIn: ServeCell; takeaway: ServeCell };
@@ -275,7 +280,8 @@ export function serveTimes(order: Order, ci: CartItem): { batches: { n: number; 
 
 export function serveSummary(orders: Order[], categories: Category[], menus?: MenuLookup): ServeSummary {
   const catName = new Map(categories.map((c) => [c.id, c.nameTh || ""]));
-  const acc = { food: { dineIn: [0, 0], takeaway: [0, 0] }, drink: { dineIn: [0, 0], takeaway: [0, 0] } }; // [นาทีรวม, ชิ้น]
+  const cellAcc = () => [0, 0, Infinity, -Infinity]; // [นาทีรวม, ชิ้น, เร็วสุด, ช้าสุด]
+  const acc = { food: { dineIn: cellAcc(), takeaway: cellAcc() }, drink: { dineIn: cellAcc(), takeaway: cellAcc() } };
   let outliers = 0;
   let missing = 0;
   let trackedSince: Date | null = null;
@@ -296,11 +302,15 @@ export function serveSummary(orders: Order[], categories: Category[], menus?: Me
         if (m < 0 || m > SERVE_MAX_MINUTES) { outliers += b.n; return; }
         cell[0] += m * b.n;
         cell[1] += b.n;
+        cell[2] = Math.min(cell[2], m);
+        cell[3] = Math.max(cell[3], m);
       });
       if (t.batches.length > 0 && (!trackedSince || o.timestamp < trackedSince)) trackedSince = o.timestamp;
     });
   });
-  const out = (c: number[]): ServeCell => ({ avgMinutes: c[1] > 0 ? c[0] / c[1] : null, pieces: c[1] });
+  const out = (c: number[]): ServeCell => c[1] > 0
+    ? { avgMinutes: c[0] / c[1], minMinutes: c[2], maxMinutes: c[3], pieces: c[1] }
+    : { avgMinutes: null, minMinutes: null, maxMinutes: null, pieces: 0 };
   return {
     food: { dineIn: out(acc.food.dineIn), takeaway: out(acc.food.takeaway) },
     drink: { dineIn: out(acc.drink.dineIn), takeaway: out(acc.drink.takeaway) },

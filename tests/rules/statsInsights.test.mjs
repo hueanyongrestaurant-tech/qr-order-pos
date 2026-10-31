@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  menuLookup, popularChoices, selectionKey, selectionLabels, topItems,
+  menuLookup, popularChoices, seatingSummary, selectionKey, selectionLabels, topItems,
 } from "../../src/app/statsInsights";
 import { normalizeMenuItem } from "../../src/app/menuOptions";
 
@@ -87,4 +87,13 @@ test("items-sold rows: keyed by ids, so renamed choices and legacy lines merge; 
   assert.equal(selectionKey(legacyLine), selectionKey(converted));
   assert.deepEqual(selectionLabels(legacyLine, normalizeMenuItem(legacy), "th"), selectionLabels(converted, normalizeMenuItem(legacy), "th"));
   assert.deepEqual(selectionLabels(b, undefined, "th"), ["หมูนุ่ม"], "deleted menu → label from the order");
+});
+
+test("seatingSummary: fastest/slowest come from the same bills as the average", () => {
+  const t0 = new Date("2026-10-20T12:00:00");
+  const bill = (min, extra = {}) => ({ key: String(Math.random()), tableNumber: "1-1", isTakeaway: false, backfilled: false, firstOrderAt: t0, paidAt: new Date(t0.getTime() + min * 60000), revenue: 100, ...extra });
+  const s = seatingSummary([bill(20), bill(50), bill(35), bill(400), bill(5, { isTakeaway: true }), bill(2, { backfilled: true })]);
+  assert.deepEqual([s.avgMinutes, s.minMinutes, s.maxMinutes, s.count], [35, 20, 50, 3], "over 6 h, takeaway and backfilled not counted");
+  const none = seatingSummary([]);
+  assert.deepEqual([none.avgMinutes, none.minMinutes, none.maxMinutes], [null, null, null]);
 });

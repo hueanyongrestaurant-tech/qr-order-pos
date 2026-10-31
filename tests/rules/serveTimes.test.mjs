@@ -60,10 +60,10 @@ test("serveSummary: average per piece, food/drink × dine-in/takeaway, exclusion
     order([line("f", tea, 2)], { timestamp: new Date("2026-10-20T12:00:00") }),
   ];
   const s = serveSummary(orders, categories);
-  assert.deepEqual(s.food.dineIn, { avgMinutes: 12, pieces: 3 });
-  assert.deepEqual(s.food.takeaway, { avgMinutes: 20, pieces: 1 });
-  assert.deepEqual(s.drink.dineIn, { avgMinutes: 3, pieces: 1 });
-  assert.deepEqual(s.drink.takeaway, { avgMinutes: null, pieces: 0 });
+  assert.deepEqual(s.food.dineIn, { avgMinutes: 12, minMinutes: 10, maxMinutes: 16, pieces: 3 });
+  assert.deepEqual(s.food.takeaway, { avgMinutes: 20, minMinutes: 20, maxMinutes: 20, pieces: 1 });
+  assert.deepEqual(s.drink.dineIn, { avgMinutes: 3, minMinutes: 3, maxMinutes: 3, pieces: 1 });
+  assert.deepEqual(s.drink.takeaway, { avgMinutes: null, minMinutes: null, maxMinutes: null, pieces: 0 });
   assert.equal(s.outliers, 2);
   assert.equal(s.missing, 2);
   assert.deepEqual(s.trackedSince, T0);

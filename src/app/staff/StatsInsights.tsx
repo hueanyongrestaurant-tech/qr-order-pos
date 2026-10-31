@@ -84,6 +84,11 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
   const unmappedBills = tables.filter((r) => !isKnownTable(r.table)).reduce((s, r) => s + r.bills, 0);
 
   // เวลานั่ง: ข้อความเล็กบรรทัดเดียว เฉพาะตอนข้อมูลยังเก็บไม่ครบช่วง
+  // เร็วสุด · ช้าสุด จากข้อมูลชุดเดียวกับค่าเฉลี่ย — "<1 นาที" แทน "0 นาที"
+  const mins = (m: number | null) => m === null ? "–" : m < 1 ? (en ? "<1 min" : "<1 นาที") : formatMinutes(m, lang);
+  const range = (c: { minMinutes: number | null; maxMinutes: number | null }) =>
+    en ? `fastest ${mins(c.minMinutes)} · slowest ${mins(c.maxMinutes)}` : `เร็วสุด ${mins(c.minMinutes)} · ช้าสุด ${mins(c.maxMinutes)}`;
+
   const seatingSub = seating.trackedSince && seating.missingPaidAt > 0
     ? (en ? `since ${shortDate(seating.trackedSince)}` : `เก็บตั้งแต่ ${shortDate(seating.trackedSince)}`)
     : seating.avgMinutes === null && dineInCount > 0
@@ -92,8 +97,6 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
 
   // สั่ง → เสิร์ฟ เฉลี่ยต่อชิ้น (ดู serveSummary) — "<1 นาที" แทน "0 นาที"
   const serve = serveSummary(orders, categories, menus);
-  const serveValue = (c: { avgMinutes: number | null }) =>
-    c.avgMinutes === null ? "–" : c.avgMinutes < 1 ? (en ? "<1 min" : "<1 นาที") : formatMinutes(c.avgMinutes, lang);
   const serveRows = [
     { key: "food", label: en ? "Food" : "อาหาร", cells: serve.food },
     { key: "drink", label: en ? "Drinks" : "เครื่องดื่ม", cells: serve.drink },
@@ -111,6 +114,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
           label={en ? "Avg. time at table" : "เวลานั่งเฉลี่ย"}
           value={seating.avgMinutes !== null ? formatMinutes(seating.avgMinutes, lang) : "–"}
           sub={seatingSub}
+          detail={[range(seating)]}
         />
         </div>
         <StatCard
@@ -144,7 +148,8 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
                 <span className="text-sm font-semibold text-foreground">{r.label}</span>
                 {[r.cells.dineIn, r.cells.takeaway].map((c, i) => (
                   <div key={i} className="rounded-xl bg-background border border-border px-3 py-2 min-w-0">
-                    <div className="font-display font-bold text-lg text-foreground leading-tight tabular-nums whitespace-nowrap">{serveValue(c)}</div>
+                    <div className="font-display font-bold text-lg text-foreground leading-tight tabular-nums whitespace-nowrap">{mins(c.avgMinutes)}</div>
+                    <div className="text-[11px] text-muted-foreground tabular-nums leading-snug">{range(c)}</div>
                     <div className="text-[11px] text-muted-foreground tabular-nums">{c.pieces > 0 ? (en ? `${c.pieces} pcs` : `${c.pieces} ชิ้น`) : (en ? "no data" : "ไม่มีข้อมูล")}</div>
                   </div>
                 ))}
