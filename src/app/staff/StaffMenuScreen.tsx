@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { GripVertical, Plus, Star, Trash2, Utensils } from "lucide-react";
 import type { Category, Language, MenuAvailability, MenuItem, StaffTab } from "../types";
-import { menuAvailabilitySetting } from "../utils";
+import { menuAvailability, menuAvailabilitySetting } from "../utils";
 import { isChoiceClosed, isQuickToggleGroup, requiredGroupAllClosed } from "../menuOptions";
 import { T } from "../translations";
 import { StaffHeader } from "./StaffHeader";
@@ -224,7 +224,7 @@ export function StaffMenuScreen({
                 <div
                   key={item.id}
                   ref={recDrag.setItemRef(item.id)}
-                  className={`flex items-center gap-2 bg-background rounded-lg px-3 py-2 transition-shadow ${item.active === false ? "opacity-50" : ""
+                  className={`flex items-center gap-2 border rounded-lg px-3 py-2 transition-shadow ${rowTone(item, "bg-background border-transparent")
                     } ${recDrag.dragId === item.id ? "shadow-lg ring-2 ring-primary/40 relative z-10" : ""}`}
                   style={{ touchAction: recDrag.dragId ? "none" : undefined }}
                 >
@@ -344,6 +344,13 @@ export function StaffMenuScreen({
   );
 }
 
+// ลูกค้าสั่งไม่ได้ตอนนี้ (กฎเดียวกับหน้าลูกค้า menuAvailability: กดหมดเอง / สต็อกหมด / ของเตรียมหมด / กลุ่มที่ต้องเลือกปิดหมด)
+// = พื้นแดงอ่อนทั้งแถว | ซ่อน = จางเหมือนเดิม
+function rowTone(item: MenuItem, normal: string): string {
+  if (item.active === false) return `${normal} opacity-50`;
+  return menuAvailability(item) === "soldOut" ? "bg-destructive/10 border-destructive/30" : normal;
+}
+
 const AVAILABILITY_OPTIONS: { value: MenuAvailability; th: string; en: string; selectedClass: string }[] = [
   { value: "available", th: "ขาย", en: "On", selectedClass: "bg-secondary text-secondary-foreground shadow-sm" },
   { value: "soldOut", th: "หมด", en: "Sold out", selectedClass: "bg-primary text-primary-foreground shadow-sm" },
@@ -447,7 +454,7 @@ function CategoryMenuItemsList({
           <div
             key={item.id}
             ref={itemDrag.setItemRef(item.id)}
-            className={`bg-card rounded-xl border border-border p-3 flex flex-wrap items-center gap-x-3 gap-y-2 transition-shadow ${item.active === false ? "opacity-50" : ""
+            className={`rounded-xl border p-3 flex flex-wrap items-center gap-x-3 gap-y-2 transition-shadow ${rowTone(item, "bg-card border-border")
               } ${itemDrag.dragId === item.id ? "shadow-lg ring-2 ring-primary/40 relative z-10" : ""}`}
             style={{ touchAction: itemDrag.dragId ? "none" : undefined }}
           >
