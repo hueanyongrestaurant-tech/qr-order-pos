@@ -396,7 +396,7 @@ export function StaffExpensesScreen({
               {savingImage ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
               {savingImage
                 ? (lang === "en" ? "Creating image…" : "กำลังสร้างรูป…")
-                : (lang === "en" ? "Share image (LINE)" : "แชร์รูป (LINE)")}
+                : (lang === "en" ? "Share image" : "แชร์รูป")}
             </button>
             {lastImage && (
               <button
