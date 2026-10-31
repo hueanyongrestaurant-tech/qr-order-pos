@@ -1,4 +1,4 @@
-import { Check, Minus, Plus, RotateCcw } from "lucide-react";
+import { Check, Minus, Plus, RotateCcw, UserCheck } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { formatOptionDetails } from "../utils";
@@ -38,14 +38,13 @@ export function SplitBillPanel({ lang, lines, state, onChange, onAskConfirm }: {
   return (
     <div className="mb-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
       <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="text-sm font-semibold text-foreground">
-          {en ? "Split bill" : "แยกจ่าย"}
-          {state.people > 0 && (
-            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-              {en ? `· ${state.people} paid` : `· คิดเงินแล้ว ${state.people} คน`}
-            </span>
-          )}
-        </div>
+        {/* จำนวนคนที่กด "คิดเงินแล้ว" ไป — ไอคอน + ตัวเลข ไม่มีข้อความอธิบาย */}
+        {state.people > 0 ? (
+          <span className="inline-flex items-center gap-1 text-sm font-semibold text-secondary tabular-nums" aria-label={en ? `${state.people} paid` : `คิดเงินแล้ว ${state.people} คน`}>
+            <UserCheck size={16} />
+            {state.people}
+          </span>
+        ) : <span />}
         <button
           onClick={reset}
           className="min-h-[36px] px-3 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium text-foreground bg-card border border-border active:scale-95 transition-all"
@@ -150,11 +149,6 @@ export function SplitBillPanel({ lang, lines, state, onChange, onAskConfirm }: {
           {t.thb}{amounts.remaining}
         </span>
       </div>
-      <p className="mt-1 px-1 text-[11px] text-muted-foreground leading-snug">
-        {en
-          ? "Calculator only — nothing is saved. Close the bill once for the whole table below."
-          : "ช่วยคิดเงินเท่านั้น ไม่บันทึกอะไร — ปิดบิลครั้งเดียวทั้งโต๊ะที่ปุ่มด้านล่าง"}
-      </p>
     </div>
   );
 }
