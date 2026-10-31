@@ -1,10 +1,11 @@
 import { useState, useRef } from "react";
-import { Camera, Check, Download, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, Download, Loader2, Pencil, Plus, Share2, Trash2 } from "lucide-react";
 import { toPng } from "html-to-image";
 import type { ExpenseCatalogEntry, ExpenseDay, ExpenseLineItem, Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { formatDateInput } from "../utils";
 import { StaffHeader } from "./StaffHeader";
+import { sharePngImage } from "./shareImage";
 
 // ─── Staff Expenses Screen (บัญชีรายจ่าย) ──────────────────────────────────────
 
@@ -158,31 +159,20 @@ export function StaffExpensesScreen({
       });
 
       const fileName = `expenses-${isSingleDay ? startDate : `${startDate}_${endDate}`}.png`;
-      const blob = await (await fetch(dataUrl)).blob();
-      const file = new File([blob], fileName, { type: "image/png" });
       const title = lang === "en" ? "Expense Receipt" : "ใบสรุปรายจ่าย";
 
       // เก็บรูปไว้ให้ปุ่ม "ดาวน์โหลด" ใช้ได้เสมอ ไม่ต้องรอ fallback อัตโนมัติ
       setLastImage({ dataUrl, fileName });
 
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.canShare &&
-        navigator.canShare({ files: [file] })
-      ) {
-        try {
-          await navigator.share({ files: [file], title });
-        } catch (err) {
-          // ผู้ใช้กดยกเลิก share sheet — ไม่ต้องทำอะไร
-          if ((err as Error)?.name !== "AbortError") {
-            // share ล้มเหลวจริง: ลองดาวน์โหลดตรง ก่อนจะ fallback ไปโชว์รูปให้กดค้าง
-            if (!triggerDownload(dataUrl, fileName)) setPreviewImage(dataUrl);
-          }
-        }
-      } else {
-        // fallback (เช่นเปิดจากคอม): ดาวน์โหลดตรง ถ้าไม่ได้ค่อยโชว์รูปให้คลิกขวา/กดค้างเซฟ
-        if (!triggerDownload(dataUrl, fileName)) setPreviewImage(dataUrl);
+      // share sheet ของเครื่อง (แอป Android: plugin Capacitor | เว็บ: navigator.share — ดู shareImage.ts)
+      let shared = false;
+      try {
+        shared = (await sharePngImage(dataUrl, fileName, title)) === "shared";
+      } catch (err) {
+        console.error("share expenses image failed", err);
       }
+      // แชร์ไม่ได้ (เช่นเปิดจากคอม) หรือล้มเหลวจริง: ดาวน์โหลดตรง ถ้าไม่ได้ค่อยโชว์รูปให้คลิกขวา/กดค้างเซฟ
+      if (!shared && !triggerDownload(dataUrl, fileName)) setPreviewImage(dataUrl);
     } catch (err) {
       console.error("save expenses image failed", err);
       onNotice(lang === "en" ? "Could not create image" : "สร้างรูปภาพไม่สำเร็จ");
@@ -403,10 +393,10 @@ export function StaffExpensesScreen({
               disabled={savingImage}
               className="flex-1 bg-card border border-border text-foreground py-2.5 rounded-xl font-medium text-sm hover:border-primary/40 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
             >
-              {savingImage ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+              {savingImage ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
               {savingImage
                 ? (lang === "en" ? "Creating image…" : "กำลังสร้างรูป…")
-                : (lang === "en" ? "Save as Image" : "บันทึกเป็นรูปภาพ")}
+                : (lang === "en" ? "Share image (LINE)" : "แชร์รูป (LINE)")}
             </button>
             {lastImage && (
               <button
