@@ -34,7 +34,7 @@ const preview = (title, lines) => {
     writeFileSync(process.env.PRINT_DUMP, JSON.stringify(dumped, null, 1));
   }
   if (!process.env.PRINT_PREVIEW) return;
-  const ruler = "1234567890".repeat(3);
+  const ruler = "1234567890".repeat(3).slice(0, LINE_WIDTH);
   console.log(`\n${title}\n|${ruler}|`);
   // เติมช่องว่างตามความกว้างที่พิมพ์จริง (ไม่ใช่ .length) ให้ขอบขวา | ตรงกับขอบกระดาษ
   lines.forEach((l) => {

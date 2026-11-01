@@ -9,8 +9,11 @@
 // characters per printed line at Font A, normal (1x) width, on 58mm paper.
 // Reduced from an initial guess of 32 after real hardware testing showed both
 // dashed separator lines and long price lines wrapping their tail characters
-// onto a second physical line — 30 leaves a safety margin against that.
-export const LINE_WIDTH = 30;
+// onto a second physical line. 30 still wrapped on real hardware (POS-5890U-L,
+// 1 Nov 2026): the last character of every full-width line — the dashed rule's
+// final "-", the ")" of "(บาท)", the last digit of prices — went to the next
+// line, so the paper fits ~29 columns. 28 leaves one column of margin.
+export const LINE_WIDTH = 28;
 // ตั๋วครัวทั้งใบพิมพ์ที่ GS! 0x10 (กว้าง x2) ตัวอักษรแต่ละตัวเลยกว้างเป็น 2 เท่า จำนวนตัวอักษร
 // ที่พอดีความกว้างกระดาษจริงต่อบรรทัดจึงลดลงครึ่งหนึ่ง — ใช้ค่านี้เฉพาะกับเส้นคั่นของตั๋วครัว
 // ไม่งั้นเส้นคั่นที่คำนวณความยาวไว้สำหรับตัวอักษรขนาดปกติจะกว้างเกินกระดาษจริงเท่าตัว แล้ว wrap
