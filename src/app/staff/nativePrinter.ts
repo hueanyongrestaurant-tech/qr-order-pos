@@ -199,7 +199,7 @@ export async function printStationTicketsNative(
 
 // ทั้งใบพิมพ์ที่ SIZE_WIDE (GS! 0x10 กว้าง x2) ยกเว้นขอบบนกับเวลาที่ SIZE_NORMAL — เวลา (เช่น
 // "22/9/2569 22:28:42" ~19 ตัว) ยาวเกิน KITCHEN_LINE_WIDTH และ wrapLine() ตัดตัวเลข/"/" กระจัด
-// กระจาย เส้นคั่นใช้ KITCHEN_LINE_WIDTH (ครึ่งหนึ่งของ LINE_WIDTH) เพราะตัวอักษรกว้าง 2 เท่า
+// กระจาย เส้นคั่นใช้ KITCHEN_LINE_WIDTH (15 คงที่ ไม่ผูกกับ LINE_WIDTH) เพราะตัวอักษรกว้าง 2 เท่า
 //
 // สำคัญ: ทุกบรรทัดส่งเป็น .raw() ครั้งเดียว รวมคำสั่งขนาด (GS!) + ตัวหนา/inverse/ขีดเส้นใต้ + ข้อความ
 // + คำสั่งปิด — แต่ละ .raw() ถูกคิวแบบ async แยกกันฝั่ง native (plugin.js: callQueue) การแยกคำสั่ง

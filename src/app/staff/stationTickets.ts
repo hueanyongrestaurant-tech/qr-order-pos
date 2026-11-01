@@ -137,7 +137,7 @@ export function ticketLabel(order: Order, lang: Language): string {
 }
 
 // banner = บรรทัดใต้เลขโต๊ะ (ใบย้ายโต๊ะ: "ย้ายจาก 1-3 -> 2-5" ให้ครัวรู้ว่าไม่ใช่ออเดอร์ใหม่)
-// ขนาดปกติ ตัวหนา ไม่กลับสี ไม่ wrap — ขนาด wide ได้แค่ ~14 ตัว/บรรทัด เคยแตกหลายบรรทัดอ่านยาก
+// ขนาดปกติ ตัวหนา ไม่กลับสี ไม่ wrap — ขนาด wide ได้แค่ ~15 ตัว/บรรทัด เคยแตกหลายบรรทัดอ่านยาก
 // ขนาดปกติได้ 28 ตัว (LINE_WIDTH) "ย้ายจาก 1-10 -> 2-12" กว้าง ~19 ช่อง จึงอยู่บรรทัดเดียวเสมอ
 function headerLines(order: Order, lang: Language, banner?: string): TicketLine[] {
   return [
