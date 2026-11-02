@@ -14,6 +14,7 @@ import {
 } from "./printerStore";
 import { isSoundMuted, setSoundMuted } from "./soundStore";
 import { useStockSwitch } from "./stockSwitchStore";
+import { RECEIPT_FOOTER_MAX_LINES, saveReceiptSettings, useReceiptSettings, type ReceiptSettings } from "./receiptSettingsStore";
 
 // ─── Printer Settings Modal (per-device: which printer THIS device prints to) ─
 //
@@ -37,6 +38,20 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
   const [soundOn, setSoundOn] = useState(() => !isSoundMuted());
   const [role, setRole] = useState<PrintRole>(getPrintRole());
   const stock = useStockSwitch();
+  const receipt = useReceiptSettings();
+  const [footerDraft, setFooterDraft] = useState<string | null>(null); // null = ยังไม่แก้ แสดงค่าจาก Firestore
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+
+  const saveReceipt = (patch: Partial<ReceiptSettings>) => {
+    setReceiptError(null);
+    return saveReceiptSettings(patch).then(
+      () => true,
+      (err: any) => {
+        setReceiptError((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err)));
+        return false;
+      },
+    );
+  };
 
   const handleRole = (next: PrintRole) => {
     setRole(next);
@@ -290,6 +305,51 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
             </div>
           </div>
         )}
+
+        {/* ใบเสร็จทั้งร้าน (status/receipt — ทุกเครื่องใช้ค่าเดียวกัน) ปิด = ใบเสร็จแบบเดิม */}
+        <div className="mt-5 pt-4 border-t border-border">
+          <h4 className="text-sm font-semibold text-foreground mb-2">{lang === "en" ? "Receipt" : "ใบเสร็จ"}</h4>
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-foreground">{lang === "en" ? "New receipt layout (beta)" : "ใบเสร็จแบบใหม่ (ทดลอง)"}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {receipt.newLayout
+                  ? (lang === "en" ? "On · every device" : "เปิดอยู่ · ทุกเครื่อง")
+                  : (lang === "en" ? "Off · original receipt" : "ปิดอยู่ · ใบเสร็จแบบเดิม")}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={receipt.newLayout}
+              aria-label={lang === "en" ? "New receipt layout (beta)" : "ใบเสร็จแบบใหม่ (ทดลอง)"}
+              onClick={() => saveReceipt({ newLayout: !receipt.newLayout })}
+              className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${receipt.newLayout ? "bg-secondary" : "bg-muted"}`}
+            >
+              <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${receipt.newLayout ? "left-[22px]" : "left-0.5"}`} />
+            </button>
+          </div>
+          <label className="block mt-3">
+            <span className="block text-xs font-medium text-foreground mb-1.5">
+              {lang === "en" ? `Footer text (up to ${RECEIPT_FOOTER_MAX_LINES} lines, new layout only)` : `ข้อความท้ายใบเสร็จ (ไม่เกิน ${RECEIPT_FOOTER_MAX_LINES} บรรทัด เฉพาะแบบใหม่)`}
+            </span>
+            <textarea
+              rows={RECEIPT_FOOTER_MAX_LINES}
+              value={footerDraft ?? receipt.footer}
+              onChange={(e) => setFooterDraft(e.target.value.split("\n").slice(0, RECEIPT_FOOTER_MAX_LINES).join("\n"))}
+              placeholder={lang === "en" ? "e.g. Tel. 08x-xxx-xxxx" : "เช่น โทร 08x-xxx-xxxx"}
+              className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:border-primary resize-none"
+            />
+          </label>
+          {footerDraft !== null && footerDraft !== receipt.footer && (
+            <button
+              onClick={() => saveReceipt({ footer: footerDraft.trim() }).then((ok) => ok && setFooterDraft(null))}
+              className="w-full mt-2 py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground"
+            >
+              {lang === "en" ? "Save footer" : "บันทึกข้อความท้าย"}
+            </button>
+          )}
+          {receiptError && <p className="text-xs text-destructive mt-2">{receiptError}</p>}
+        </div>
       </div>
     </div>
   );

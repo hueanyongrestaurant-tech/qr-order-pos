@@ -1,0 +1,270 @@
+{
+ "table-3-1-full/th": [
+  {
+   "text": "ครัวเฮือนยอง",
+   "align": "center",
+   "bold": true
+  },
+  {
+   "text": "ม้าหินอ่อน",
+   "align": "center"
+  },
+  {
+   "text": "23/10/2569 12:30:00",
+   "align": "center"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "รายการ                 (บาท)",
+   "align": "left"
+  },
+  {
+   "text": "1x ชาไทย                  45",
+   "align": "left"
+  },
+  {
+   "text": "12x น้ำเปล่า               120",
+   "align": "left"
+  },
+  {
+   "text": "2x ข้าวซอยไก่              140",
+   "align": "left"
+  },
+  {
+   "text": "3x ขนมจีนน้ำเงี้ยวซี่โครงหมูตุ๋น  360",
+   "align": "left"
+  },
+  {
+   "text": "   พิเศษใส่เลือด",
+   "align": "left"
+  },
+  {
+   "text": "1x ผัดซีอิ๊วเส้นใหญ่หมูนุ่มไข่ดาว 1270",
+   "align": "left"
+  },
+  {
+   "text": "   กรอบ",
+   "align": "left"
+  },
+  {
+   "text": "  + เพิ่มผักบุ้งน้ำมันหอย (+20)",
+   "align": "left"
+  },
+  {
+   "text": "1x น้ำผึ้งมะนาวโซดา          55",
+   "align": "left"
+  },
+  {
+   "text": "2x ก๋วยเตี๋ยวต้มยำ           150",
+   "align": "left"
+  },
+  {
+   "text": "  เผ็ดกลาง, เส้นใหญ่, ลูกชิ้นปลา,",
+   "align": "left"
+  },
+  {
+   "text": "  ไม่ใส่ผักชี",
+   "align": "left"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "รวมทั้งหมด                2140",
+   "align": "left",
+   "bold": true
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "ขอบคุณที่ใช้บริการค่ะ",
+   "align": "center"
+  }
+ ],
+ "table-3-1-full/en": [
+  {
+   "text": "Hueanyong Kitchen",
+   "align": "center",
+   "bold": true
+  },
+  {
+   "text": "Marble bench",
+   "align": "center"
+  },
+  {
+   "text": "10/23/2026, 12:30:00 PM",
+   "align": "center"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "Item                   (THB)",
+   "align": "left"
+  },
+  {
+   "text": "1x Thai tea               45",
+   "align": "left"
+  },
+  {
+   "text": "12x Water                120",
+   "align": "left"
+  },
+  {
+   "text": "2x Khao soi chicken      140",
+   "align": "left"
+  },
+  {
+   "text": "3x Khanom jeen nam ngiao 360",
+   "align": "left"
+  },
+  {
+   "text": "   pork rib special",
+   "align": "left"
+  },
+  {
+   "text": "1x Pad see ew           1270",
+   "align": "left"
+  },
+  {
+   "text": "  + เพิ่มผักบุ้งน้ำมันหอย (+20)",
+   "align": "left"
+  },
+  {
+   "text": "1x Honey lime soda        55",
+   "align": "left"
+  },
+  {
+   "text": "2x Tom yum noodles       150",
+   "align": "left"
+  },
+  {
+   "text": "  Medium, Wide, Fish balls,",
+   "align": "left"
+  },
+  {
+   "text": "  No coriander",
+   "align": "left"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "Total                   2140",
+   "align": "left",
+   "bold": true
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "Thank you for your visit",
+   "align": "center"
+  }
+ ],
+ "takeaway-short/th": [
+  {
+   "text": "ครัวเฮือนยอง",
+   "align": "center",
+   "bold": true
+  },
+  {
+   "text": "T-12",
+   "align": "center"
+  },
+  {
+   "text": "23/10/2569 12:30:00",
+   "align": "center"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "รายการ                 (บาท)",
+   "align": "left"
+  },
+  {
+   "text": "1x ชาไทย                  45",
+   "align": "left"
+  },
+  {
+   "text": "12x น้ำเปล่า               120",
+   "align": "left"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "รวมทั้งหมด                 165",
+   "align": "left",
+   "bold": true
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "ขอบคุณที่ใช้บริการค่ะ",
+   "align": "center"
+  }
+ ],
+ "takeaway-short/en": [
+  {
+   "text": "Hueanyong Kitchen",
+   "align": "center",
+   "bold": true
+  },
+  {
+   "text": "T-12",
+   "align": "center"
+  },
+  {
+   "text": "10/23/2026, 12:30:00 PM",
+   "align": "center"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "Item                   (THB)",
+   "align": "left"
+  },
+  {
+   "text": "1x Thai tea               45",
+   "align": "left"
+  },
+  {
+   "text": "12x Water                120",
+   "align": "left"
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "Total                    165",
+   "align": "left",
+   "bold": true
+  },
+  {
+   "text": "----------------------------",
+   "align": "left"
+  },
+  {
+   "text": "Thank you for your visit",
+   "align": "center"
+  }
+ ]
+}

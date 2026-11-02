@@ -47,7 +47,8 @@ import type { ReceiptData } from "./ticket";
 import { getSelectedPrinter, type PrintRole } from "./printerStore";
 import { layoutTicket, planTickets, type TicketLine } from "./stationTickets";
 import { KITCHEN_LINE_WIDTH, LINE_WIDTH, wrapLine } from "./printText";
-import { layoutReceipt } from "./receiptLayout";
+import { layoutReceipt, layoutReceiptNew } from "./receiptLayout";
+import type { ReceiptSettings } from "./receiptSettingsStore";
 
 export function isNativePrintAvailable(): boolean {
   return Capacitor.isNativePlatform();
@@ -123,6 +124,7 @@ function sizeCmd(widthMult: number, heightMult: number): number[] {
 }
 const SIZE_NORMAL = sizeCmd(1, 1);
 const SIZE_WIDE = sizeCmd(2, 1); // width x2 only — GS ! 0x10, used uniformly on the kitchen ticket
+const SIZE_TALL = sizeCmd(1, 2); // height x2 only — GS ! 0x01, ใบเสร็จแบบใหม่: ยอดสุทธิ/เงินทอน (กว้างเท่าเดิม คอลัมน์ไม่เลื่อน)
 
 // ESC E n (0x1B 0x45 n) — select/cancel emphasized (bold) mode.
 function boldCmd(on: boolean): number[] {
@@ -232,7 +234,9 @@ function emitTicketLines(builder: typeof CapacitorThermalPrinter, lines: TicketL
   }
 }
 
-export async function printReceiptNative(data: ReceiptData, lang: Language): Promise<void> {
+// settings ไม่ส่ง / newLayout ปิด = ใบเสร็จแบบเดิม (layoutReceipt) — byte เหมือนเดิมทุกตัว: แบบเดิมไม่มีบรรทัด tall
+// จึงได้ SIZE_NORMAL ตามเดิม (golden: tests/rules/fixtures/receipt-classic-golden.json)
+export async function printReceiptNative(data: ReceiptData, lang: Language, settings?: ReceiptSettings): Promise<void> {
   await ensurePrinterConnected();
 
   // ใบเสร็จทั้งใบใช้ขนาดปกติ GS! 0x00 — ส่ง SIZE_NORMAL ทุกบรรทัดกันขนาดค้างจากใบก่อนหน้า (ตั๋วครัว
@@ -240,10 +244,13 @@ export async function printReceiptNative(data: ReceiptData, lang: Language): Pro
   // บรรทัดละ .raw() ครั้งเดียว (ขนาด + ตัวหนา + ข้อความ) เหตุผลเดียวกับ emitTicketLines
   const builder = CapacitorThermalPrinter.begin().raw(selectCodepageCmd(THAI_CODEPAGE_N));
   let align: "left" | "center" | null = null;
-  for (const line of layoutReceipt(data, lang, new Date())) {
+  const lines = settings?.newLayout
+    ? layoutReceiptNew(data, lang, new Date(), settings.footer)
+    : layoutReceipt(data, lang, new Date());
+  for (const line of lines) {
     if (line.align !== align) builder.align((align = line.align));
     builder.raw([
-      ...SIZE_NORMAL,
+      ...(line.tall ? SIZE_TALL : SIZE_NORMAL),
       ...(line.bold ? boldCmd(true) : []),
       ...thaiRaw(`${line.text}
 `),

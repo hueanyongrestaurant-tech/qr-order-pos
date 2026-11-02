@@ -8,6 +8,7 @@ import { cartItemKey, cartItemTotal, compareTables, formatClock, formatOptionDet
 import { StaffHeader } from "./StaffHeader";
 import type { ReceiptData } from "./ticket";
 import { useSelectedPrinterAddress } from "./printerStore";
+import { useReceiptSettings } from "./receiptSettingsStore";
 import { QtyPickerModal, qtyInfo } from "./QtyPickerModal";
 import { SplitBillPanel } from "./SplitBillPanel";
 import { EMPTY_SPLIT_BILL, reconcileSplit, splitLines, type SplitLine, type SplitState } from "./splitBill";
@@ -64,7 +65,8 @@ interface PaymentCardProps {
   restoreAction?: (ci: CartItem) => void; // แตะรายการที่ยกเลิกแล้ว → ปุ่มคืนรายการ
   cancelAction?: () => void;
   moveAction?: () => void;
-  printReceiptAction?: () => void;
+  // payment = วิธีจ่ายที่กรอกบนการ์ดแล้วครบ (ใบเสร็จแบบใหม่พิมพ์ส่วนชำระเงิน) ยังกรอกไม่ครบ = undefined
+  printReceiptAction?: (payment?: PaymentInput) => void;
   printDisabled: boolean;
   expandedKey: string | null;
   select: (key: string) => void;
@@ -421,7 +423,7 @@ function PaymentCard({
           <div className="flex gap-2">
             {printReceiptAction && (
               <button
-                onClick={printReceiptAction}
+                onClick={() => printReceiptAction(paymentReady ? payment : undefined)}
                 disabled={printDisabled || hasPending}
                 className="flex-shrink-0 bg-muted text-foreground px-4 py-3 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -461,12 +463,14 @@ export function StaffPaymentScreen({
   const canPrintReceipt = Capacitor.isNativePlatform() && !!selectedPrinterAddress;
   const printDisabled = !canPrintReceipt || isPrinting;
 
+  const receiptSettings = useReceiptSettings();
+
   const handlePrintReceipt = async (data: ReceiptData) => {
     if (isPrinting) return;
     setIsPrinting(true);
     try {
       const { printReceiptNative } = await import("./nativePrinter");
-      await printReceiptNative(data, lang);
+      await printReceiptNative(data, lang, receiptSettings);
     } catch (err: any) {
       onNotice((lang === "en" ? "Print failed: " : "พิมพ์ไม่สำเร็จ: ") + (err?.message || String(err)));
     } finally {
@@ -620,11 +624,12 @@ export function StaffPaymentScreen({
                           const order = g.orders.find((o) => o.items.some((x) => x.cartId === ci.cartId));
                           if (order) askRestore(order, ci, tableTitle(g.tableNumber, lang));
                         }}
-                        printReceiptAction={() =>
+                        printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: tableTitle(g.tableNumber, lang),
                             items: g.items,
                             total: g.total,
+                            payment,
                           })
                         }
                         printDisabled={printDisabled}
@@ -677,11 +682,12 @@ export function StaffPaymentScreen({
                         billName={order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน")}
                         onAskConfirm={onAskConfirm}
                         restoreAction={(ci) => askRestore(order, ci, order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"))}
-                        printReceiptAction={() =>
+                        printReceiptAction={(payment) =>
                           handlePrintReceipt({
                             label: order.takeawayLabel || (lang === "en" ? "Takeaway" : "กลับบ้าน"),
                             items: order.items.filter((ci) => !ci.voided),
                             total: orderTotal(order),
+                            payment,
                           })
                         }
                         printDisabled={printDisabled}

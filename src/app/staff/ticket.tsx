@@ -1,4 +1,4 @@
-import type { CartItem, Language } from "../types";
+import type { CartItem, Language, PaymentInput } from "../types";
 import { T } from "../translations";
 
 // ─── Shared ticket helpers ───────────────────────────────────────────────────
@@ -25,4 +25,6 @@ export interface ReceiptData {
   label: string;
   items: CartItem[];
   total: number;
+  // ใช้เฉพาะใบเสร็จแบบใหม่ (layoutReceiptNew) — แบบเดิมไม่พิมพ์ส่วนชำระเงิน ไม่อ่านค่านี้
+  payment?: PaymentInput;
 }
