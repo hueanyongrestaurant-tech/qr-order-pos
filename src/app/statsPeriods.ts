@@ -14,6 +14,8 @@ export const MONTHS_SHOWN = 12;
 const keyToDate = (key: string) => new Date(`${key}T00:00:00`);
 
 // วันจันทร์ของสัปดาห์ที่ d อยู่ (เวลา 00:00 ตามเครื่อง)
+export { analysisWindowStart } from "./utils";
+
 export function weekStart(d: Date): Date {
   const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const sinceMonday = (out.getDay() + 6) % 7; // อาทิตย์ = 6

@@ -3,8 +3,11 @@ import { closedSelectedChoices, isChoiceClosed, isQuickToggleGroup, requiredGrou
 import { ADD_ONS } from "./constants";
 import { T } from "./translations";
 import { db } from "../lib/firebase";
-import { clearDiskDays, deleteDiskDays, readDiskDays, readMeta, writeDiskDays, writeMeta } from "./paidOrdersDiskCache";
-import { collection, documentId, getDocs, getDocsFromServer, orderBy, query, where, limit } from "firebase/firestore";
+import {
+  clearDiskDays, clearDiskSummaries, deleteDiskDays, deleteDiskDaysBefore, deleteDiskSummaries, readDiskDays, readMeta, writeDiskDays, writeMeta,
+} from "./paidOrdersDiskCache";
+import { collection, doc, documentId, getDocs, getDocsFromServer, orderBy, query, serverTimestamp, setDoc, where, limit } from "firebase/firestore";
+import { countReads } from "./readMeter";
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
@@ -607,6 +610,7 @@ export async function fetchPaidOrders(startInclusive: Date, endExclusive: Date):
         limit(PAID_ORDERS_QUERY_CAP),
       ),
     );
+  countReads("orders", snap.size);
   return snap.docs
     .map((d) => mapOrderDoc(d.id, d.data()))
     .filter((o) => o.status === "paid");
@@ -628,9 +632,39 @@ const DISK_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const paidOrdersByDay = new Map<string, { orders: Order[]; fetchedAt: number }>();
 let lastDiskSyncAt = 0;
 
+// เรียกหลังบันทึก/ยกเลิกบิลย้อนหลังของวันนั้น — ล้าง cache ออเดอร์ + สรุปรายวันบนเครื่อง และตีสรุปบน server ว่าเก่า
+// (ทุกเครื่องที่อ่านสรุปวันนั้นจะคำนวณใหม่) การตีว่าเก่าทำแบบเผื่อพลาด: ถ้าเขียนไม่ได้ (เน็ตหลุด/ยังไม่ได้วาง rules dailyStats)
+// บิลก็บันทึกไปแล้วตามปกติ — เครื่องอื่นยังรู้จาก query บิลย้อนหลังใน syncPaidOrdersDisk อยู่ดี
 export function invalidatePaidOrdersDay(dateKey: string) {
   paidOrdersByDay.delete(dateKey);
   void deleteDiskDays([dateKey]);
+  // เมื่อวาน/วันนี้ยังไม่มีสรุป (อ่านสดเสมอ) — ไม่ต้องเขียนอะไร
+  if (dateKey > lastPersistableDay(new Date())) return;
+  void markStatsDirty([dateKey]);
+  setDoc(doc(db, "dailyStats", dateKey), { stale: true, staleAt: serverTimestamp() }, { merge: true })
+    .catch((err) => console.warn("mark dailyStats stale failed", dateKey, err?.code || err));
+}
+
+// ─── วันที่สรุปรายวัน (dailyStats) อาจเก่าแล้ว → หน้าสถิติคำนวณวันนั้นใหม่ 1 ครั้ง แล้วล้างออก (ดู dailyStatsFetch.ts) ───
+// เก็บทั้งในหน่วยความจำและบนเครื่อง (เครื่องที่ใช้ IndexedDB ไม่ได้ยังรู้ภายในรอบการเปิดแอปนี้)
+const statsDirtyMem = new Set<string>();
+async function markStatsDirty(days: string[]): Promise<void> {
+  if (days.length === 0) return;
+  days.forEach((d) => statsDirtyMem.add(d));
+  await deleteDiskSummaries(days);
+  const saved = (await readMeta<string[]>("statsDirty")) ?? [];
+  await writeMeta("statsDirty", [...new Set([...saved, ...days])]);
+}
+export async function readStatsDirty(): Promise<Set<string>> {
+  const saved = (await readMeta<string[]>("statsDirty")) ?? [];
+  return new Set([...saved, ...statsDirtyMem]);
+}
+export async function clearStatsDirty(days: string[]): Promise<void> {
+  if (days.length === 0) return;
+  days.forEach((d) => statsDirtyMem.delete(d));
+  const saved = (await readMeta<string[]>("statsDirty")) ?? [];
+  const left = saved.filter((d) => !days.includes(d));
+  if (left.length !== saved.length) await writeMeta("statsDirty", left);
 }
 
 // "YYYY-MM-DD" ทุกวันตั้งแต่ startKey ถึง endKey (รวมทั้งสองฝั่ง) — ช่วงผิด/ว่าง คืน []
@@ -666,26 +700,48 @@ export function contiguousRuns(sortedKeys: string[]): [string, string][] {
 
 // บิลย้อนหลังที่บันทึก/ยกเลิกหลังเช็คครั้งก่อน (จากเครื่องไหนก็ได้) → ล้างวันนั้นทั้งในเครื่องและในหน่วยความจำ
 // ครั้งแรก (ยังไม่เคยเช็ค) ล้าง cache บนเครื่องทั้งหมดก่อน — ไม่รู้ว่าค้างมานานแค่ไหน
-async function syncPaidOrdersDisk(force: boolean): Promise<void> {
+// ใช้ร่วมกับสรุปรายวัน: วันที่เปลี่ยน = สรุปของวันนั้นบนเครื่องถูกลบ + ตีว่า dirty (คำนวณใหม่ 1 ครั้ง)
+// ครั้งแรกล้างสรุปบนเครื่องด้วย — สรุปบน server ที่ถูกแก้ทีหลังมีธง stale ให้อยู่แล้ว (invalidatePaidOrdersDay)
+export async function syncPaidOrdersDisk(force: boolean): Promise<void> {
   const now = Date.now();
   if (!force && now - lastDiskSyncAt < DISK_SYNC_INTERVAL_MS) return;
   const since = await readMeta<number>("lastSync");
   if (typeof since !== "number") {
     await clearDiskDays();
+    await clearDiskSummaries();
     await writeMeta("lastSync", now);
     lastDiskSyncAt = now;
     return;
   }
   // ถอยไว้ 2 นาที เผื่อนาฬิกาเครื่องกับ server ไม่ตรงกัน (ล้างซ้ำได้ ไม่เสียหาย)
   const after = new Date(since - 2 * 60 * 1000);
+  // เพดาน SYNC_CAP ต่อ query — เครื่องที่ไม่ได้เปิดหน้าสถิตินานมาก ไม่ไล่อ่านออเดอร์ยกเลิกทั้งหมดตั้งแต่ครั้งก่อน
+  // (ชนเพดาน = ไม่รู้ว่าวันไหนเปลี่ยนบ้าง → ล้าง cache บนเครื่องทั้งหมด เหมือนเครื่องใหม่)
   const snaps = await Promise.all(["backfilledAt", "cancelledAt"].map((field) =>
-    getDocs(query(collection(db, "orders"), where(field, ">", after), limit(PAID_ORDERS_QUERY_CAP)))));
-  const changed = [...new Set(snaps.flatMap((sn) => sn.docs.map((d) => mapOrderDoc(d.id, d.data())))
-    .map((o) => formatDateInput(o.timestamp)))];
-  changed.forEach((k) => paidOrdersByDay.delete(k));
-  await deleteDiskDays(changed);
+    getDocs(query(collection(db, "orders"), where(field, ">", after), limit(SYNC_CAP)))));
+  snaps.forEach((sn) => countReads("sync", sn.size));
+  if (snaps.some((sn) => sn.size >= SYNC_CAP)) {
+    paidOrdersByDay.clear();
+    await clearDiskDays();
+    await clearDiskSummaries();
+  } else {
+    const changed = [...new Set(snaps.flatMap((sn) => sn.docs.map((d) => mapOrderDoc(d.id, d.data())))
+      .map((o) => formatDateInput(o.timestamp)))];
+    changed.forEach((k) => paidOrdersByDay.delete(k));
+    await deleteDiskDays(changed);
+    await markStatsDirty(changed.filter((k) => k <= lastPersistableDay(new Date())));
+  }
+  // ออเดอร์รายวันที่เก็บบนเครื่องเกิน 12 เดือน (แท็บวิเคราะห์ย้อนไม่ถึงแล้ว) ทิ้งไป ไม่ให้พื้นที่เครื่องโตไม่หยุด
+  await deleteDiskDaysBefore(analysisWindowStart(new Date()));
   await writeMeta("lastSync", now);
   lastDiskSyncAt = now;
+}
+const SYNC_CAP = 500;
+
+// วันแรกที่แท็บวิเคราะห์ย้อนไปถึงได้ = 12 เดือนล่าสุด (วันเดียวกันของปีก่อน +1 วัน — วันนี้ 6 พ.ย. 69 → 7 พ.ย. 68)
+// แท็บวิเคราะห์อ่านออเดอร์ทุกใบในช่วง จึงต้องมีเพดาน ไม่งั้นเครื่องใหม่อ่านทุกออเดอร์ตั้งแต่เปิดร้าน (โควต้าทั้งร้านหมด)
+export function analysisWindowStart(today: Date): string {
+  return formatDateInput(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate() + 1));
 }
 
 // วันแรกที่มีออเดอร์ (ช่วง "ทั้งหมดที่ผ่านมา") — query ครั้งเดียวต่อเครื่อง (1 read) แล้วจำไว้บนเครื่อง
@@ -694,6 +750,7 @@ export async function fetchFirstOrderDay(): Promise<string | null> {
   const saved = await readMeta<string>("firstDay");
   if (typeof saved === "string") return saved;
   const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "asc"), limit(1)));
+  countReads("firstDay", snap.size);
   if (snap.empty) return null;
   const first = formatDateInput(mapOrderDoc(snap.docs[0].id, snap.docs[0].data()).timestamp);
   await writeMeta("firstDay", first);

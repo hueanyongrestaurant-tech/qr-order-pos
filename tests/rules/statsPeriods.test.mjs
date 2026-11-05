@@ -1,7 +1,7 @@
 // ปุ่ม วัน/สัปดาห์/เดือน/ปี ของกราฟยอดขาย (src/app/statsPeriods.ts) — ตรรกะล้วน ไม่ต้องใช้ emulator
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { periodRange, revenueBuckets, weekStart } from "../../src/app/statsPeriods";
+import { analysisWindowStart, periodRange, revenueBuckets, weekStart } from "../../src/app/statsPeriods";
 
 const at = (y, m, d, h = 12) => new Date(y, m - 1, d, h);
 
@@ -61,4 +61,11 @@ test("revenueBuckets year: one bar per year from the first order's year", () => 
     { key: "2026-01-01", label: "2569", revenue: 40 },
   ]);
   assert.deepEqual(revenueBuckets("year", [], start, end, "en").map((x) => x.label), ["2025", "2026"]);
+});
+
+test("analysisWindowStart: last 12 months, never further back", () => {
+  assert.equal(analysisWindowStart(new Date("2026-11-06T10:00:00")), "2025-11-07");
+  assert.equal(analysisWindowStart(new Date("2026-01-01T00:05:00")), "2025-01-02");
+  assert.equal(analysisWindowStart(new Date("2028-02-29T12:00:00")), "2027-03-02");
+  assert.equal(analysisWindowStart(new Date("2026-12-31T23:00:00")), "2026-01-01");
 });
