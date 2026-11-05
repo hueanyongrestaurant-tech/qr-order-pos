@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowRightLeft, Check, CreditCard, Minus, Plus, Printer, RotateCcw, Split, X } from "lucide-react";
+import { ArrowRightLeft, Check, CreditCard, Link2, Minus, Plus, Printer, RotateCcw, Split, Unlink, X } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { CartItem, ConfirmOptions, Language, Order, PaymentInput, PaymentMethod, StaffTab } from "../types";
 import { T } from "../translations";
-import { tableShort, tableTitle } from "../tables";
+import { tableShort, tableTitle, tablesTitle } from "../tables";
 import { cartItemKey, cartItemTotal, compareTables, formatClock, formatOptionDetails, liveItemCount, orderTotal, unservedItems } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 import type { ReceiptData } from "./ticket";
@@ -12,14 +12,16 @@ import { useReceiptSettings } from "./receiptSettingsStore";
 import { QtyPickerModal, qtyInfo } from "./QtyPickerModal";
 import { SplitBillPanel } from "./SplitBillPanel";
 import { EMPTY_SPLIT_BILL, reconcileSplit, splitLines, type SplitLine, type SplitState } from "./splitBill";
+import type { ExpectedBills } from "./closeTables";
 
 // ─── Staff Payment Screen ─────────────────────────────────────────────────────
 
 interface StaffPaymentProps {
   lang: Language;
   orders: Order[];
-  // expected = ออเดอร์/ยอดที่พนักงานเห็นบนการ์ดตอนกด — App ปิดบิลเฉพาะเมื่อข้อมูลบน server ยังตรงกัน
-  onCloseTable: (n: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => void;
+  // expected = ออเดอร์/ยอดที่พนักงานเห็นบนการ์ดตอนกด (ต่อโต๊ะ) — App ปิดบิลเฉพาะเมื่อข้อมูลบน server ยังตรงกัน
+  // หลายโต๊ะ = "รวมโต๊ะ": ทุกโต๊ะปิดเป็นบิลเดียวใน transaction เดียว
+  onCloseTables: (tables: string[], payment: PaymentInput, expected: ExpectedBills) => void;
   onCloseTakeaway: (orderId: string, payment: PaymentInput) => void;
   onServeItem: (orderId: string, cartId: string, qty?: number) => Promise<number>;
   // App ถามยืนยัน/เหตุผลเอง แล้ว void qty ชิ้น (เฉพาะที่ยังไม่เสิร์ฟ) — picked = เลือกจำนวนจากหน้าต่างแล้ว ไม่ต้องยืนยันซ้ำ
@@ -46,14 +48,30 @@ export interface SplitEntry {
 }
 export const EMPTY_SPLIT: SplitEntry = { side: "transfer", value: "" };
 
+interface CombineControl {
+  open: boolean; // รายการโต๊ะให้ติ๊กกำลังเปิดอยู่
+  onToggle: () => void;
+  options: { table: string; title: string; total: number; checked: boolean }[];
+  onCheck: (table: string, checked: boolean) => void;
+  onCancel?: () => void; // มีเมื่อรวมโต๊ะอยู่ — กลับไปเป็นการ์ดแยกเหมือนเดิม (ไม่เขียนอะไร)
+}
+
+const TableTag = ({ tag }: { tag?: string }) =>
+  tag ? (
+    <span className="flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-[#3C2414]/10 text-[#3C2414] whitespace-nowrap">{tag}</span>
+  ) : null;
+
 interface PaymentCardProps {
   keyId: string;
   label: string;
   subtitle: string;
   total: number;
   items: CartItem[];
+  // บิลรวมโต๊ะ: ป้ายโต๊ะของแต่ละรายการ (ตำแหน่งเดียวกับ items / voidedItems)
+  itemTags?: string[];
   voidedItems?: CartItem[];
-  onAdjust: (key: string, delta: number) => void;
+  voidedTags?: string[];
+  onAdjust: (key: string, delta: number, index: number) => void;
   total2: number;
   closeAction: (payment: PaymentInput) => void;
   // รายการของโต๊ะนี้ที่ยังไม่เสิร์ฟ (รอบที่ยัง in-progress) — มีอย่างน้อย 1 รายการ = ปิดบิลไม่ได้
@@ -78,6 +96,8 @@ interface PaymentCardProps {
   setSplitEntry: (v: SplitEntry) => void;
   // เครื่องคิดเลขแยกจ่าย — เฉพาะบิลโต๊ะ (ไม่ส่ง = ไม่มีปุ่ม "แยกจ่าย")
   splitBill?: { open: boolean; lines: SplitLine[]; state: SplitState; onToggle: () => void; onChange: (s: SplitState) => void };
+  // รวมโต๊ะ — เฉพาะบิลโต๊ะ ที่มีโต๊ะอื่นรอชำระอยู่ด้วย (ไม่ส่ง = ไม่มีปุ่ม)
+  combine?: CombineControl;
   lang: Language;
   t: typeof T["en"];
 }
@@ -127,8 +147,8 @@ export function SplitAmountField({
 }
 
 function PaymentCard({
-  keyId, label, subtitle, total, items, voidedItems, onAdjust, total2, closeAction, pending, onServePending, onVoidPending, billName, onAskConfirm, restoreAction, cancelAction, moveAction, printReceiptAction, printDisabled,
-  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, splitBill, lang, t,
+  keyId, label, subtitle, total, items, itemTags, voidedItems, voidedTags, onAdjust, total2, closeAction, pending, onServePending, onVoidPending, billName, onAskConfirm, restoreAction, cancelAction, moveAction, printReceiptAction, printDisabled,
+  expandedKey, select, paymentMethod, setPaymentMethod, cashInput, setCashInput, splitEntry, setSplitEntry, splitBill, combine, lang, t,
 }: PaymentCardProps) {
   const isSelected = expandedKey === keyId;
   const [restorePick, setRestorePick] = useState<string | null>(null);
@@ -204,14 +224,15 @@ function PaymentCard({
                 <div key={ciIdx} className="flex items-center justify-between py-1">
                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => onAdjust(key, -1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-destructive/10 transition-all">
+                      <button onClick={() => onAdjust(key, -1, ciIdx)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-destructive/10 transition-all">
                         <Minus size={12} />
                       </button>
                       <span className="text-muted-foreground text-sm font-medium w-6 text-center">{ci.quantity}</span>
-                      <button onClick={() => onAdjust(key, 1)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-primary/10 transition-all">
+                      <button onClick={() => onAdjust(key, 1, ciIdx)} className="w-6 h-6 rounded-full bg-muted flex items-center justify-center hover:bg-primary/10 transition-all">
                         <Plus size={12} />
                       </button>
                     </div>
+                    <TableTag tag={itemTags?.[ciIdx]} />
                     <div className="min-w-0">
                       <div className="text-foreground text-sm font-medium truncate">
                         {lang === "en" ? ci.item.name.en : ci.item.name.th}
@@ -225,7 +246,7 @@ function PaymentCard({
                 </div>
               );
             })}
-            {voidedItems && voidedItems.length > 0 && voidedItems.map((ci) => (
+            {voidedItems && voidedItems.length > 0 && voidedItems.map((ci, vIdx) => (
               <div key={`voided-${ci.cartId}`}>
                 <button
                   onClick={() => restoreAction && setRestorePick((cur) => (cur === ci.cartId ? null : ci.cartId))}
@@ -234,8 +255,9 @@ function PaymentCard({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="opacity-50">
-                      <div className="text-sm font-medium line-through text-muted-foreground truncate">
-                        {ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}
+                      <div className="text-sm font-medium line-through text-muted-foreground truncate flex items-center gap-1.5">
+                        <TableTag tag={voidedTags?.[vIdx]} />
+                        <span className="truncate">{ci.quantity}× {lang === "en" ? ci.item.name.en : ci.item.name.th}</span>
                       </div>
                       <div className="text-destructive text-xs">
                         {t.voidedLabel}{ci.voidReason ? ` · ${ci.voidReason}` : ""}
@@ -285,6 +307,7 @@ function PaymentCard({
                         ) : null;
                       })()}
                       <div className="text-muted-foreground text-xs">
+                        {combine?.onCancel ? `${tableShort(order.tableNumber, lang)} · ` : ""}
                         {lang === "en" ? "ordered" : "สั่งเมื่อ"} {formatClock(order.timestamp)}
                         {formatOptionDetails(ci, lang) ? ` · ${formatOptionDetails(ci, lang)}` : ""}
                       </div>
@@ -313,14 +336,27 @@ function PaymentCard({
             </div>
           )}
 
-          {(cancelAction || moveAction || splitBill) && (
-            <div className="flex items-center justify-between gap-2 mb-3">
+          {(cancelAction || moveAction || splitBill || combine) && (
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
               {cancelAction ? (
                 <button onClick={cancelAction} className="text-destructive/70 hover:text-destructive text-xs font-medium">
                   {t.cancelOrder}
                 </button>
               ) : <span />}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+              {combine && (
+                <button
+                  onClick={combine.onToggle}
+                  aria-pressed={combine.open}
+                  className={`min-h-[36px] px-3 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-all ${combine.open
+                    ? "bg-primary text-primary-foreground"
+                    : "text-foreground bg-muted hover:bg-muted/80"
+                    }`}
+                >
+                  <Link2 size={13} />
+                  {lang === "en" ? "Combine tables" : "รวมโต๊ะ"}
+                </button>
+              )}
               {splitBill && (
                 <button
                   onClick={splitBill.onToggle}
@@ -344,6 +380,43 @@ function PaymentCard({
                 </button>
               )}
               </div>
+            </div>
+          )}
+
+          {combine?.open && (
+            <div className="mb-3 rounded-xl border-2 border-border bg-muted/40 p-3">
+              <div className="text-xs font-medium text-foreground mb-2">
+                {lang === "en" ? "Tables paying together" : "โต๊ะที่จ่ายรวมกัน"}
+              </div>
+              {combine.options.length === 0 ? (
+                <div className="text-xs text-muted-foreground">
+                  {lang === "en" ? "No other tables awaiting payment" : "ไม่มีโต๊ะอื่นรอชำระ"}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {combine.options.map((o) => (
+                    <label key={o.table} className="min-h-[44px] flex items-center gap-3 px-2 rounded-lg bg-card border border-border cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={o.checked}
+                        onChange={(e) => combine.onCheck(o.table, e.target.checked)}
+                        className="w-5 h-5 accent-[#C05A25]"
+                      />
+                      <span className="flex-1 text-sm font-medium text-foreground">{o.title}</span>
+                      <span className="text-sm font-semibold text-primary">{t.thb}{o.total}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {combine.onCancel && (
+                <button
+                  onClick={combine.onCancel}
+                  className="mt-2 w-full min-h-[40px] rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold text-destructive bg-card border-2 border-destructive/30 active:scale-95 transition-all"
+                >
+                  <Unlink size={13} />
+                  {lang === "en" ? "Cancel combine" : "ยกเลิกรวมโต๊ะ"}
+                </button>
+              )}
             </div>
           )}
 
@@ -446,7 +519,7 @@ function PaymentCard({
 }
 
 export function StaffPaymentScreen({
-  lang, orders, onCloseTable, onCloseTakeaway, onServeItem, onRemoveItem, onAdjustItem, onAdjustTakeawayItem,
+  lang, orders, onCloseTables, onCloseTakeaway, onServeItem, onRemoveItem, onAdjustItem, onAdjustTakeawayItem,
   onCancelOrder, onCancelOrders, onAskConfirm, onRestoreItem, onNotice, onMoveTable, onTabChange, onLogout, onLangToggle,
 }: StaffPaymentProps) {
   const t = T[lang];
@@ -581,6 +654,47 @@ export function StaffPaymentScreen({
     });
   }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ─── รวมโต๊ะ: โต๊ะหลัก (การ์ดที่กด) → โต๊ะที่ติ๊กรวม — อยู่ในหน่วยความจำหน้านี้เท่านั้น ไม่เขียนที่ไหนจนกว่าจะปิดบิล ───
+  // โต๊ะที่หายจากหน้านี้ (ปิดบิล/ย้ายโต๊ะจากเครื่องอื่น) หลุดจากการรวมเอง | โต๊ะหลักหาย = เลิกรวมทั้งชุด
+  const [combines, setCombines] = useState<Record<string, string[]>>({});
+  const [combinePicker, setCombinePicker] = useState<string | null>(null); // โต๊ะหลักที่เปิดรายการให้ติ๊กอยู่
+  const groupByTable = new Map(tableGroups.map((g) => [g.tableNumber, g]));
+  const liveCombines: Record<string, string[]> = {};
+  Object.entries(combines).forEach(([primary, others]) => {
+    if (!groupByTable.has(primary)) return;
+    const live = others.filter((tn) => tn !== primary && groupByTable.has(tn)).sort(compareTables);
+    if (live.length > 0) liveCombines[primary] = live;
+  });
+  const combinedInto = new Map<string, string>(); // โต๊ะที่ถูกรวม → โต๊ะหลัก
+  Object.entries(liveCombines).forEach(([primary, others]) => others.forEach((tn) => combinedInto.set(tn, primary)));
+  // ยอด/รายการเปลี่ยนเมื่อติ๊ก — ล้างเงินที่กรอกไว้ กันคิดเงินทอนจากยอดเก่า
+  const resetPaymentInputs = () => { setCashInput(""); setSplitEntry(EMPTY_SPLIT); };
+  const setCombineMembers = (primary: string, others: string[]) => {
+    setCombines((prev) => {
+      const next = { ...prev };
+      if (others.length === 0) delete next[primary];
+      else next[primary] = others;
+      return next;
+    });
+    resetPaymentInputs();
+  };
+  const combineControl = (primary: string): CombineControl | undefined => {
+    if (tableGroups.length < 2) return undefined;
+    const mine = liveCombines[primary] ?? [];
+    // ให้ติ๊กได้เฉพาะโต๊ะที่ยังไม่อยู่ในการรวมชุดอื่น
+    const options = tableGroups
+      .filter((g) => g.tableNumber !== primary)
+      .filter((g) => mine.includes(g.tableNumber) || (!liveCombines[g.tableNumber] && !combinedInto.has(g.tableNumber)))
+      .map((g) => ({ table: g.tableNumber, title: tableTitle(g.tableNumber, lang), total: g.total, checked: mine.includes(g.tableNumber) }));
+    return {
+      open: combinePicker === primary,
+      onToggle: () => setCombinePicker((cur) => (cur === primary ? null : primary)),
+      options,
+      onCheck: (tn, checked) => setCombineMembers(primary, checked ? [...mine, tn] : mine.filter((x) => x !== tn)),
+      onCancel: mine.length > 0 ? () => { setCombineMembers(primary, []); setCombinePicker(null); } : undefined,
+    };
+  };
+
   return (
     <>
       <div className="min-h-screen bg-background flex flex-col">
@@ -601,7 +715,70 @@ export function StaffPaymentScreen({
                     {lang === "en" ? "Dine-in" : "ทานที่ร้าน"}
                   </h3>
                   <div className="grid gap-3 md:grid-cols-2">
-                    {tableGroups.map((g) => (
+                    {tableGroups.filter((g) => !combinedInto.has(g.tableNumber)).map((g) => liveCombines[g.tableNumber] ? (() => {
+                      // ─── การ์ดบิลรวมโต๊ะ: ทุกรายการของทุกโต๊ะ (ป้ายโต๊ะกำกับ) ยอดเดียว ปิดบิลครั้งเดียว ───
+                      // แยกจ่าย/ย้ายโต๊ะ/ยกเลิกทั้งบิล ปิดไว้ระหว่างรวมโต๊ะ (ยกเลิกรวมโต๊ะก่อนถ้าต้องใช้)
+                      const tables = [g.tableNumber, ...liveCombines[g.tableNumber]];
+                      const groups = tables.map((tn) => groupByTable.get(tn)!);
+                      const rows = groups.flatMap((x) => x.items.map((ci) => ({ g: x, ci })));
+                      const voidRows = groups.flatMap((x) => x.voidedItems.map((ci) => ({ g: x, ci })));
+                      const total = groups.reduce((sum, x) => sum + x.total, 0);
+                      const itemCount = groups.reduce((sum, x) => sum + x.itemCount, 0);
+                      const title = tablesTitle(tables, lang);
+                      // ใบเสร็จรวมรายการเดียวกันข้ามโต๊ะเป็นบรรทัดเดียว
+                      const receiptItems = (() => {
+                        const map = new Map<string, CartItem>();
+                        rows.forEach(({ ci }) => {
+                          const key = cartItemKey(ci);
+                          const existing = map.get(key);
+                          map.set(key, existing ? { ...existing, quantity: existing.quantity + ci.quantity } : { ...ci });
+                        });
+                        return Array.from(map.values());
+                      })();
+                      return (
+                        <PaymentCard
+                          key={g.tableNumber}
+                          keyId={`table:${g.tableNumber}`}
+                          label={tables.map((tn) => tableShort(tn, lang)).join("+")}
+                          subtitle={`${lang === "en" ? `${tables.length} tables` : `รวม ${tables.length} โต๊ะ`} · ${itemCount} ${t.items}`}
+                          total={total}
+                          total2={total}
+                          items={rows.map((r) => r.ci)}
+                          itemTags={rows.map((r) => tableShort(r.g.tableNumber, lang))}
+                          voidedItems={voidRows.map((r) => r.ci)}
+                          voidedTags={voidRows.map((r) => tableShort(r.g.tableNumber, lang))}
+                          onAdjust={(key, delta, index) => { const r = rows[index]; if (r) onAdjustItem(r.g.orders, key, delta); }}
+                          closeAction={(payment) =>
+                            onCloseTables(tables, payment, Object.fromEntries(groups.map((x) => [x.tableNumber, { orderIds: x.orders.map((o) => o.id), total: x.total }])))
+                          }
+                          pending={groups.flatMap((x) => x.pending)}
+                          onServePending={askServePending}
+                          onVoidPending={askVoidPending}
+                          billName={title}
+                          onAskConfirm={onAskConfirm}
+                          restoreAction={(ci) => {
+                            const r = voidRows.find((x) => x.ci.cartId === ci.cartId);
+                            const order = r?.g.orders.find((o) => o.items.some((x) => x.cartId === ci.cartId));
+                            if (order) askRestore(order, ci, tableTitle(order.tableNumber, lang));
+                          }}
+                          printReceiptAction={(payment) =>
+                            handlePrintReceipt({ label: title, items: receiptItems, total, payment })
+                          }
+                          printDisabled={printDisabled}
+                          expandedKey={expandedKey}
+                          select={select}
+                          paymentMethod={paymentMethod}
+                          setPaymentMethod={setPaymentMethod}
+                          cashInput={cashInput}
+                          setCashInput={setCashInput}
+                          splitEntry={splitEntry}
+                          setSplitEntry={setSplitEntry}
+                          combine={combineControl(g.tableNumber)}
+                          lang={lang}
+                          t={t}
+                        />
+                      );
+                    })() : (
                       <PaymentCard
                         key={g.tableNumber}
                         keyId={`table:${g.tableNumber}`}
@@ -613,7 +790,7 @@ export function StaffPaymentScreen({
                         voidedItems={g.voidedItems}
                         onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
                         closeAction={(payment) =>
-                          onCloseTable(g.tableNumber, payment, { orderIds: g.orders.map((o) => o.id), total: g.total })
+                          onCloseTables([g.tableNumber], payment, { [g.tableNumber]: { orderIds: g.orders.map((o) => o.id), total: g.total } })
                         }
                         pending={g.pending}
                         onServePending={askServePending}
@@ -653,6 +830,7 @@ export function StaffPaymentScreen({
                           onToggle: () => updateSplit(g.tableNumber, { open: !splitBills[g.tableNumber]?.open }),
                           onChange: (state) => updateSplit(g.tableNumber, { state }),
                         }}
+                        combine={combineControl(g.tableNumber)}
                         lang={lang}
                         t={t}
                       />

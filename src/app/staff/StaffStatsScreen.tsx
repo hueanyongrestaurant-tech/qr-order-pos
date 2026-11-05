@@ -19,8 +19,16 @@ import {
 } from "../utils";
 import { StaffHeader } from "./StaffHeader";
 import { StatsInsights } from "./StatsInsights";
+import { periodRange, revenueBuckets, type RevenuePeriod } from "../statsPeriods";
 
 type StatsTab = "sales" | "insights";
+// ปุ่มช่วงของกราฟยอดขาย — วัน = ช่วงที่เลือกเอง | ที่เหลือตั้งช่วงให้เอง (ดู statsPeriods.ts)
+const REVENUE_PERIODS: { value: RevenuePeriod; th: string; en: string; titleTh: string; titleEn: string }[] = [
+  { value: "day", th: "วัน", en: "Day", titleTh: "ยอดขายรายวัน", titleEn: "Daily Revenue" },
+  { value: "week", th: "สัปดาห์", en: "Week", titleTh: "ยอดขายรายสัปดาห์", titleEn: "Weekly Revenue" },
+  { value: "month", th: "เดือน", en: "Month", titleTh: "ยอดขายรายเดือน", titleEn: "Monthly Revenue" },
+  { value: "year", th: "ปี", en: "Year", titleTh: "ยอดขายรายปี", titleEn: "Yearly Revenue" },
+];
 const STATS_TABS: { value: StatsTab; th: string; en: string }[] = [
   { value: "sales", th: "ยอดขาย", en: "Sales" },
   { value: "insights", th: "วิเคราะห์", en: "Insights" },
@@ -52,6 +60,16 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [searchQuery, setSearchQuery] = useState("");
+  const [period, setPeriod] = useState<RevenuePeriod>("day");
+  // วันแรกที่มีออเดอร์ — ใช้กับปุ่ม "ปี" และช่วง "ทั้งหมด" ของแท็บวิเคราะห์ (1 read ครั้งแรกต่อเครื่อง แล้วจำบนเครื่อง)
+  const [firstDay, setFirstDay] = useState<string | null | undefined>(undefined); // undefined = ยังไม่รู้
+  // ช่วงที่ใช้ดึง/สรุปของแท็บยอดขาย — ปุ่ม สัปดาห์/เดือน/ปี ตั้งให้เอง, วัน = ช่องวันที่ที่เลือก
+  const periodR = period === "day" || (period === "year" && firstDay === undefined)
+    ? null
+    : periodRange(period, new Date(), firstDay ?? null);
+  const salesReady = period === "day" || periodR !== null;
+  const salesStart = period === "day" ? startDate : periodR?.start ?? today;
+  const salesEnd = period === "day" ? endDate : periodR?.end ?? today;
 
   // ดึงออเดอร์ที่ชำระแล้วเฉพาะช่วงวันที่ที่เลือก (ไม่ใช่ listener ถาวร) — bin ตาม createdAt เหมือนเดิม
   const [paidOrders, setPaidOrders] = useState<Order[]>([]);
@@ -65,13 +83,14 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   useEffect(() => {
+    if (!salesReady) return;
     let cancelled = false;
     let retryTimer: number | undefined;
     setLoading(true);
     // ผ่าน cache รายวันใน utils — ดึงจริงเฉพาะวันที่ยังไม่มีใน cache (+ วันนี้ถ้า cache เกิน 5 นาที)
     const force = forceRefreshRef.current;
     forceRefreshRef.current = false;
-    fetchPaidOrdersCached(startDate, endDate, force, { persist: true })
+    fetchPaidOrdersCached(salesStart, salesEnd, force, { persist: true })
       .then(({ orders: rows, fetchedAt: at }) => {
         if (cancelled) return;
         setPaidOrders(rows);
@@ -97,7 +116,7 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate, retryCount, reloadKey]);
+  }, [salesReady, salesStart, salesEnd, retryCount, reloadKey]);
 
   // แท็บ: ยอดขาย (เปิดมาเป็นแท็บนี้ — ตัวเลือกวันด้านบน) | วิเคราะห์ (ตัวเลือกช่วงของตัวเอง)
   const [tab, setTab] = useState<StatsTab>("sales");
@@ -114,7 +133,6 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const [analysisPreset, setAnalysisPreset] = useState<AnalysisPreset>("today");
   const [customStart, setCustomStart] = useState(today);
   const [customEnd, setCustomEnd] = useState(today);
-  const [firstDay, setFirstDay] = useState<string | null | undefined>(undefined); // undefined = ยังไม่รู้
   const [analysisOrders, setAnalysisOrders] = useState<Order[]>([]);
   const [analysisLoading, setAnalysisLoading] = useState(true);
   const [analysisFailed, setAnalysisFailed] = useState(false);
@@ -127,17 +145,23 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const analysisEnd = analysisPreset === "custom" ? customEnd : today;
   const analysisReady = analysisPreset !== "all" || firstDay !== undefined;
 
+  const needFirstForInsights = insightsOpened && analysisPreset === "all";
+  const needFirstForSales = tab === "sales" && period === "year";
   useEffect(() => {
-    if (!insightsOpened || analysisPreset !== "all" || firstDay !== undefined) return;
+    if ((!needFirstForInsights && !needFirstForSales) || firstDay !== undefined) return;
     let cancelled = false;
+    if (needFirstForSales) setLoading(true);
     fetchFirstOrderDay()
       .then((d) => { if (!cancelled) setFirstDay(d); })
       .catch((err) => {
         console.error("fetchFirstOrderDay failed", err);
-        if (!cancelled) { setAnalysisFailed(true); setAnalysisLoading(false); }
+        if (cancelled) return;
+        if (needFirstForInsights) { setAnalysisFailed(true); setAnalysisLoading(false); }
+        if (needFirstForSales) { setLoadFailed(true); setLoading(false); }
       });
     return () => { cancelled = true; };
-  }, [insightsOpened, analysisPreset, firstDay, analysisRetry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needFirstForInsights, needFirstForSales, firstDay, analysisRetry, retryCount, reloadKey]);
 
   useEffect(() => {
     if (!insightsOpened || !analysisReady) return;
@@ -163,8 +187,8 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   const shortDate = (key: string) =>
     new Date(`${key}T00:00:00`).toLocaleDateString(lang === "en" ? "en-US" : "th-TH", { day: "numeric", month: "short", year: "2-digit" });
 
-  const rangeStart = new Date(`${startDate}T00:00:00`);
-  const rangeEnd = new Date(`${endDate}T23:59:59`);
+  const rangeStart = new Date(`${salesStart}T00:00:00`);
+  const rangeEnd = new Date(`${salesEnd}T23:59:59`);
   const filtered = paidOrders.filter((o) => o.timestamp >= rangeStart && o.timestamp <= rangeEnd);
 
   const totalRevenue = filtered.reduce((s, o) => s + orderTotal(o), 0);
@@ -202,7 +226,10 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
   // ยอดขายรายวันตามช่วงวันที่ที่เลือก — เติมทุกวันให้ครบแม้วันไหนไม่มียอดขาย
   // ถ้าเลือกวันเดียว (startDate === endDate) จะไม่แสดงกราฟ เพราะมีแท่งเดียวไม่มีประโยชน์
   const dailyRevenue: { date: string; label: string; revenue: number }[] | null =
-    startDate === endDate
+    period !== "day"
+      ? revenueBuckets(period, filtered.map((o) => ({ at: o.timestamp, amount: orderTotal(o) })), salesStart, salesEnd, lang)
+          .map((b) => ({ date: b.key, label: b.label, revenue: b.revenue }))
+      : startDate === endDate
       ? null
       : (() => {
           const revByDay: Record<string, number> = {};
@@ -270,7 +297,21 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
         </div>
 
         {tab === "sales" && (<>
+        <div className="flex gap-1 bg-muted p-1 rounded-xl mb-3" role="radiogroup" aria-label={lang === "en" ? "Chart period" : "ช่วงของกราฟ"}>
+          {REVENUE_PERIODS.map((p) => (
+            <button
+              key={p.value}
+              role="radio"
+              aria-checked={period === p.value}
+              onClick={() => { setPeriod(p.value); resetRetry(); }}
+              className={`flex-1 min-h-[36px] rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${period === p.value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              {lang === "en" ? p.en : p.th}
+            </button>
+          ))}
+        </div>
         <div className="flex items-stretch gap-2 mb-5">
+          {period === "day" ? (<>
           <input
             type="date"
             value={startDate}
@@ -293,6 +334,11 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
           >
             {lang === "en" ? "Today" : "วันนี้"}
           </button>
+          </>) : (
+            <div className="flex-1 min-w-0 h-11 flex items-center px-1 text-sm text-foreground">
+              {salesReady ? `${shortDate(salesStart)} – ${shortDate(salesEnd)}` : "…"}
+            </div>
+          )}
           <button
             onClick={() => { forceRefreshRef.current = true; resetRetry(); setReloadKey((k) => k + 1); }}
             disabled={loading || retrying}
@@ -353,7 +399,7 @@ export function StaffStatsScreen({ lang, categories, menuItems, onTabChange, onL
         {dailyRevenue && (
           <div className="bg-card rounded-2xl border border-border p-4 mb-6">
             <h3 className="font-semibold text-foreground text-sm mb-3">
-              {lang === "en" ? "Daily Revenue" : "ยอดขายรายวัน"}
+              {(() => { const p = REVENUE_PERIODS.find((x) => x.value === period)!; return lang === "en" ? p.titleEn : p.titleTh; })()}
             </h3>
             <ChartContainer config={revenueChartConfig} className="aspect-[16/9] w-full">
               <BarChart data={dailyRevenue} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>

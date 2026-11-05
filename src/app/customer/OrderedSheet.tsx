@@ -121,7 +121,8 @@ export function OrderedSheet({
               <span className="font-semibold text-foreground">{t.orderedTotal}</span>
               <span className="font-display text-xl font-bold text-foreground tabular-nums">{t.thb}{total.toLocaleString()}</span>
             </div>
-            <p className="text-[11px] text-muted-foreground mt-1">{t.orderedNote}</p>
+            <p className="text-sm font-semibold text-primary mt-1.5">{t.orderedPayAtCounter}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{t.orderedNote}</p>
           </div>
         )}
       </div>

@@ -140,7 +140,6 @@ import {
   checkClosure,
   decideSessionOnLoad,
   isSessionTimedOut,
-  planTableClose,
   type ExpiredReason,
   type SessionStart,
   type TableSession,
@@ -151,6 +150,7 @@ import { fetchTableLink, writeTableView } from "./tableViewStore";
 import { refreshTableLinks, useTableLinks } from "./staff/tableLinkStore";
 import { setStockSwitch } from "./staff/stockSwitchStore";
 import { OrderedSheet } from "./customer/OrderedSheet";
+import { CloseTableError, TABLE_CLOSURES_DOC, closeTablesTx, paymentFields, type ExpectedBills } from "./staff/closeTables";
 
 // ─── Staff screens (lazy, per-file) ────────────────────────────────────────────
 // แต่ละ Staff*Screen import ตรงจากไฟล์ตัวเอง แยกเป็นคนละ JS chunk ต่อหน้าจอ
@@ -183,18 +183,6 @@ class MoveTableError extends Error {
 // อยู่ใน counters/ เพราะ rules เดิมให้พนักงานอ่าน/เขียนได้อยู่แล้ว ไม่ต้องแก้ rules
 const TABLE_MOVE_GUARD = "table-moves";
 
-// ปิดบิลโต๊ะไม่ได้ — โยนจากใน transaction แล้วแจ้งพนักงานตาม code (ดู planTableClose)
-class CloseTableError extends Error {
-  code: "pending" | "changed" | "nothing";
-  constructor(code: "pending" | "changed" | "nothing") {
-    super(code);
-    this.code = code;
-  }
-}
-// เวลาปิดบิลล่าสุดของแต่ละโต๊ะ { closedAt: { "1-3": Timestamp } } — หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ดู tableSession.ts)
-// อยู่ใน status/ เพราะ rules เดิมให้ลูกค้าอ่าน + พนักงานเขียนได้อยู่แล้ว ไม่ต้องแก้ rules
-// (ห้ามใส่ใน status/live — doc นั้นถูก setDoc ทับทั้งก้อนโดยตัวนับร้านยุ่ง)
-const TABLE_CLOSURES_DOC = "tableClosures";
 
 function readTableSession(): TableSession | null {
   try {
@@ -2031,12 +2019,6 @@ export default function App() {
     await addVoidReason(reason);
   };
 
-  // ฟิลด์การชำระเงินที่เขียนลงออเดอร์ 1 ใบ — transferAmount คือส่วนโอนของ "ใบนี้" (split เท่านั้น)
-  const paymentFields = (payment: PaymentInput, orderTransferAmount?: number) => ({
-    paymentMethod: payment.method,
-    ...(payment.cashReceived !== undefined ? { cashReceived: payment.cashReceived } : {}),
-    ...(payment.method === "split" && orderTransferAmount !== undefined ? { transferAmount: orderTransferAmount } : {}),
-  });
 
   // สร้างบิลเป็น "paid" ในการเขียนครั้งเดียว (ต้องมี rules ทางที่ 2 ของ /orders) — ไม่เคยเป็น in-progress
   // จึงไม่เข้า listener ออเดอร์ active → ไม่ auto-print / ไม่มีเสียง / ไม่กระทบตัวนับร้านยุ่ง / ไม่ใช้ counter คิว T-n
@@ -2129,57 +2111,23 @@ export default function App() {
     }
   };
 
-  // ปิดบิลโต๊ะ — อ่านออเดอร์ค้างของโต๊ะใหม่จาก server ใน transaction แล้วปิดทุกรอบพร้อมกัน (สำเร็จหมดหรือไม่ปิดเลย)
-  // ไม่ยอมปิดถ้า: ยังมีรอบที่ยังไม่เสิร์ฟ (ไม่งั้นรอบนั้นค้างไปรวมกับบิลลูกค้าคนถัดไป) หรือชุดออเดอร์/ยอดไม่ตรงกับ
-  // ที่พนักงานเห็นบนการ์ด (expected) เช่นอีกเครื่องเพิ่งเสิร์ฟรอบใหม่เข้ามา — เงินที่รับมาคิดจากยอดบนจอ
-  // พร้อมกันนั้นจดเวลาปิดบิลของโต๊ะลง status/tableClosures ให้หน้าเว็บลูกค้าคนเก่าที่เปิดค้างสั่งต่อไม่ได้
-  const handleCloseTable = async (tableNum: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => {
-    const batchId = uid();
-    await runTransaction(db, async (tx) => {
-      // อ่าน+เขียน closures doc ทุกครั้ง = guard: สองเครื่องปิดโต๊ะเดียวกันพร้อมกันจะชนกันแล้ว retry
-      // (retry รัน query ใหม่ เห็นว่าอีกเครื่องปิดไปแล้ว → "nothing")
-      const closuresRef = doc(db, "status", TABLE_CLOSURES_DOC);
-      await tx.get(closuresRef);
-      const snap = await getDocs(query(
-        collection(db, "orders"),
-        where("tableNumber", "==", tableNum),
-        where("status", "in", ["in-progress", "awaiting-payment"]),
-      ));
-      const fresh = (await Promise.all(snap.docs.map((d) => tx.get(doc(db, "orders", d.id))))).filter((s) => s.exists());
-      const plan = planTableClose(
-        tableNum,
-        fresh.map((s) => {
-          const o = mapOrderDoc(s.id, s.data());
-          return { id: s.id, tableNumber: o.tableNumber, status: o.status, isTakeaway: o.isTakeaway, createdAtMs: o.timestamp.getTime(), total: orderTotal(o) };
-        }),
-        expected,
-      );
-      if (plan.kind !== "ok") throw new CloseTableError(plan.kind);
-      const transferShares = payment.method === "split"
-        ? allocateTransfer(plan.toClose.map((o) => o.total), payment.transferAmount ?? 0)
-        : [];
-      plan.toClose.forEach((o, i) =>
-        tx.update(doc(db, "orders", o.id), {
-          status: "paid",
-          paymentBatchId: batchId,
-          paidAt: serverTimestamp(),
-          ...paymentFields(payment, transferShares[i]),
-        }),
-      );
-      tx.set(closuresRef, { closedAt: { [tableNum]: serverTimestamp() } }, { merge: true });
-    });
+  // ปิดบิลโต๊ะ — 1 โต๊ะ หรือ "รวมโต๊ะ" หลายโต๊ะเป็นบิลเดียว (paymentBatchId เดียวกัน) ใน transaction เดียว — ดู closeTables.ts
+  // ไม่ยอมปิดถ้า: ยังมีรอบที่ยังไม่เสิร์ฟ หรือชุดออเดอร์/ยอดไม่ตรงกับที่พนักงานเห็นบนการ์ด (expected) — เงินที่รับมาคิดจากยอดบนจอ
+  const handleCloseTables = async (tables: string[], payment: PaymentInput, expected: ExpectedBills) => {
+    await closeTablesTx(tables, payment, expected);
     setSelectedPayTable(null);
   };
-  const closeTableWithNotice = (tableNum: string, payment: PaymentInput, expected: { orderIds: string[]; total: number }) => {
+  const closeTablesWithNotice = (tables: string[], payment: PaymentInput, expected: ExpectedBills) => {
     const en = lang === "en";
-    handleCloseTable(tableNum, payment, expected).catch((err) => {
+    handleCloseTables(tables, payment, expected).catch((err) => {
       if (err instanceof CloseTableError) {
+        const name = tableTitle(err.table || tables[0], lang);
         setNotice(
           err.code === "pending"
-            ? (en ? `${tableTitle(tableNum, lang)} has items not served yet. Serve all items first.` : `${tableTitle(tableNum, lang)} ยังเสิร์ฟไม่ครบ เสิร์ฟให้ครบก่อนปิดบิล`)
+            ? (en ? `${name} has items not served yet. Serve all items first.` : `${name} ยังเสิร์ฟไม่ครบ เสิร์ฟให้ครบก่อนปิดบิล`)
             : err.code === "changed"
-              ? (en ? `${tableTitle(tableNum, lang)}'s bill just changed. Check the total and close again.` : `บิล${tableTitle(tableNum, lang)} เพิ่งมีการเปลี่ยนแปลง ตรวจยอดแล้วกดปิดบิลอีกครั้ง`)
-              : (en ? `${tableTitle(tableNum, lang)}'s bill is already closed.` : `บิล${tableTitle(tableNum, lang)} ถูกปิดไปแล้ว`),
+              ? (en ? `${name}'s bill just changed. Check the total and close again.` : `บิล${name} เพิ่งมีการเปลี่ยนแปลง ตรวจยอดแล้วกดปิดบิลอีกครั้ง`)
+              : (en ? `${name}'s bill is already closed.` : `บิล${name} ถูกปิดไปแล้ว`),
         );
       } else {
         setNotice((en ? "Could not close the bill: " : "ปิดบิลไม่สำเร็จ: ") + (err?.message || String(err)));
@@ -2933,7 +2881,7 @@ export default function App() {
           <StaffPaymentScreen
             lang={lang}
             orders={orders}
-            onCloseTable={closeTableWithNotice}
+            onCloseTables={closeTablesWithNotice}
             onCloseTakeaway={(orderId, payment) =>
               handleCloseTakeawayOrder(orderId, payment).catch((err) =>
                 setNotice((lang === "en" ? "Could not close the bill: " : "ปิดบิลไม่สำเร็จ: ") + (err?.message || String(err))),

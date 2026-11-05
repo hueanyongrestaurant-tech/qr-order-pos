@@ -59,3 +59,17 @@ export const zoneTitle = (zone: TableZone, lang: Language): string => pick(zone.
 
 // true = โต๊ะมีชื่อของตัวเอง — ที่ที่ปกติเขียนคำว่า "โต๊ะ" กำกับเลข ไม่ต้องเขียน
 export const isNamedTable = (id: string): boolean => !!BY_ID.get(id)?.name;
+
+// ชื่อบิลรวมโต๊ะ: ["1-2","1-3"] → "โต๊ะ 1-2 + 1-3" (คำว่า "โต๊ะ" ครั้งเดียว) · โต๊ะที่มีชื่อเองใช้ชื่อนั้น เช่น "โต๊ะ 1-2 + ม้าหินอ่อน"
+// โต๊ะเดียว = tableTitle เหมือนเดิม
+export function tablesTitle(ids: string[], lang: Language): string {
+  let saidTable = false;
+  return ids
+    .map((id) => {
+      if (BY_ID.get(id)?.name) return tableTitle(id, lang);
+      if (saidTable) return id;
+      saidTable = true;
+      return tableTitle(id, lang);
+    })
+    .join(" + ");
+}

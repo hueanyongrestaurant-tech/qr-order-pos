@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, Loader2, Plus, RefreshCw } from "lucide-react";
 import type { Language, Order, StaffTab } from "../types";
 import { T } from "../translations";
-import { tableShort, tableTitle } from "../tables";
+import { tableShort, tablesTitle } from "../tables";
 import {
   cartItemTotal,
+  compareTables,
   fetchPaidOrdersCached,
   FETCH_MAX_AUTO_RETRIES,
   FETCH_RETRY_DELAY_MS,
@@ -243,7 +244,7 @@ export function StaffHistoryScreen({ lang, onTabChange, onLogout, onLangToggle, 
                   >
                     <div className="text-left">
                       <div className="text-sm font-medium text-foreground flex items-center gap-1.5 flex-wrap">
-                        {e.isTakeaway ? e.takeawayLabel : tableTitle(e.tableNumber, lang)}
+                        {e.isTakeaway ? e.takeawayLabel : tablesTitle([...new Set(e.orders.map((o) => o.tableNumber))].sort(compareTables), lang)}
                         {!e.isTakeaway && e.movedFrom && (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
                             {t.movedFromLabel(tableShort(e.movedFrom, lang))}

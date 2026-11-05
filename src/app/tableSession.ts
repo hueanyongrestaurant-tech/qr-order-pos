@@ -108,3 +108,26 @@ export function planTableClose(
   if (!sameSet || total !== expected.total) return { kind: "changed" };
   return { kind: "ok", toClose };
 }
+
+// ─── รวมโต๊ะ: ปิดหลายโต๊ะเป็นบิลเดียว ─────────────────────────────────────────────
+// ทุกโต๊ะต้องผ่าน planTableClose แบบเดียวกับปิดทีละโต๊ะ (ไม่มีรอบค้าง + ตรงกับที่เห็นบนการ์ด) — โต๊ะไหนไม่ผ่าน = ไม่ปิดเลยสักโต๊ะ
+// table = โต๊ะแรกที่ไม่ผ่าน (ไว้บอกพนักงาน) | toClose เรียงเก่า→ใหม่ข้ามทุกโต๊ะ (ยอดโอนของ split ลงรอบแรกๆ ก่อน)
+export type TablesClosePlan =
+  | { kind: "ok"; toClose: CloseCandidate[] }
+  | { kind: "pending" | "changed" | "nothing"; table: string };
+
+export function planTablesClose(
+  tables: string[],
+  docs: CloseCandidate[],
+  expected: Record<string, { orderIds: string[]; total: number }>,
+): TablesClosePlan {
+  const unique = [...new Set(tables)];
+  if (unique.length === 0) return { kind: "nothing", table: "" };
+  const toClose: CloseCandidate[] = [];
+  for (const table of unique) {
+    const plan = planTableClose(table, docs, expected[table] ?? { orderIds: [], total: 0 });
+    if (plan.kind !== "ok") return { kind: plan.kind, table };
+    toClose.push(...plan.toClose);
+  }
+  return { kind: "ok", toClose: toClose.sort((a, b) => a.createdAtMs - b.createdAtMs) };
+}
