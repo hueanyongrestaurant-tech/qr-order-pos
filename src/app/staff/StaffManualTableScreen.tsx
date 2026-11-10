@@ -3,7 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { LannaBorder } from "../shared";
-import { ZONES, tableButtonLabel, zoneTitle } from "../tables";
+import { TABLE_GROUPS, tableButtonLabel, zoneTitle } from "../tables";
 
 // ใช้ร่วมกับหน้าตั้งค่าบิลย้อนหลัง: title/topSlot (ช่องเวลา) แทรกด้านบน และ disabled ปิดปุ่มโต๊ะจนกว่าจะกรอกครบ
 export function StaffManualTableScreen({
@@ -45,7 +45,7 @@ export function StaffManualTableScreen({
           {lang === "en" ? "Takeaway" : "กลับบ้าน"}
         </button>
 
-        {ZONES.map((z) => (
+        {TABLE_GROUPS.map((z) => (
           <div key={z.zone} className="mb-6">
             <h3 className="font-semibold text-foreground text-sm mb-3">{zoneTitle(z, lang)}</h3>
             <div className="grid grid-cols-4 gap-2.5">

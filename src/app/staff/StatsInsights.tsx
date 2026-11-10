@@ -4,7 +4,7 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../components/ui/chart";
 import type { Category, Language, MenuItem, Order } from "../types";
 import { T } from "../translations";
-import { ZONES, isKnownTable, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
+import { TABLE_GROUPS, isKnownTable, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
 import { usePrintRouting } from "./printRoutingStore";
 import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, rangeDayCount, seatingSummary, serveSummary, SERVE_MAX_MINUTES, tableStats, topHours, topItems } from "../statsInsights";
 
@@ -94,7 +94,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
   // โต๊ะแยกตามชั้น: แถวเฉพาะโต๊ะที่มีบิล เรียงจากบิลมากไปน้อย — โต๊ะที่ไม่มีบิลรวมไว้บรรทัดเดียวใต้ตาราง
   const byTable = new Map(tables.map((r) => [r.table, r]));
   const dineInRevenue = tables.reduce((s, r) => s + r.revenue, 0);
-  const floors = ZONES.map((z) => {
+  const floors = TABLE_GROUPS.map((z) => {
     const label = new Map(z.tables.map((tb) => [tb.id, tableButtonLabel(tb, lang)]));
     const rows = z.tables.map((tb) => byTable.get(tb.id) ?? { table: tb.id, bills: 0, revenue: 0 })
       .sort((a, b) => b.bills - a.bills || a.revenue - b.revenue || a.table.localeCompare(b.table, undefined, { numeric: true }));

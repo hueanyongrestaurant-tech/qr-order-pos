@@ -27,11 +27,14 @@ export const ADDON_CATEGORY_ID = "__addon__";
 // โต๊ะที่มีชื่อ (tableNames) แสดงชื่อแทน "โต๊ะ 3-1" ทุกที่ ทั้งหน้าลูกค้า ตั๋วครัว ใบเสร็จ ประวัติ สถิติ
 // เพิ่มโต๊ะ: เพิ่ม tables | เพิ่มโซน: เพิ่มแถวใหม่ด้วย zone เลขที่ยังไม่เคยใช้
 // แล้วไปหน้า "ลิงก์โต๊ะ" ฝั่งพนักงานเพื่อสร้างลิงก์ QR ของโต๊ะใหม่
+// showUnder: แสดงโต๊ะของโซนนี้ใต้หัวข้อของโซนอื่นในผังโต๊ะทุกหน้า (ต่อท้ายโต๊ะของโซนนั้น ไม่มีหัวข้อของตัวเอง)
+//   แค่การแสดงผล — เลขโต๊ะภายในยังเป็น "<zone>-<ลำดับ>" ของโซนตัวเอง (QR/ออเดอร์/สถิติผูกกับเลขนี้)
 export interface TableZoneConfig {
   zone: number;
   name: { th: string; en: string };
   tables: number;
   tableNames?: Record<number, { th: string; en: string }>;
+  showUnder?: number;
 }
 export const TABLE_ZONES: TableZoneConfig[] = [
   { zone: 1, name: { th: "ชั้น 1", en: "Floor 1" }, tables: 5 },
@@ -41,6 +44,7 @@ export const TABLE_ZONES: TableZoneConfig[] = [
     name: { th: "ม้าหินอ่อน", en: "Marble bench" },
     tables: 1,
     tableNames: { 1: { th: "ม้าหินอ่อน", en: "Marble bench" } },
+    showUnder: 1, // ม้าหินอ่อนอยู่ชั้น 1 — แสดงใต้ชั้น 1 ต่อจากโต๊ะ 5 (เลขภายในยังเป็น 3-1)
   },
 ];
 

@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
-import { ZONES, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
+import { TABLE_GROUPS, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
 
 // เลือกโต๊ะปลายทางของการย้ายโต๊ะ — ผังเดียวกับหน้าเลือกโต๊ะ (TABLE_ZONES)
 // โต๊ะที่มีลูกค้า (occupied) และโต๊ะต้นทางเป็นสีเทากดไม่ได้ — เป็นแค่ UX ตัวเช็คจริงอยู่ใน transaction
@@ -28,7 +28,7 @@ export function MoveTableModal({
           </button>
         </div>
 
-        {ZONES.map((z) => (
+        {TABLE_GROUPS.map((z) => (
           <div key={z.zone} className="mb-4 last:mb-0">
             <h3 className="font-semibold text-foreground text-sm mb-2">{zoneTitle(z, lang)}</h3>
             <div className="grid grid-cols-4 gap-2">

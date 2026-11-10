@@ -3,7 +3,7 @@ import { Check, Copy, Link2, Loader2, RefreshCw, X } from "lucide-react";
 import { getDoc } from "firebase/firestore";
 import type { Language } from "../types";
 import { CUSTOMER_SITE_URL } from "../constants";
-import { ZONES, tableTitle, zoneTitle } from "../tables";
+import { TABLE_GROUPS, ZONES, tableTitle, zoneTitle } from "../tables";
 import { createTableLink, emptyTableView, QR_CONFIG_REF, setLegacyTableUrlEnabled } from "../tableViewStore";
 import { refreshTableLinks, useTableLinks } from "./tableLinkStore";
 
@@ -136,7 +136,7 @@ export function TableLinksModal({ lang, onClose }: { lang: Language; onClose: ()
               )}
             </div>
 
-            {ZONES.map((z) => (
+            {TABLE_GROUPS.map((z) => (
               <div key={z.zone} className="mb-4">
                 <h3 className="font-semibold text-foreground text-sm mb-2">{zoneTitle(z, lang)}</h3>
                 <div className="space-y-2">

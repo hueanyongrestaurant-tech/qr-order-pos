@@ -29,7 +29,27 @@ export function buildZones(config: TableZoneConfig[]): TableZone[] {
   }));
 }
 
+// หัวข้อในผังโต๊ะ (หน้าเลือกโต๊ะ/ย้ายโต๊ะ/ลิงก์โต๊ะ/สถิติ): โซนที่มี showUnder ไปต่อท้ายโซนเป้าหมาย ไม่มีหัวข้อของตัวเอง
+// showUnder ชี้ไปโซนที่ไม่มี / โซนที่ตัวเองก็ไปอยู่ใต้คนอื่น = ใช้หัวข้อของตัวเองตามเดิม (โต๊ะไม่หายจากผัง)
+export function buildTableGroups(config: TableZoneConfig[]): TableZone[] {
+  const zones = buildZones(config);
+  const hosts = new Set(config.filter((z) => z.showUnder === undefined).map((z) => z.zone));
+  const movedTo = (z: TableZoneConfig) =>
+    z.showUnder !== undefined && z.showUnder !== z.zone && hosts.has(z.showUnder) ? z.showUnder : null;
+  return zones
+    .filter((_, i) => movedTo(config[i]) === null)
+    .map((group) => ({
+      ...group,
+      tables: [
+        ...group.tables,
+        ...zones.filter((_, i) => movedTo(config[i]) === group.zone).flatMap((z) => z.tables),
+      ],
+    }));
+}
+
+// ZONES = โซนจริงตามเลขโต๊ะ | TABLE_GROUPS = หัวข้อที่แสดงในผังโต๊ะ
 export const ZONES: TableZone[] = buildZones(TABLE_ZONES);
+export const TABLE_GROUPS: TableZone[] = buildTableGroups(TABLE_ZONES);
 const BY_ID = new Map(ZONES.flatMap((z) => z.tables).map((t) => [t.id, t]));
 
 export const allTableIds = (): string[] => ZONES.flatMap((z) => z.tables.map((t) => t.id));
