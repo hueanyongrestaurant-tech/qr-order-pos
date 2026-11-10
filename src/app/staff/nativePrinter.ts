@@ -46,6 +46,7 @@ import type { Category, Language, Order } from "../types";
 import type { ReceiptData } from "./ticket";
 import { getSelectedPrinter, type PrintRole } from "./printerStore";
 import { layoutTicket, planTickets, type TicketLine } from "./stationTickets";
+import { waitForPrintRouting } from "./printRoutingStore";
 import { KITCHEN_LINE_WIDTH, LINE_WIDTH, wrapLine } from "./printText";
 import { layoutReceipt, layoutReceiptNew } from "./receiptLayout";
 import type { ReceiptSettings } from "./receiptSettingsStore";
@@ -189,7 +190,9 @@ export async function printStationTicketsNative(
   lang: Language,
   banner?: string,
 ): Promise<number> {
-  const plans = planTickets(order, role, categories);
+  // หมวด → จุดพิมพ์จาก status/printRouting (listener เปิดโดย App ตอนพนักงานล็อกอิน) — ปกติได้ทันทีจากค่าที่จำไว้ในเครื่อง
+  // เครื่องที่ยังไม่เคยโหลดเลย รอได้ไม่เกิน 5 วิ แล้วใช้กฎชื่อหมวดเดิม
+  const plans = planTickets(order, role, categories, await waitForPrintRouting());
   if (plans.length === 0) return 0;
   await ensurePrinterConnected();
 

@@ -149,6 +149,7 @@ import { buildTableView, encodeTableView, lineFromCartItem, type SentOrder } fro
 import { fetchTableLink, writeTableView } from "./tableViewStore";
 import { refreshTableLinks, useTableLinks } from "./staff/tableLinkStore";
 import { setStockSwitch } from "./staff/stockSwitchStore";
+import { setRoutingCategories, startPrintRouting } from "./staff/printRoutingStore";
 import { OrderedSheet } from "./customer/OrderedSheet";
 import { CloseTableError, TABLE_CLOSURES_DOC, closeTablesTx, paymentFields, type ExpectedBills } from "./staff/closeTables";
 
@@ -2438,6 +2439,15 @@ export default function App() {
     });
     await batch.commit();
   };
+
+  // หมวด → จุดพิมพ์ (status/printRouting) — auto-print อ่านค่าล่าสุดจาก store ตอนพิมพ์ ต้องเปิด listener ตลอดที่พนักงานล็อกอิน
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !staffLoggedIn) return;
+    return startPrintRouting();
+  }, [staffLoggedIn]);
+  useEffect(() => {
+    setRoutingCategories(staffLoggedIn ? allCategories : []);
+  }, [staffLoggedIn, allCategories]);
 
   // สวิตช์ระบบสต็อกอยู่ในหน้าตั้งค่าเครื่องพิมพ์ (StaffHeader → PrinterSettingsModal) — ส่งค่า+ตัวกดผ่าน stockSwitchStore
   // ถามยืนยันก่อนเขียนเหมือนเดิม (ConfirmModal ของ App วาดทับหน้าตั้งค่าได้ เพราะอยู่ท้าย DOM)

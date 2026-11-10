@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Printer, WifiOff, Link2 } from "lucide-react";
+import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Settings, WifiOff, Link2 } from "lucide-react";
 import type { Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { LannaBorder, RestaurantLogo } from "../shared";
@@ -55,9 +55,9 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
           <button
             onClick={() => setShowPrinterSettings(true)}
             className="text-[#E6D5BA]/50 hover:text-[#E6D5BA] transition-colors p-1.5"
-            title={lang === "en" ? "Printer settings" : "ตั้งค่าเครื่องพิมพ์"}
+            title={lang === "en" ? "Settings" : "ตั้งค่า"}
           >
-            <Printer size={17} />
+            <Settings size={17} />
           </button>
           {/* แอป Android ไม่มีปุ่ม logout — ล็อกอินครั้งแรกครั้งเดียวแล้ว session อยู่ตลอด กันเผลอกดแล้วต้องใส่รหัสใหม่
               (ถ้าจำเป็นต้องออกจริง ให้ล้างข้อมูลแอปใน Android Settings) เว็บยังมีปุ่มเหมือนเดิม */}

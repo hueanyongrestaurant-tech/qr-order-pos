@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, BellOff, Plus, Printer, Trash2, X } from "lucide-react";
+import { Bell, BellOff, Link2, Plus, Settings, Trash2, X } from "lucide-react";
 import type { Language } from "../types";
 import {
   addSavedPrinter,
@@ -15,12 +15,36 @@ import {
 import { isSoundMuted, setSoundMuted } from "./soundStore";
 import { useStockSwitch } from "./stockSwitchStore";
 import { RECEIPT_FOOTER_MAX_LINES, saveReceiptSettings, useReceiptSettings, type ReceiptSettings } from "./receiptSettingsStore";
+import { savePrintStation, usePrintRouting, useRoutingCategories } from "./printRoutingStore";
+import { stationForCategory, type PrintStation } from "./stationTickets";
+import { TableLinksModal } from "./TableLinksModal";
 
-// ─── Printer Settings Modal (per-device: which printer THIS device prints to) ─
-//
-// Self-contained: reads/writes printerStore (localStorage) directly, no props
-// threaded from App.tsx. Rendered from StaffHeader so it's reachable from every
-// staff tab without changing StaffHeader's prop signature at all 7 call sites.
+type SettingsTab = "device" | "printing" | "shop";
+let lastTab: SettingsTab = "device"; // เปิดใหม่กลับมาแท็บเดิม (จนกว่าจะปิดแอป)
+
+// ป้ายบอกว่าค่าในส่วนนี้มีผลแค่เครื่องนี้หรือทุกเครื่อง
+function ScopeTag({ shop, lang }: { shop: boolean; lang: Language }) {
+  return (
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md whitespace-nowrap ${shop ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" : "bg-sky-500/15 text-sky-700 dark:text-sky-400"}`}>
+      {shop ? (lang === "en" ? "Whole shop" : "ทั้งร้าน") : (lang === "en" ? "This device only" : "เฉพาะเครื่องนี้")}
+    </span>
+  );
+}
+
+function SectionTitle({ title, shop, lang }: { title: string; shop: boolean; lang: Language }) {
+  return (
+    <div className="flex items-center justify-between gap-2 mb-2">
+      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+      <ScopeTag shop={shop} lang={lang} />
+    </div>
+  );
+}
+
+// ─── Settings Modal (ไอคอนตั้งค่าใน StaffHeader) — 3 แท็บ ─────────────────────
+// เครื่องนี้ (localStorage): เครื่องพิมพ์ หน้าที่ เสียง ทดสอบพิมพ์
+// การพิมพ์ (ทั้งร้าน): หมวด → เคาน์เตอร์/ครัว (status/printRouting) + ใบเสร็จ (status/receipt)
+// ร้าน (ทั้งร้าน): สวิตช์สต็อก + ลิงก์โต๊ะ/QR
+// Self-contained: ไม่รับ props จาก App — ค่าทั้งร้านมาจาก store (stockSwitchStore, printRoutingStore, receiptSettingsStore)
 
 interface PrinterSettingsModalProps {
   lang: Language;
@@ -41,6 +65,22 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
   const receipt = useReceiptSettings();
   const [footerDraft, setFooterDraft] = useState<string | null>(null); // null = ยังไม่แก้ แสดงค่าจาก Firestore
   const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [tab, setTabState] = useState<SettingsTab>(lastTab);
+  const setTab = (next: SettingsTab) => {
+    lastTab = next;
+    setTabState(next);
+  };
+  const routing = usePrintRouting();
+  const categories = useRoutingCategories();
+  const [routingError, setRoutingError] = useState<string | null>(null);
+  const [showTableLinks, setShowTableLinks] = useState(false);
+
+  const handleStation = (categoryId: string, station: PrintStation) => {
+    setRoutingError(null);
+    savePrintStation(categoryId, station).catch((err: any) =>
+      setRoutingError((lang === "en" ? "Could not save: " : "บันทึกไม่สำเร็จ: ") + (err?.message || String(err))),
+    );
+  };
 
   const saveReceipt = (patch: Partial<ReceiptSettings>) => {
     setReceiptError(null);
@@ -106,250 +146,325 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
     }
   };
 
+  const en = lang === "en";
+  const sortedCategories = [...categories].sort((a, b) => a.order - b.order);
+  const TABS: [SettingsTab, string][] = [
+    ["device", en ? "This device" : "เครื่องนี้"],
+    ["printing", en ? "Printing" : "การพิมพ์"],
+    ["shop", en ? "Shop" : "ร้าน"],
+  ];
+  const toggle = (on: boolean) => (
+    <span className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${on ? "bg-secondary" : "bg-muted-foreground/30"}`}>
+      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${on ? "left-[22px]" : "left-0.5"}`} />
+    </span>
+  );
+
   return (
-    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-6" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-4" onClick={onClose}>
       <div
-        className="bg-card rounded-2xl p-5 max-w-sm w-full border border-border shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="bg-card rounded-2xl max-w-md w-full border border-border shadow-2xl h-[85vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-foreground flex items-center gap-2">
-            <Printer size={16} />
-            {lang === "en" ? "Printer for this device" : "เครื่องพิมพ์สำหรับเครื่องนี้"}
-          </h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* เสียงแจ้งออเดอร์ใหม่มีเฉพาะแอป Android — เว็บไม่มีเสียงอยู่แล้วจึงไม่แสดงสวิตช์
-            ปิดเสียงแล้วจำไว้ในเครื่องนี้ (soundStore) ไม่กระทบ auto-print */}
-        {import.meta.env.MODE === "capacitor" && (
-          <button
-            onClick={toggleSound}
-            role="switch"
-            aria-checked={soundOn}
-            className="w-full flex items-center justify-between gap-3 px-3 py-2.5 mb-4 rounded-xl border border-border text-sm"
-          >
-            <span className="flex items-center gap-2 text-foreground font-medium">
-              {soundOn ? <Bell size={15} /> : <BellOff size={15} className="text-muted-foreground" />}
-              {lang === "en" ? "New-order sound" : "เสียงแจ้งออเดอร์ใหม่"}
-            </span>
-            <span className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${soundOn ? "bg-secondary" : "bg-muted-foreground/30"}`}>
-              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${soundOn ? "left-[18px]" : "left-0.5"}`} />
-            </span>
-          </button>
-        )}
-
-        <p className="text-xs text-muted-foreground mb-3">
-          {lang === "en"
-            ? "Pick a printer if this device should print order tickets automatically. Devices that only view orders can skip this."
-            : "ถ้าอยากให้เครื่องนี้พิมพ์ตั๋วออเดอร์อัตโนมัติ ให้เลือกเครื่องพิมพ์ ถ้าใช้ดูออเดอร์อย่างเดียวไม่ต้องเลือก"}
-        </p>
-
-        <div className="space-y-2 mb-3">
-          <button
-            onClick={() => handleSelect(null)}
-            className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-all ${selected === null ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-          >
-            {lang === "en" ? "None (view only)" : "ไม่เลือก (เปิดดูอย่างเดียว)"}
-          </button>
-          {printers.map((p) => (
-            <div
-              key={p.address}
-              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm transition-all ${selected === p.address ? "border-primary bg-primary/10" : "border-border"
-                }`}
-            >
-              <button onClick={() => handleSelect(p.address)} className="flex-1 text-left min-w-0">
-                <div className="font-medium text-foreground truncate">{p.name}</div>
-                <div className="text-xs text-muted-foreground">{p.address}</div>
-              </button>
-              <button
-                onClick={() => handleRemovePrinter(p.address)}
-                className="text-muted-foreground hover:text-destructive flex-shrink-0 p-1"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {showAddForm ? (
-          <div className="space-y-2 mb-3 p-3 rounded-xl bg-muted">
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder={lang === "en" ? "Printer name" : "ชื่อเครื่องพิมพ์"}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
-            />
-            <input
-              value={newAddress}
-              onChange={(e) => setNewAddress(e.target.value.toUpperCase())}
-              placeholder="MAC Address (XX:XX:XX:XX:XX:XX)"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground font-mono"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowAddForm(false)}
-                className="flex-1 py-2 rounded-lg text-xs font-medium bg-background text-foreground border border-border"
-              >
-                {lang === "en" ? "Cancel" : "ยกเลิก"}
-              </button>
-              <button
-                onClick={handleAddPrinter}
-                disabled={!newName.trim() || !newAddress.trim()}
-                className="flex-1 py-2 rounded-lg text-xs font-semibold bg-primary text-primary-foreground disabled:opacity-50"
-              >
-                {lang === "en" ? "Save" : "บันทึก"}
-              </button>
-            </div>
+        <div className="px-5 pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-foreground flex items-center gap-2">
+              <Settings size={16} />
+              {en ? "Settings" : "ตั้งค่า"}
+            </h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label={en ? "Close" : "ปิด"}>
+              <X size={18} />
+            </button>
           </div>
-        ) : (
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="w-full mb-3 py-2 rounded-xl text-xs font-semibold bg-muted text-foreground flex items-center justify-center gap-1.5 hover:bg-muted/80"
-          >
-            <Plus size={14} />
-            {lang === "en" ? "Add another printer" : "เพิ่มเครื่องพิมพ์"}
-          </button>
-        )}
-
-        {/* หน้าที่ของเครื่องนี้ — ร้านมี 3 จุด (เคาน์เตอร์/ครัวใน/ครัวนอก) แต่ละจุดพิมพ์เฉพาะรายการของตัวเอง
-            แถวล่างเป็นตัวเลือกสำรองเผื่อเครื่องพิมพ์เสีย จำไว้ในเครื่องนี้ (printerStore) ค่าเริ่มต้น "ทั้งหมด" */}
-        {selected && (
-          <div className="mb-4">
-            <div className="text-xs font-medium text-foreground mb-1.5">
-              {lang === "en" ? "This device prints" : "เครื่องนี้พิมพ์"}
-            </div>
-            {([
-              [
-                ["counter", lang === "en" ? "Counter" : "เคาน์เตอร์"],
-                ["inner", lang === "en" ? "Inner kitchen" : "ครัวใน"],
-                ["outer", lang === "en" ? "Outer kitchen" : "ครัวนอก"],
-              ],
-              [
-                ["kitchen", lang === "en" ? "Kitchen (inner+outer)" : "ครัว (รวมใน+นอก)"],
-                ["all", lang === "en" ? "Everything" : "พิมพ์ทั้งหมด"],
-              ],
-            ] as [PrintRole, string][][]).map((row, rowIdx) => (
-              <div key={rowIdx}>
-                {rowIdx === 1 && (
-                  <div className="text-[11px] text-muted-foreground mt-2 mb-1">
-                    {lang === "en" ? "Backup (if a printer is down)" : "สำรอง (เผื่อเครื่องพิมพ์เสีย)"}
-                  </div>
-                )}
-                <div className={`grid gap-1.5 ${row.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
-                  {row.map(([value, label]) => (
-                    <button
-                      key={value}
-                      onClick={() => handleRole(value)}
-                      className={`py-2 rounded-xl border text-sm transition-all ${role === value ? "border-primary bg-primary/10 text-foreground font-semibold" : "border-border text-muted-foreground hover:bg-muted"
-                        }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+          <div role="tablist" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-muted">
+            {TABS.map(([value, label]) => (
+              <button
+                key={value}
+                role="tab"
+                aria-selected={tab === value}
+                onClick={() => setTab(value)}
+                className={`py-1.5 rounded-lg text-sm ${tab === value ? "bg-card text-foreground font-semibold shadow-sm" : "text-muted-foreground"}`}
+              >
+                {label}
+              </button>
             ))}
-            <p className="text-xs text-muted-foreground mt-1.5">
-              {role === "counter"
-                ? (lang === "en" ? "Drinks and souvenirs only." : "เฉพาะเครื่องดื่มและของฝาก")
-                : role === "inner"
-                  ? (lang === "en" ? "Food except khao soi / khanom jeen nam ngiao." : "อาหารทั้งหมด ยกเว้นข้าวซอย/ขนมจีนน้ำเงี้ยว")
-                  : role === "outer"
-                    ? (lang === "en" ? "Khao soi / khanom jeen nam ngiao only." : "เฉพาะข้าวซอย/ขนมจีนน้ำเงี้ยว")
-                    : role === "kitchen"
-                      ? (lang === "en" ? "All food — inner kitchen on top, khao soi / khanom jeen nam ngiao at the bottom to tear off." : "อาหารทั้งหมด — ครัวในอยู่บน ข้าวซอย/ขนมจีนน้ำเงี้ยว (ครัวนอก) อยู่ล่างให้ฉีกแยก")
-                      : (lang === "en" ? "Counter ticket followed by kitchen ticket (single-device setup)." : "ใบเคาน์เตอร์ต่อด้วยใบครัว (ใช้เครื่องเดียว)")}
-            </p>
           </div>
-        )}
-
-        {selected && (
-          <div className="space-y-2">
-            <button
-              onClick={handleTestPrint}
-              disabled={isTesting}
-              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground disabled:opacity-60"
-            >
-              {isTesting ? (lang === "en" ? "Testing..." : "กำลังทดสอบ...") : (lang === "en" ? "Test print" : "ทดสอบพิมพ์")}
-            </button>
-          </div>
-        )}
-        {testStatus && <p className="text-xs text-muted-foreground mt-2 text-center">{testStatus}</p>}
-
-        {/* ระบบสต็อกทั้งร้าน (ไม่ใช่ค่าของเครื่องนี้) — ตั้งจำนวนสต็อกที่หน้าแก้เมนู (เว้นว่าง = ไม่จำกัด) */}
-        {stock && (
-          <div className="mt-5 pt-4 border-t border-border">
-            <h4 className="text-sm font-semibold text-foreground mb-2">{lang === "en" ? "Stock system" : "ระบบสต็อก"}</h4>
-            <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border">
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-foreground">{lang === "en" ? "Whole shop" : "ทั้งร้าน"}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {stock.enabled
-                    ? (lang === "en" ? `On · ${stock.stockCount} item(s) with stock set` : `เปิดอยู่ · ตั้งสต็อกไว้ ${stock.stockCount} เมนู`)
-                    : (lang === "en" ? "Off · orders don't take from stock" : "ปิดอยู่ · ออเดอร์ไม่ตัดสต็อก")}
-                </div>
-              </div>
-              <button
-                role="switch"
-                aria-checked={stock.enabled}
-                aria-label={lang === "en" ? "Stock system" : "ระบบสต็อก"}
-                onClick={() => stock.onToggle(!stock.enabled)}
-                className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${stock.enabled ? "bg-secondary" : "bg-muted"}`}
-              >
-                <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${stock.enabled ? "left-[22px]" : "left-0.5"}`} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ใบเสร็จทั้งร้าน (status/receipt — ทุกเครื่องใช้ค่าเดียวกัน) ปิด = ใบเสร็จแบบเดิม */}
-        <div className="mt-5 pt-4 border-t border-border">
-          <h4 className="text-sm font-semibold text-foreground mb-2">{lang === "en" ? "Receipt" : "ใบเสร็จ"}</h4>
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-foreground">{lang === "en" ? "New receipt layout (beta)" : "ใบเสร็จแบบใหม่ (ทดลอง)"}</div>
-              <div className="text-[11px] text-muted-foreground">
-                {receipt.newLayout
-                  ? (lang === "en" ? "On · every device" : "เปิดอยู่ · ทุกเครื่อง")
-                  : (lang === "en" ? "Off · original receipt" : "ปิดอยู่ · ใบเสร็จแบบเดิม")}
-              </div>
-            </div>
-            <button
-              role="switch"
-              aria-checked={receipt.newLayout}
-              aria-label={lang === "en" ? "New receipt layout (beta)" : "ใบเสร็จแบบใหม่ (ทดลอง)"}
-              onClick={() => saveReceipt({ newLayout: !receipt.newLayout })}
-              className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ${receipt.newLayout ? "bg-secondary" : "bg-muted"}`}
-            >
-              <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-200 ${receipt.newLayout ? "left-[22px]" : "left-0.5"}`} />
-            </button>
-          </div>
-          <label className="block mt-3">
-            <span className="block text-xs font-medium text-foreground mb-1.5">
-              {lang === "en" ? `Footer text (up to ${RECEIPT_FOOTER_MAX_LINES} lines, new layout only)` : `ข้อความท้ายใบเสร็จ (ไม่เกิน ${RECEIPT_FOOTER_MAX_LINES} บรรทัด เฉพาะแบบใหม่)`}
-            </span>
-            <textarea
-              rows={RECEIPT_FOOTER_MAX_LINES}
-              value={footerDraft ?? receipt.footer}
-              onChange={(e) => setFooterDraft(e.target.value.split("\n").slice(0, RECEIPT_FOOTER_MAX_LINES).join("\n"))}
-              placeholder={lang === "en" ? "e.g. Tel. 08x-xxx-xxxx" : "เช่น โทร 08x-xxx-xxxx"}
-              className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:border-primary resize-none"
-            />
-          </label>
-          {footerDraft !== null && footerDraft !== receipt.footer && (
-            <button
-              onClick={() => saveReceipt({ footer: footerDraft.trim() }).then((ok) => ok && setFooterDraft(null))}
-              className="w-full mt-2 py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground"
-            >
-              {lang === "en" ? "Save footer" : "บันทึกข้อความท้าย"}
-            </button>
-          )}
-          {receiptError && <p className="text-xs text-destructive mt-2">{receiptError}</p>}
         </div>
+
+        <div className="flex-1 overflow-y-auto px-5 pt-4 pb-5">
+          {tab === "device" && (
+            <>
+              <SectionTitle title={en ? "Printer" : "เครื่องพิมพ์"} shop={false} lang={lang} />
+              <p className="text-xs text-muted-foreground mb-3">
+                {en ? "Pick a printer to print tickets automatically. View-only devices can skip this." : "เลือกเครื่องพิมพ์ถ้าให้เครื่องนี้พิมพ์ตั๋วอัตโนมัติ ใช้ดูอย่างเดียวไม่ต้องเลือก"}
+              </p>
+
+              <div className="space-y-2 mb-3">
+                <button
+                  onClick={() => handleSelect(null)}
+                  className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-all ${selected === null ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                >
+                  {en ? "None (view only)" : "ไม่เลือก (เปิดดูอย่างเดียว)"}
+                </button>
+                {printers.map((p) => (
+                  <div
+                    key={p.address}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm transition-all ${selected === p.address ? "border-primary bg-primary/10" : "border-border"
+                      }`}
+                  >
+                    <button onClick={() => handleSelect(p.address)} className="flex-1 text-left min-w-0">
+                      <div className="font-medium text-foreground truncate">{p.name}</div>
+                      <div className="text-xs text-muted-foreground">{p.address}</div>
+                    </button>
+                    <button
+                      onClick={() => handleRemovePrinter(p.address)}
+                      className="text-muted-foreground hover:text-destructive flex-shrink-0 p-1"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {showAddForm ? (
+                <div className="space-y-2 mb-3 p-3 rounded-xl bg-muted">
+                  <input
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder={en ? "Printer name" : "ชื่อเครื่องพิมพ์"}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+                  />
+                  <input
+                    value={newAddress}
+                    onChange={(e) => setNewAddress(e.target.value.toUpperCase())}
+                    placeholder="MAC Address (XX:XX:XX:XX:XX:XX)"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground font-mono"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowAddForm(false)}
+                      className="flex-1 py-2 rounded-lg text-xs font-medium bg-background text-foreground border border-border"
+                    >
+                      {en ? "Cancel" : "ยกเลิก"}
+                    </button>
+                    <button
+                      onClick={handleAddPrinter}
+                      disabled={!newName.trim() || !newAddress.trim()}
+                      className="flex-1 py-2 rounded-lg text-xs font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+                    >
+                      {en ? "Save" : "บันทึก"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAddForm(true)}
+                  className="w-full mb-3 py-2 rounded-xl text-xs font-semibold bg-muted text-foreground flex items-center justify-center gap-1.5 hover:bg-muted/80"
+                >
+                  <Plus size={14} />
+                  {en ? "Add another printer" : "เพิ่มเครื่องพิมพ์"}
+                </button>
+              )}
+
+              {/* หน้าที่ของเครื่องนี้ — ร้านมี 3 จุด (เคาน์เตอร์/ครัวใน/ครัวนอก) แต่ละจุดพิมพ์เฉพาะรายการของตัวเอง
+                  แถวล่างเป็นตัวเลือกสำรองเผื่อเครื่องพิมพ์เสีย จำไว้ในเครื่องนี้ (printerStore) ค่าเริ่มต้น "ทั้งหมด"
+                  หมวดไหนไปเคาน์เตอร์/ครัว ตั้งที่แท็บ "การพิมพ์" */}
+              {selected && (
+                <div className="mb-4">
+                  <div className="text-xs font-medium text-foreground mb-1.5">
+                    {en ? "This device prints" : "เครื่องนี้พิมพ์"}
+                  </div>
+                  {([
+                    [
+                      ["counter", en ? "Counter" : "เคาน์เตอร์"],
+                      ["inner", en ? "Inner kitchen" : "ครัวใน"],
+                      ["outer", en ? "Outer kitchen" : "ครัวนอก"],
+                    ],
+                    [
+                      ["kitchen", en ? "Kitchen (inner+outer)" : "ครัว (รวมใน+นอก)"],
+                      ["all", en ? "Everything" : "พิมพ์ทั้งหมด"],
+                    ],
+                  ] as [PrintRole, string][][]).map((row, rowIdx) => (
+                    <div key={rowIdx}>
+                      {rowIdx === 1 && (
+                        <div className="text-[11px] text-muted-foreground mt-2 mb-1">
+                          {en ? "Backup (if a printer is down)" : "สำรอง (เผื่อเครื่องพิมพ์เสีย)"}
+                        </div>
+                      )}
+                      <div className={`grid gap-1.5 ${row.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+                        {row.map(([value, label]) => (
+                          <button
+                            key={value}
+                            onClick={() => handleRole(value)}
+                            className={`py-2 rounded-xl border text-sm transition-all ${role === value ? "border-primary bg-primary/10 text-foreground font-semibold" : "border-border text-muted-foreground hover:bg-muted"
+                              }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    {role === "counter"
+                      ? (en ? "Categories set to Counter (Printing tab)." : "หมวดที่ตั้งเป็นเคาน์เตอร์ (แท็บการพิมพ์)")
+                      : role === "inner"
+                        ? (en ? "Kitchen categories except khao soi / khanom jeen nam ngiao." : "หมวดครัว ยกเว้นข้าวซอย/ขนมจีนน้ำเงี้ยว")
+                        : role === "outer"
+                          ? (en ? "Khao soi / khanom jeen nam ngiao only." : "เฉพาะข้าวซอย/ขนมจีนน้ำเงี้ยว")
+                          : role === "kitchen"
+                            ? (en ? "All kitchen categories — khao soi / khanom jeen nam ngiao at the bottom to tear off." : "หมวดครัวทั้งหมด — ข้าวซอย/ขนมจีนน้ำเงี้ยวอยู่ล่างให้ฉีกแยก")
+                            : (en ? "Counter ticket followed by kitchen ticket (single-device setup)." : "ใบเคาน์เตอร์ต่อด้วยใบครัว (ใช้เครื่องเดียว)")}
+                  </p>
+                </div>
+              )}
+
+              {/* เสียงแจ้งออเดอร์ใหม่มีเฉพาะแอป Android — เว็บไม่มีเสียงอยู่แล้วจึงไม่แสดงสวิตช์
+                  ปิดเสียงแล้วจำไว้ในเครื่องนี้ (soundStore) ไม่กระทบ auto-print */}
+              {import.meta.env.MODE === "capacitor" && (
+                <button
+                  onClick={toggleSound}
+                  role="switch"
+                  aria-checked={soundOn}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 mb-4 rounded-xl border border-border text-sm"
+                >
+                  <span className="flex items-center gap-2 text-foreground font-medium">
+                    {soundOn ? <Bell size={15} /> : <BellOff size={15} className="text-muted-foreground" />}
+                    {en ? "New-order sound" : "เสียงแจ้งออเดอร์ใหม่"}
+                  </span>
+                  {toggle(soundOn)}
+                </button>
+              )}
+
+              {selected && (
+                <button
+                  onClick={handleTestPrint}
+                  disabled={isTesting}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground disabled:opacity-60"
+                >
+                  {isTesting ? (en ? "Testing..." : "กำลังทดสอบ...") : (en ? "Test print" : "ทดสอบพิมพ์")}
+                </button>
+              )}
+              {testStatus && <p className="text-xs text-muted-foreground mt-2 text-center">{testStatus}</p>}
+            </>
+          )}
+
+          {tab === "printing" && (
+            <>
+              {/* หมวด → จุดพิมพ์ (status/printRouting) หมวดละ 1 จุดเสมอ — ปุ่มที่ติดอยู่ = จุดที่ใช้จริงตอนนี้
+                  (หมวดที่ยังไม่เคยตั้งแสดงค่าจากกฎชื่อหมวดเดิม) ข้าวซอย/ขนมจีนน้ำเงี้ยวในหมวดครัวแยกไปครัวนอกเอง */}
+              <SectionTitle title={en ? "Where each category prints" : "หมวดพิมพ์ที่ไหน"} shop lang={lang} />
+              {routing === null || sortedCategories.length === 0 ? (
+                <p className="text-xs text-muted-foreground mb-4">{en ? "Loading…" : "กำลังโหลด…"}</p>
+              ) : (
+                <div className="divide-y divide-border rounded-xl border border-border mb-2">
+                  {sortedCategories.map((c) => {
+                    const station = stationForCategory(c, routing);
+                    return (
+                      <div key={c.id} className="flex items-center gap-2 px-3 py-2">
+                        <span className={`flex-1 min-w-0 truncate text-sm ${c.active === false ? "text-muted-foreground" : "text-foreground"}`}>
+                          {en ? c.nameEn || c.nameTh : c.nameTh || c.nameEn}
+                        </span>
+                        <div className="grid grid-cols-2 gap-1 flex-shrink-0">
+                          {([["counter", en ? "Counter" : "เคาน์เตอร์"], ["kitchen", en ? "Kitchen" : "ครัว"]] as [PrintStation, string][]).map(([value, label]) => (
+                            <button
+                              key={value}
+                              aria-pressed={station === value}
+                              onClick={() => station !== value && handleStation(c.id, value)}
+                              className={`px-2.5 py-1 rounded-lg border text-xs transition-all ${station === value ? "border-primary bg-primary/10 text-foreground font-semibold" : "border-border text-muted-foreground hover:bg-muted"}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground mb-1">
+                {en ? "Khao soi / khanom jeen nam ngiao in kitchen categories go to the outer kitchen. Add-ons print everywhere." : "ข้าวซอย/ขนมจีนน้ำเงี้ยวในหมวดครัว ไปครัวนอก · Add-on พิมพ์ทุกจุด"}
+              </p>
+              {routingError && <p className="text-xs text-destructive mt-1">{routingError}</p>}
+
+              {/* ใบเสร็จทั้งร้าน (status/receipt — ทุกเครื่องใช้ค่าเดียวกัน) ปิด = ใบเสร็จแบบเดิม */}
+              <div className="mt-5 pt-4 border-t border-border">
+                <SectionTitle title={en ? "Receipt" : "ใบเสร็จ"} shop lang={lang} />
+                <button
+                  role="switch"
+                  aria-checked={receipt.newLayout}
+                  onClick={() => saveReceipt({ newLayout: !receipt.newLayout })}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border text-left"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-foreground">{en ? "New receipt layout (beta)" : "ใบเสร็จแบบใหม่ (ทดลอง)"}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {receipt.newLayout ? (en ? "On" : "เปิดอยู่") : (en ? "Off · original receipt" : "ปิดอยู่ · ใบเสร็จแบบเดิม")}
+                    </div>
+                  </div>
+                  {toggle(receipt.newLayout)}
+                </button>
+                <label className="block mt-3">
+                  <span className="block text-xs font-medium text-foreground mb-1.5">
+                    {en ? `Footer text (up to ${RECEIPT_FOOTER_MAX_LINES} lines, new layout only)` : `ข้อความท้ายใบเสร็จ (ไม่เกิน ${RECEIPT_FOOTER_MAX_LINES} บรรทัด เฉพาะแบบใหม่)`}
+                  </span>
+                  <textarea
+                    rows={RECEIPT_FOOTER_MAX_LINES}
+                    value={footerDraft ?? receipt.footer}
+                    onChange={(e) => setFooterDraft(e.target.value.split("\n").slice(0, RECEIPT_FOOTER_MAX_LINES).join("\n"))}
+                    placeholder={en ? "e.g. Tel. 08x-xxx-xxxx" : "เช่น โทร 08x-xxx-xxxx"}
+                    className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:border-primary resize-none"
+                  />
+                </label>
+                {footerDraft !== null && footerDraft !== receipt.footer && (
+                  <button
+                    onClick={() => saveReceipt({ footer: footerDraft.trim() }).then((ok) => ok && setFooterDraft(null))}
+                    className="w-full mt-2 py-2.5 rounded-xl text-sm font-semibold bg-secondary text-secondary-foreground"
+                  >
+                    {en ? "Save footer" : "บันทึกข้อความท้าย"}
+                  </button>
+                )}
+                {receiptError && <p className="text-xs text-destructive mt-2">{receiptError}</p>}
+              </div>
+            </>
+          )}
+
+          {tab === "shop" && (
+            <>
+              {/* ระบบสต็อกทั้งร้าน — ตั้งจำนวนสต็อกที่หน้าแก้เมนู (เว้นว่าง = ไม่จำกัด) App ถามยืนยันก่อนเขียน */}
+              {stock && (
+                <div className="mb-5">
+                  <SectionTitle title={en ? "Stock system" : "ระบบสต็อก"} shop lang={lang} />
+                  <button
+                    role="switch"
+                    aria-checked={stock.enabled}
+                    onClick={() => stock.onToggle(!stock.enabled)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border text-left"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-foreground">{en ? "Stock system" : "ระบบสต็อก"}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {stock.enabled
+                          ? (en ? `On · ${stock.stockCount} item(s) with stock set` : `เปิดอยู่ · ตั้งสต็อกไว้ ${stock.stockCount} เมนู`)
+                          : (en ? "Off · orders don't take from stock" : "ปิดอยู่ · ออเดอร์ไม่ตัดสต็อก")}
+                      </div>
+                    </div>
+                    {toggle(stock.enabled)}
+                  </button>
+                </div>
+              )}
+              <SectionTitle title={en ? "Table links / QR" : "ลิงก์โต๊ะ / QR"} shop lang={lang} />
+              <button
+                onClick={() => setShowTableLinks(true)}
+                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-muted"
+              >
+                <Link2 size={15} />
+                {en ? "Open table links" : "เปิดลิงก์โต๊ะ"}
+              </button>
+            </>
+          )}
+        </div>
+        {showTableLinks && <TableLinksModal lang={lang} onClose={() => setShowTableLinks(false)} />}
       </div>
     </div>
   );

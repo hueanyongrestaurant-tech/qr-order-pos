@@ -5,6 +5,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import type { Category, Language, MenuItem, Order } from "../types";
 import { T } from "../translations";
 import { ZONES, isKnownTable, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
+import { usePrintRouting } from "./printRoutingStore";
 import { billsPerHour, counterCategoryIds, formatMinutes, groupBills, menuLookup, popularChoices, rangeDayCount, seatingSummary, serveSummary, SERVE_MAX_MINUTES, tableStats, topHours, topItems } from "../statsInsights";
 
 // ─── ส่วนสถิติใต้รายได้: การ์ดสรุป / โต๊ะแยกตามชั้น / ช่วงเวลาที่คนเยอะสุด ─────────────
@@ -43,10 +44,12 @@ function StatCard({ icon, label, value, sub, detail }: { icon: React.ReactNode; 
   );
 }
 
+const NO_ROUTING = {};
+
 export function StatsInsights({ lang, orders, categories, menuItems, rangeStart, rangeEnd }: {
   lang: Language;
   orders: Order[];
-  categories: Category[]; // ใช้ตัดหมวดเครื่องดื่ม/ของฝากออกจากการ์ดเมนูขายดี
+  categories: Category[]; // ใช้ตัดหมวดเคาน์เตอร์ (เครื่องดื่ม/ของฝาก ฯลฯ) ออกจากการ์ดเมนูขายดี + แยกเวลาเสิร์ฟเครื่องดื่ม/อาหาร
   menuItems: MenuItem[];  // เมนูปัจจุบัน — ชื่อ/ตัวเลือกในการ์ดเมนูขายดีใช้ของปัจจุบัน (ดู topItems)
   rangeStart: Date;
   rangeEnd: Date;
@@ -58,6 +61,8 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
     setTimeModeState(m);
     try { localStorage.setItem(TIME_MODE_KEY, m); } catch { /* ใช้ไม่ได้ก็แค่ไม่จำ */ }
   };
+  // หมวด → เคาน์เตอร์/ครัว ชุดเดียวกับตั๋ว (status/printRouting) ยังไม่มีค่า = กฎชื่อหมวดเดิม
+  const routing = usePrintRouting() ?? NO_ROUTING;
   const bills = groupBills(orders);
   if (bills.length === 0) return null;
 
@@ -67,7 +72,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
   const takeaway = bills.filter((b) => b.isTakeaway);
   const dineInCount = bills.length - takeaway.length;
   const menus = menuLookup(menuItems);
-  const items = topItems(orders, 1, counterCategoryIds(categories), menus);
+  const items = topItems(orders, 1, counterCategoryIds(categories, routing), menus);
   // ตัวเลือกยอดนิยมของเมนูอันดับ 1 — บรรทัดละกลุ่ม เช่น "ไก่ 45% · หมู 35% · เนื้อ 20%"
   const bestChoices = items[0]
     ? popularChoices(orders, items[0].id, menus).map((g) =>
@@ -121,7 +126,7 @@ export function StatsInsights({ lang, orders, categories, menuItems, rangeStart,
       : undefined;
 
   // สั่ง → เสิร์ฟ เฉลี่ยต่อชิ้น (ดู serveSummary) — "<1 นาที" แทน "0 นาที"
-  const serve = serveSummary(orders, categories, menus);
+  const serve = serveSummary(orders, categories, menus, routing);
   const serveRows = [
     { key: "food", label: en ? "Food" : "อาหาร", cells: serve.food },
     { key: "drink", label: en ? "Drinks" : "เครื่องดื่ม", cells: serve.drink },

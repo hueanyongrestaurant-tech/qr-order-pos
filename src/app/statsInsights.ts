@@ -5,7 +5,8 @@
 import type { CartItem, Category, CustomChoice, CustomGroup, Language, MenuItem, Order } from "./types";
 import { cartItemSelections, normalizeMenuItem } from "./menuOptions";
 import { cartItemTotal, orderTotal } from "./utils";
-import { ADDON_CATEGORY_ID, COUNTER_CATEGORY_PREFIXES } from "./constants";
+import { ADDON_CATEGORY_ID } from "./constants";
+import { stationForCategory, type PrintRouting } from "./staff/stationTickets";
 
 export interface Bill {
   key: string;
@@ -238,16 +239,17 @@ export function formatMinutes(min: number, lang: "th" | "en"): string {
   return h > 0 ? `${h} ชม. ${r} นาที` : `${r} นาที`;
 }
 
-// หมวดเครื่องดื่ม/ของฝาก (ชื่อหมวดขึ้นต้นด้วย COUNTER_CATEGORY_PREFIXES — ชุดเดียวกับที่ส่งพิมพ์เคาน์เตอร์)
-export function counterCategoryIds(categories: Category[]): Set<string> {
-  return new Set(categories.filter((c) => COUNTER_CATEGORY_PREFIXES.some((p) => (c.nameTh || "").startsWith(p))).map((c) => c.id));
+// หมวดที่ส่งพิมพ์เคาน์เตอร์ (status/printRouting — ไม่มีค่า = ชื่อขึ้นต้นด้วยเครื่องดื่ม/ของฝาก) ชุดเดียวกับตั๋วเคาน์เตอร์
+export function counterCategoryIds(categories: Category[], routing: PrintRouting = {}): Set<string> {
+  return new Set(categories.filter((c) => stationForCategory(c, routing) === "counter").map((c) => c.id));
 }
 
 // ─── เวลาสั่ง → เสิร์ฟ (เฉลี่ยต่อชิ้น) ───
 // นับทีละชิ้น: เวลาสั่ง (createdAt ของออเดอร์) → เวลาที่ชิ้นนั้นถูกเสิร์ฟ (serveLog — เสิร์ฟทีละจำนวนได้เวลาของแต่ละชุด)
 // ออเดอร์ก่อนมี serveLog: ใช้ servedAt ได้เฉพาะชุดสุดท้ายของบรรทัด (servedUnits.last ชิ้น) ที่เหลือ = ไม่มีเวลา
 // ไม่นับ: รายการที่ยกเลิก, บิลย้อนหลัง, ของฝาก, Add-on ที่พนักงานพิมพ์เอง, ค่าผิดปกติ (เสิร์ฟก่อนสั่ง / นานเกิน 3 ชม.)
-// เครื่องดื่ม = หมวดที่ชื่อขึ้นต้นด้วย "เครื่องดื่ม" (หมวดปัจจุบันของเมนู) ที่เหลือ = อาหาร
+// เครื่องดื่ม = หมวดที่ส่งพิมพ์เคาน์เตอร์ (counterCategoryIds — หมวดปัจจุบันของเมนู) ยกเว้นของฝาก ที่เหลือ = อาหาร
+// map ว่าง = เหมือนเดิมทุกอย่าง (เคาน์เตอร์ตามชื่อ = เครื่องดื่ม/ของฝาก, ของฝากไม่นับ)
 export const SERVE_MAX_MINUTES = 3 * 60;
 
 // min/max = ชิ้นที่เร็วสุด/ช้าสุด จากชิ้นชุดเดียวกับค่าเฉลี่ย (ไม่มีข้อมูล = null)
@@ -278,8 +280,9 @@ export function serveTimes(order: Order, ci: CartItem): { batches: { n: number; 
   return { batches, missing: Math.max(0, left) };
 }
 
-export function serveSummary(orders: Order[], categories: Category[], menus?: MenuLookup): ServeSummary {
+export function serveSummary(orders: Order[], categories: Category[], menus?: MenuLookup, routing: PrintRouting = {}): ServeSummary {
   const catName = new Map(categories.map((c) => [c.id, c.nameTh || ""]));
+  const counterIds = counterCategoryIds(categories, routing);
   const cellAcc = () => [0, 0, Infinity, -Infinity]; // [นาทีรวม, ชิ้น, เร็วสุด, ช้าสุด]
   const acc = { food: { dineIn: cellAcc(), takeaway: cellAcc() }, drink: { dineIn: cellAcc(), takeaway: cellAcc() } };
   let outliers = 0;
@@ -293,7 +296,7 @@ export function serveSummary(orders: Order[], categories: Category[], menus?: Me
       if (categoryId === ADDON_CATEGORY_ID) return;
       const name = catName.get(categoryId) ?? "";
       if (name.startsWith("ของฝาก")) return;
-      const kind = name.startsWith("เครื่องดื่ม") ? "drink" : "food";
+      const kind = counterIds.has(categoryId) ? "drink" : "food";
       const cell = acc[kind][o.isTakeaway ? "takeaway" : "dineIn"];
       const t = serveTimes(o, ci);
       missing += t.missing;

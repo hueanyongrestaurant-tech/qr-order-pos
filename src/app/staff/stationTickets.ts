@@ -1,9 +1,12 @@
 // ─── Station tickets: แยกรายการในออเดอร์ไปตามจุดพิมพ์ ─────────────────────────
 //
 // ร้านมี 3 จุด แต่ละจุดมีแอป + เครื่องพิมพ์ของตัวเอง (หน้าที่ของเครื่องตั้งใน printerStore):
-// - เคาน์เตอร์ (counter): เฉพาะหมวดที่ชื่อขึ้นต้นด้วย COUNTER_CATEGORY_PREFIXES (เครื่องดื่ม/ของฝาก)
-// - ครัวนอก (outer): เมนูที่ชื่อขึ้นต้นด้วย OUTER_KITCHEN_ITEM_PREFIXES (ข้าวซอย/ขนมจีนน้ำเงี้ยว)
-// - ครัวใน (inner): ที่เหลือทั้งหมด รวมเมนูที่หาหมวดไม่เจอ (หมวดถูกลบ)
+// - หมวดไหนไปจุดไหน: status/printRouting (PrintRouting ตั้งในแอป แท็บ "การพิมพ์") หมวดละ 1 จุดเสมอ
+//   "counter" | "kitchen" — หมวดที่ไม่มีค่าใช้กฎเดิม: ชื่อขึ้นต้นด้วย COUNTER_CATEGORY_PREFIXES → เคาน์เตอร์
+//   ที่เหลือ → ครัว (ดู stationForCategory) ค่าของหมวดที่ถูกลบไม่มีผล (หาหมวดไม่เจอ = ครัว)
+// - เคาน์เตอร์ (counter): หมวดที่ไปเคาน์เตอร์
+// - ครัวนอก (outer): เมนูของหมวดที่ไปครัว ที่ชื่อขึ้นต้นด้วย OUTER_KITCHEN_ITEM_PREFIXES (ข้าวซอย/ขนมจีนน้ำเงี้ยว)
+// - ครัวใน (inner): เมนูครัวที่เหลือทั้งหมด รวมเมนูที่หาหมวดไม่เจอ (หมวดถูกลบ)
 //   ครัวใน/ครัวนอกเป็นคนละใบ (ตัดกระดาษ) แต่ละใบมีหัวใบครบในตัว
 // - หน้าที่สำรองเผื่อเครื่องพิมพ์เสีย: "kitchen" = ครัวใน+ครัวนอกในใบเดียว (ครัวในบน ครัวนอกล่างสุด
 //   คั่นด้วยเส้นฉีก — แบบเดิมตอนมี 2 จุด) และ "all" = ใบเคาน์เตอร์ + ใบครัวแบบ "kitchen"
@@ -37,7 +40,17 @@ const startsWithAny = (text: string, prefixes: string[]) => {
   return prefixes.some((p) => s.startsWith(p));
 };
 
-export function routeOrderItems(order: Order, categories: Category[]): RoutedItems {
+export type PrintStation = "counter" | "kitchen";
+export type PrintRouting = Record<string, PrintStation>;
+
+// จุดพิมพ์ของหมวด — ค่าที่ตั้งในแอปก่อน ไม่มีค่า (หรือค่าแปลก) ใช้กฎชื่อหมวดเดิม
+export function stationForCategory(category: Category, routing: PrintRouting): PrintStation {
+  const set = routing[category.id];
+  if (set === "counter" || set === "kitchen") return set;
+  return startsWithAny(category.nameTh || "", COUNTER_CATEGORY_PREFIXES) ? "counter" : "kitchen";
+}
+
+export function routeOrderItems(order: Order, categories: Category[], routing: PrintRouting = {}): RoutedItems {
   const routed: RoutedItems = { counter: [], inner: [], outer: [], addons: [] };
   const categoryById = new Map(categories.map((c) => [c.id, c]));
   liveItems(order.items).forEach((ci) => {
@@ -46,7 +59,7 @@ export function routeOrderItems(order: Order, categories: Category[]): RoutedIte
       return;
     }
     const category = categoryById.get(ci.item.categoryId);
-    if (category && startsWithAny(category.nameTh || "", COUNTER_CATEGORY_PREFIXES)) {
+    if (category && stationForCategory(category, routing) === "counter") {
       routed.counter.push(ci);
     } else if (startsWithAny(ci.item.name.th || "", OUTER_KITCHEN_ITEM_PREFIXES)) {
       routed.outer.push(ci);
@@ -72,14 +85,15 @@ export interface TicketPlan {
 
 // ใบที่เครื่องหน้าที่ role ต้องพิมพ์สำหรับออเดอร์นี้ — [] = ไม่มีอะไรของจุดนี้ ไม่ต้องพิมพ์
 // โหมด "all" คืนใบเคาน์เตอร์ก่อนแล้วตามด้วยใบครัว (พิมพ์ต่อกันในงานเดียว)
-export function planTickets(order: Order, role: PrintRole, categories: Category[]): TicketPlan[] {
+// routing = status/printRouting (ตอนเปิดแอปใช้ค่าที่จำไว้ในเครื่อง ดู printRoutingStore) {} = กฎชื่อหมวดเดิมทั้งหมด
+export function planTickets(order: Order, role: PrintRole, categories: Category[], routing: PrintRouting = {}): TicketPlan[] {
   const all = liveItems(order.items);
   if (all.length === 0) return [];
   if (categories.length === 0) {
     return [{ station: "fallback", sections: [{ kind: "everything", items: all }] }];
   }
 
-  const { counter, inner, outer, addons } = routeOrderItems(order, categories);
+  const { counter, inner, outer, addons } = routeOrderItems(order, categories, routing);
   const addonOnly = counter.length + inner.length + outer.length === 0;
 
   const counterPlan: TicketPlan | null =
