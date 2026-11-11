@@ -2,6 +2,7 @@
 // อ่านจาก server เฉพาะตอนเปิดแอป เปิดหน้าลิงก์โต๊ะ หรือเขียนสรุปแล้วเจอว่ารหัสถูกเปลี่ยนจากเครื่องอื่น (not-found)
 import { useSyncExternalStore } from "react";
 import { listTableLinks, type TableLink } from "../tableViewStore";
+import { LOAD_TIMEOUT_MS, withTimeout } from "../timeout";
 
 let links: Map<string, TableLink> | null = null;
 const listeners = new Set<() => void>();
@@ -12,8 +13,13 @@ export function setTableLinks(next: Map<string, TableLink>) {
   listeners.forEach((l) => l());
 }
 
-export function refreshTableLinks(): Promise<Map<string, TableLink>> {
-  inflight ??= listTableLinks()
+// อ่านจาก server ไม่เกิน timeoutMs — เกินเวลา/ออฟไลน์ = reject (ไม่ค้าง) และเรียกครั้งถัดไปอ่านใหม่จริง
+// (เดิมคำขอที่ค้างตอนเปิดแอปถูกใช้ซ้ำทุกครั้งที่เปิดหน้าลิงก์โต๊ะ → หมุนตลอดไป)
+export function refreshTableLinks(
+  timeoutMs = LOAD_TIMEOUT_MS,
+  loader: () => Promise<Map<string, TableLink>> = listTableLinks,
+): Promise<Map<string, TableLink>> {
+  inflight ??= withTimeout(loader(), timeoutMs)
     .then((next) => {
       setTableLinks(next);
       return next;

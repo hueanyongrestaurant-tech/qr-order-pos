@@ -57,26 +57,30 @@ function recompute() {
   listeners.forEach((l) => l());
 }
 
+function listen() {
+  unsubscribe = onSnapshot(
+    ROUTING_REF(),
+    (snap) => {
+      fresh = parsePrintRouting(snap.data());
+      writeCache(fresh);
+      recompute();
+    },
+    () => {
+      // อ่านไม่ได้ = ค่าในเครื่อง (ถ้ามี) ไม่งั้นกฎชื่อหมวดเดิม
+      if (fresh === null && readCache() === null) {
+        fresh = {};
+        recompute();
+      }
+    },
+  );
+}
+
 // เปิด listener (นับจำนวนผู้ใช้ ปิดเองเมื่อไม่มีใครใช้แล้ว) — คืนฟังก์ชันปิด
 export function startPrintRouting(): () => void {
   refs++;
   if (!unsubscribe) {
     if (snapshot === null) recompute(); // ใช้ค่าในเครื่องทันที
-    unsubscribe = onSnapshot(
-      ROUTING_REF(),
-      (snap) => {
-        fresh = parsePrintRouting(snap.data());
-        writeCache(fresh);
-        recompute();
-      },
-      () => {
-        // อ่านไม่ได้ = ค่าในเครื่อง (ถ้ามี) ไม่งั้นกฎชื่อหมวดเดิม
-        if (fresh === null && readCache() === null) {
-          fresh = {};
-          recompute();
-        }
-      },
-    );
+    listen();
   }
   let stopped = false;
   return () => {
@@ -89,6 +93,13 @@ export function startPrintRouting(): () => void {
       fresh = null; // ค่าในเครื่องยังอยู่
     }
   };
+}
+
+// ปุ่ม "ลองใหม่" ในหน้าตั้งค่า: เปิด listener ใหม่ (ตัวเดิมอาจค้างรอ server)
+export function retryPrintRouting() {
+  if (!unsubscribe) return;
+  unsubscribe();
+  listen();
 }
 
 export function getPrintRouting(): PrintRouting | null {

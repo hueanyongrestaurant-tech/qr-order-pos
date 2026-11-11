@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Bell, BellOff, Link2, Plus, Settings, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, BellOff, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import type { Language } from "../types";
 import {
   addSavedPrinter,
@@ -15,9 +15,10 @@ import {
 import { isSoundMuted, setSoundMuted } from "./soundStore";
 import { useStockSwitch } from "./stockSwitchStore";
 import { RECEIPT_FOOTER_MAX_LINES, saveReceiptSettings, useReceiptSettings, type ReceiptSettings } from "./receiptSettingsStore";
-import { savePrintStation, usePrintRouting, useRoutingCategories } from "./printRoutingStore";
+import { retryPrintRouting, savePrintStation, usePrintRouting, useRoutingCategories } from "./printRoutingStore";
 import { stationForCategory, type PrintStation } from "./stationTickets";
-import { TableLinksModal } from "./TableLinksModal";
+import { TableLinksPanel } from "./TableLinksPanel";
+import { LOAD_TIMEOUT_MS } from "../timeout";
 
 type SettingsTab = "device" | "printing" | "shop";
 let lastTab: SettingsTab = "device"; // เปิดใหม่กลับมาแท็บเดิม (จนกว่าจะปิดแอป)
@@ -43,7 +44,7 @@ function SectionTitle({ title, shop, lang }: { title: string; shop: boolean; lan
 // ─── Settings Modal (ไอคอนตั้งค่าใน StaffHeader) — 3 แท็บ ─────────────────────
 // เครื่องนี้ (localStorage): เครื่องพิมพ์ หน้าที่ เสียง ทดสอบพิมพ์
 // การพิมพ์ (ทั้งร้าน): หมวด → เคาน์เตอร์/ครัว (status/printRouting) + ใบเสร็จ (status/receipt)
-// ร้าน (ทั้งร้าน): สวิตช์สต็อก + ลิงก์โต๊ะ/QR
+// ร้าน (ทั้งร้าน): สวิตช์สต็อก + ลิงก์โต๊ะ/QR (TableLinksPanel อยู่ในแท็บเลย ไม่มีหน้าต่างซ้อน)
 // Self-contained: ไม่รับ props จาก App — ค่าทั้งร้านมาจาก store (stockSwitchStore, printRoutingStore, receiptSettingsStore)
 
 interface PrinterSettingsModalProps {
@@ -73,7 +74,20 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
   const routing = usePrintRouting();
   const categories = useRoutingCategories();
   const [routingError, setRoutingError] = useState<string | null>(null);
-  const [showTableLinks, setShowTableLinks] = useState(false);
+  // รายการหมวดยังไม่มา (ไม่มีค่าหมวด→จุดพิมพ์เลย หรือหมวดยังไม่โหลด) เกิน 10 วิ → ข้อความ + ปุ่มลองใหม่ ไม่ค้าง "กำลังโหลด"
+  const routingLoading = routing === null || categories.length === 0;
+  const [routingTimedOut, setRoutingTimedOut] = useState(false);
+  const [routingAttempt, setRoutingAttempt] = useState(0);
+  useEffect(() => {
+    setRoutingTimedOut(false);
+    if (!routingLoading) return;
+    const timer = window.setTimeout(() => setRoutingTimedOut(true), LOAD_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [routingLoading, routingAttempt]);
+  const retryRouting = () => {
+    retryPrintRouting();
+    setRoutingAttempt((n) => n + 1);
+  };
 
   const handleStation = (categoryId: string, station: PrintStation) => {
     setRoutingError(null);
@@ -355,7 +369,19 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
                   (หมวดที่ยังไม่เคยตั้งแสดงค่าจากกฎชื่อหมวดเดิม) ข้าวซอย/ขนมจีนน้ำเงี้ยวในหมวดครัวแยกไปครัวนอกเอง */}
               <SectionTitle title={en ? "Where each category prints" : "หมวดพิมพ์ที่ไหน"} shop lang={lang} />
               {routing === null || sortedCategories.length === 0 ? (
-                <p className="text-xs text-muted-foreground mb-4">{en ? "Loading…" : "กำลังโหลด…"}</p>
+                routingTimedOut ? (
+                  <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 mb-4 flex items-center gap-3">
+                    <p className="flex-1 text-xs text-foreground">
+                      {en ? "Could not load. Check the internet and try again." : "โหลดไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่"}
+                    </p>
+                    <button onClick={retryRouting} className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-border bg-card hover:bg-muted flex items-center gap-1.5 flex-shrink-0">
+                      <RefreshCw size={13} />
+                      {en ? "Retry" : "ลองใหม่"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground mb-4">{en ? "Loading…" : "กำลังโหลด…"}</p>
+                )
               ) : (
                 <div className="divide-y divide-border rounded-xl border border-border mb-2">
                   {sortedCategories.map((c) => {
@@ -454,17 +480,10 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
                 </div>
               )}
               <SectionTitle title={en ? "Table links / QR" : "ลิงก์โต๊ะ / QR"} shop lang={lang} />
-              <button
-                onClick={() => setShowTableLinks(true)}
-                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-muted"
-              >
-                <Link2 size={15} />
-                {en ? "Open table links" : "เปิดลิงก์โต๊ะ"}
-              </button>
+              <TableLinksPanel lang={lang} />
             </>
           )}
         </div>
-        {showTableLinks && <TableLinksModal lang={lang} onClose={() => setShowTableLinks(false)} />}
       </div>
     </div>
   );

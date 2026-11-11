@@ -825,7 +825,17 @@ export default function App() {
   const writtenTableViewHashRef = useRef(new Map<string, string>()); // token → hash ที่เขียนไปแล้ว/กำลังเขียน
   useEffect(() => {
     if (getTableFromUrl() !== null || !everAuthed) return;
-    refreshTableLinks().catch((err) => console.error("read tableViews failed", err));
+    // อ่านจาก server (ไม่เกิน 10 วิ) — ไม่สำเร็จ (ออฟไลน์/ช้า) ลองใหม่ทุก 30 วิ จนได้ (ระหว่างนั้นยังไม่เขียนสรุป "ที่สั่งไปแล้ว")
+    let timer: number | undefined;
+    let cancelled = false;
+    const attempt = () => {
+      refreshTableLinks().catch((err) => {
+        console.error("read tableViews failed", err);
+        if (!cancelled) timer = window.setTimeout(attempt, 30_000);
+      });
+    };
+    attempt();
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [everAuthed]);
   useEffect(() => {
     if (getTableFromUrl() !== null || !everAuthed || !ordersSynced || !tableLinks) return;
@@ -2441,13 +2451,15 @@ export default function App() {
   };
 
   // หมวด → จุดพิมพ์ (status/printRouting) — auto-print อ่านค่าล่าสุดจาก store ตอนพิมพ์ ต้องเปิด listener ตลอดที่พนักงานล็อกอิน
+  // gate ด้วย everAuthed (latch เดียวกับหน้าจอพนักงาน) ไม่ใช่ staffLoggedIn — Auth fire null ชั่วคราวแล้วหน้าจอยังอยู่
+  // แต่หมวดในหน้าตั้งค่าหายจนค้าง "กำลังโหลด" / auto-print เสียค่าหมวด→จุดพิมพ์
   useEffect(() => {
-    if (getTableFromUrl() !== null || !staffLoggedIn) return;
+    if (getTableFromUrl() !== null || !everAuthed) return;
     return startPrintRouting();
-  }, [staffLoggedIn]);
+  }, [everAuthed]);
   useEffect(() => {
-    setRoutingCategories(staffLoggedIn ? allCategories : []);
-  }, [staffLoggedIn, allCategories]);
+    setRoutingCategories(getTableFromUrl() === null && everAuthed ? allCategories : []);
+  }, [everAuthed, allCategories]);
 
   // สวิตช์ระบบสต็อกอยู่ในหน้าตั้งค่าเครื่องพิมพ์ (StaffHeader → PrinterSettingsModal) — ส่งค่า+ตัวกดผ่าน stockSwitchStore
   // ถามยืนยันก่อนเขียนเหมือนเดิม (ConfirmModal ของ App วาดทับหน้าตั้งค่าได้ เพราะอยู่ท้าย DOM)

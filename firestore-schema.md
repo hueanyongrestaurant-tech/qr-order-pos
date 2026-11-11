@@ -101,8 +101,9 @@
 - `status/tableClosures` — `{ closedAt: { "<โต๊ะ>": Timestamp }, movedAt: { "<โต๊ะ>": Timestamp } }` เวลาปิดบิลล่าสุดของแต่ละโต๊ะ
   เขียนใน transaction เดียวกับการปิดบิล — การย้ายโต๊ะเขียนทั้ง `closedAt` และ `movedAt` ของโต๊ะต้นทาง (มือถือที่โต๊ะเดิมต้องสแกน QR ที่โต๊ะใหม่)
   หน้าเว็บลูกค้าเช็คก่อนส่งออเดอร์ (ปิดบิล/ย้ายโต๊ะหลังลูกค้าเปิดหน้า = ให้สแกน QR ใหม่) (ดู `src/app/tableSession.ts`)
-- `status/qrConfig` — `{ legacyTableUrl: boolean }` สวิตช์ลิงก์แบบเดิม `?table=1-3` (ไม่มี doc/ฟิลด์ = เปิด) ตั้งจากหน้า "ลิงก์โต๊ะ" ฝั่งพนักงาน
+- `status/qrConfig` — `{ legacyTableUrl: boolean }` สวิตช์ลิงก์แบบเดิม `?table=1-3` (ไม่มี doc/ฟิลด์ = เปิด) ตั้งจากหน้าตั้งค่า แท็บ "ร้าน" ฝั่งพนักงาน (ถามยืนยันก่อนปิด)
 - `status/printRouting` — `{ "<categoryId>": "counter" | "kitchen" }` หมวดไหนพิมพ์ที่เคาน์เตอร์/ครัว ตั้งในหน้าตั้งค่า แท็บ "การพิมพ์" (ไม่มีค่า = ชื่อขึ้นต้นด้วยเครื่องดื่ม/ของฝาก → เคาน์เตอร์) ใช้ทั้งตั๋วและสถิติ เครื่องจำค่าล่าสุดไว้ใน localStorage
+- `counters/tableLinkLock` — `{ seq, lastTable, at }` ตัวกันชนของการสร้าง/เปลี่ยนลิงก์โต๊ะ (อ่าน+เขียนใน transaction เดียวกับ `tableViews`) ไม่ใช่ล็อกที่ถือไว้ ค่าในนี้ไม่ถูกใช้ตัดสินอะไร — สร้างลิงก์ = เฉพาะโต๊ะที่ server ยังไม่มีลิงก์ ไม่แทน/ลบของเดิม
 - `counters/takeaway-YYYY-MM-DD` — `{ count }` ตัวนับคิวกลับบ้าน (บิลย้อนหลังไม่ใช้ — label คงที่ `"กลับบ้าน"`)
 - `counters/table-moves` — guard ของการย้ายโต๊ะ `{ lastMoveId, lastFrom, lastTo, lastMoveAt }` ทุกการย้ายอ่าน+เขียน doc นี้ใน transaction เพื่อให้การย้ายพร้อมกันชนกันแล้ว retry (กันสองเครื่องย้ายเข้าโต๊ะเดียวกัน)
 - `expenses/YYYY-MM-DD` — บัญชีรายจ่ายรายวัน `{ date, items: ExpenseLineItem[], totalAmount, updatedAt }`
