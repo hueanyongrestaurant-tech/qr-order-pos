@@ -25,7 +25,7 @@ beforeEach(async () => {
 });
 
 const guest = () => env.unauthenticatedContext().firestore();
-const staff = () => env.authenticatedContext("staff").firestore();
+const staff = () => env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore();
 const order = (extra = {}) => ({ tableNumber: "1-2", status: "in-progress", items: [], createdAt: serverTimestamp(), ...extra });
 
 // ─── ออเดอร์ที่ไม่มีเมนูติดสต็อก: ต้องเหมือนเดิมทุกอย่าง ───

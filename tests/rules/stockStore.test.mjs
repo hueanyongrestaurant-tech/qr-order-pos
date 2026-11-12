@@ -32,7 +32,7 @@ const read = async (path) => {
   return data;
 };
 const orderData = (table = "1-2") => ({ tableNumber: table, items: [], status: "in-progress", createdAt: serverTimestamp() });
-const staffDb = () => { const db = env.authenticatedContext("staff").firestore(); setTestDb(db); return db; };
+const staffDb = () => { const db = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore(); setTestDb(db); return db; };
 
 // db ของลูกค้าหนึ่ง instance ต่อ test (stockStore ใช้ db จาก shim — สร้างใหม่ทุกครั้งจะได้ ref คนละ instance กับ transaction)
 let guestDb;

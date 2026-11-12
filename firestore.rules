@@ -9,7 +9,8 @@ rules_version = '2';
 // • ฝั่งพนักงาน (ล็อกอินด้วย Firebase Auth) — แก้ไขข้อมูลได้ตามงานหน้าร้าน
 // • ออเดอร์ห้ามลบถาวรเด็ดขาด — การ "ยกเลิก" ทำผ่าน update สถานะเป็น "cancelled"
 // • activityLogs เป็นบันทึกร่องรอย — พนักงานสร้างได้ เจ้าของอ่านได้ ห้ามแก้/ห้ามลบ
-// • สองบัญชี: เจ้าของ (isOwner — owner@hueanyong.local) เห็นทุกอย่าง | บัญชีอื่นที่ล็อกอิน = พนักงาน ทำงานหน้าร้านได้ครบ
+// • สองบัญชี: เจ้าของ (isOwner — owner@hueanyong.local) เห็นทุกอย่าง | พนักงาน (admin@hueanyong.local) ทำงานหน้าร้านได้ครบ
+//   บัญชีอื่นใดที่ล็อกอินได้ (สมัครเอง) = เท่ากับลูกค้าที่ไม่ได้ล็อกอิน (isStaff() ไม่ผ่าน)
 //   แต่อ่านยอดขายย้อนหลังไม่ได้: ไล่ดู (list) ออเดอร์ได้เฉพาะที่ยังไม่ปิด, อ่านสถิติ/รายจ่าย/บันทึกกิจกรรมไม่ได้
 //   (แอปซ่อนแท็บพวกนี้ให้พนักงานอยู่แล้ว — rules นี้คือตัวบังคับจริง ดู src/app/staff/roleStore.ts)
 
@@ -19,6 +20,14 @@ service cloud.firestore {
     // เจ้าของร้าน — ต้องตรงกับ OWNER_EMAIL ใน src/app/constants.ts (ตัวพิมพ์เล็กทั้งหมด)
     function isOwner() {
       return request.auth != null && request.auth.token.email == 'owner@hueanyong.local';
+    }
+
+    // บัญชีของร้านเท่านั้น (พนักงาน + เจ้าของ) — "ล็อกอินแล้ว" อย่างเดียวไม่พอ: ใครก็สมัครบัญชี Firebase Auth ใหม่ได้ด้วย
+    // API key ที่อยู่ในหน้าเว็บ บัญชีแบบนั้นต้องไม่ได้สิทธิ์อะไรเลย | ต้องตรงกับ STAFF_EMAIL / OWNER_EMAIL ใน src/app/constants.ts
+    // เพิ่มบัญชีของร้าน = เพิ่มอีเมลในรายการนี้ (แล้ววาง rules ใหม่)
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in ['admin@hueanyong.local', 'owner@hueanyong.local'];
     }
 
     match /orders/{orderId} {
@@ -43,13 +52,13 @@ service cloud.firestore {
                     );
       // อ่านทีละใบ (get) ต้องรู้ id — พนักงานต้องใช้: ทุก transaction (เสิร์ฟ/ยกเลิก/ปิดบิล/ย้ายโต๊ะ) อ่านใบนั้นก่อนเขียน
       // รวมถึงใบที่เพิ่งถูกปิดจากเครื่องอื่น (เช็คจอค้าง) id เป็นรหัสสุ่ม ไล่เดาไม่ได้
-      allow get: if request.auth != null;
+      allow get: if isStaff();
       // ไล่ดู (list): เจ้าของได้ทั้งหมด | พนักงานได้เฉพาะออเดอร์ที่ยังไม่ปิด — query ต้องกรอง status เป็น
       // in-progress / awaiting-payment เอง (หน้าออเดอร์, ปิดบิล, ย้ายโต๊ะ กรองแบบนี้อยู่แล้ว)
       // query ตามวันที่/ทั้ง collection/บิล paid-cancelled = ยอดขายย้อนหลัง → ปฏิเสธ
       allow list: if isOwner()
-                  || (request.auth != null && resource.data.status in ['in-progress', 'awaiting-payment']);
-      allow update: if request.auth != null && closedOrderStaysClosed();
+                  || (isStaff() && resource.data.status in ['in-progress', 'awaiting-payment']);
+      allow update: if isStaff() && closedOrderStaysClosed();
       allow delete: if false;   // ห้ามลบออเดอร์ทิ้งถาวรเด็ดขาด — บังคับผ่าน update สถานะ "cancelled" เท่านั้น
 
       // บิลที่จ่ายแล้ว / ยกเลิกแล้ว ห้ามเปลี่ยนสถานะอีก (แก้ช่องอื่นได้ เช่นวิธีจ่าย) — กันเครื่องที่จอค้าง
@@ -66,19 +75,19 @@ service cloud.firestore {
     }
 
     match /activityLogs/{logId} {
-      allow create: if request.auth != null;   // ทุกบัญชีที่ล็อกอินต้องจดได้เสมอ (รวมใน transaction ย้ายโต๊ะ)
+      allow create: if isStaff();   // ทุกบัญชีที่ล็อกอินต้องจดได้เสมอ (รวมใน transaction ย้ายโต๊ะ)
       allow read: if isOwner();
       allow update, delete: if false;   // log ต้องแก้ไข/ลบไม่ได้เลย ป้องกันการลบร่องรอย
     }
 
     match /voidReasons/{docId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
 
     // ─── เมนู / หมวดหมู่ — ลูกค้าอ่านได้ พนักงานแก้ได้ ───
     match /menuItems/{itemId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isStaff();
     }
 
     // ─── สต็อกต่อเมนู (stock/{itemId}) — ไม่มี doc = ขายไม่จำกัด ───
@@ -87,8 +96,8 @@ service cloud.firestore {
     // หลัง commit ต้องมีและเป็น in-progress) — ออเดอร์ที่ไม่มีเมนูติดสต็อกไม่ผ่าน rule นี้เลย
     match /stock/{itemId} {
       allow read: if true;
-      allow create, delete: if request.auth != null;
-      allow update: if request.auth != null || customerTakesStock();
+      allow create, delete: if isStaff();
+      allow update: if isStaff() || customerTakesStock();
 
       function customerTakesStock() {
         let before = resource.data;
@@ -108,13 +117,13 @@ service cloud.firestore {
 
     match /categories/{categoryId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isStaff();
     }
 
     // ─── สถานะร้าน (แบนเนอร์ "ร้านยุ่ง") — ลูกค้าอ่าน พนักงานเขียน ───
     match /status/{docId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isStaff();
     }
 
     // ─── ลิงก์โต๊ะ + สรุป "ที่สั่งไปแล้ว" (tableViews/{รหัสสุ่มในลิงก์ ?t=}) — เครื่องพนักงานเขียน ลูกค้าเปิดดู ───
@@ -123,19 +132,19 @@ service cloud.firestore {
     // (ห้ามย้ายไปไว้ใน /status — status ให้ทุกคน list ได้)
     match /tableViews/{token} {
       allow get: if true;
-      allow list: if request.auth != null;
-      allow create, update, delete: if request.auth != null;
+      allow list: if isStaff();
+      allow create, update, delete: if isStaff();
     }
 
     // ─── รายชื่อเครื่องพิมพ์ทั้งร้าน (printers/{MAC} — ชื่อ + Bluetooth MAC) — เฉพาะคนที่ล็อกอิน ───
     // ไม่อยู่ใน /status เพราะ status ใครก็อ่านได้ | เครื่องพิมพ์ที่เลือก/หน้าที่ของแต่ละเครื่องอยู่บนเครื่อง ไม่ได้อยู่ที่นี่
     match /printers/{printerId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
 
     // ─── ตัวนับคิวกลับบ้าน (T-1, T-2, ...) + ตัวกันชน (table-moves, tableLinkLock) — เฉพาะคนที่ล็อกอิน ───
     match /counters/{docId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isStaff();
     }
 
     // ─── บัญชีรายจ่าย — เฉพาะเจ้าของ ───

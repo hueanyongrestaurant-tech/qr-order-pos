@@ -43,7 +43,7 @@ beforeEach(async () => {
   resetPrintRoutingForTest();
   store.clear();
   await env.clearFirestore();
-  setTestDb(env.authenticatedContext("staff").firestore());
+  setTestDb(env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore());
 });
 
 test("no cache and nothing loaded: waits ~timeout, then the old name rule — never an ALL ITEMS ticket", async () => {

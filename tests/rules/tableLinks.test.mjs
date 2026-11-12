@@ -23,7 +23,7 @@ before(async () => {
 after(async () => { await env?.cleanup(); });
 beforeEach(async () => {
   await env.clearFirestore();
-  db = env.authenticatedContext("staff").firestore();
+  db = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore();
   setTestDb(db);
   // QR ที่พิมพ์ติดโต๊ะ 1-1 และ 1-2 อยู่แล้ว
   await env.withSecurityRulesDisabled(async (ctx) => {
@@ -68,7 +68,7 @@ test("create links: the screen's stale idea of 'no link' cannot replace a link t
 });
 
 test("create links: two devices at the same time → one link per table", async () => {
-  const other = env.authenticatedContext("staff2").firestore();
+  const other = env.authenticatedContext("staff2", { email: "admin@hueanyong.local" }).firestore();
   const viaOther = async () => { setTestDb(other); try { return await createMissingTableLinks(["2-1", "2-2"]); } finally { setTestDb(db); } };
   // สองรอบวิ่งซ้อนกัน (db เดียวกันก็ชนกันที่ล็อกเหมือนกัน)
   const [a, b] = await Promise.all([createMissingTableLinks(["2-1", "2-2"]), createMissingTableLinks(["2-1", "2-2"])]);

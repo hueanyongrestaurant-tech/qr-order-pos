@@ -310,7 +310,7 @@ test("two guests race for the last prep → exactly one wins", async () => {
 });
 
 test("staff order taking the last prep does not write soldOut itself (effect sets it with the prep flag)", async () => {
-  const db = env.authenticatedContext("staff").firestore();
+  const db = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore();
   setTestDb(db);
   await runTransaction(db, (tx) => createOrderTakingStock(tx, {
     orderRef: doc(db, "orders", "s1"), orderData: orderData(), needs: new Map([["prep_larb", 1]]), guest: false,
@@ -335,7 +335,7 @@ test("rules: guest can't rename / refill / create / delete a prep", async () => 
 
 test("rules: staff can create, set unlimited, and delete a prep", async () => {
   const { deleteField, deleteDoc, increment } = await import("firebase/firestore");
-  const db = env.authenticatedContext("staff").firestore();
+  const db = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore();
   await assertSucceeds(setDoc(doc(db, "stock", "prep_new"), { kind: "prep", name: "ใหม่", remaining: 5 }));
   await assertSucceeds(updateDoc(doc(db, "stock", "prep_new"), { remaining: increment(-1) }));
   await assertSucceeds(updateDoc(doc(db, "stock", "prep_new"), { remaining: deleteField(), alertAt: deleteField() }));

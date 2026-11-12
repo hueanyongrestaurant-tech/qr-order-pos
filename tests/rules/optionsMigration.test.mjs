@@ -35,7 +35,7 @@ beforeEach(async () => {
       await setDoc(doc(ctx.firestore(), "categories", id), { nameTh: id, nameEn: id, order: 0 });
     }
   });
-  db = env.authenticatedContext("staff").firestore(); // apply/rollback ล็อกอินเป็นพนักงาน เหมือนของจริง (ผ่าน rules จริง)
+  db = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore(); // apply/rollback ล็อกอินเป็นพนักงาน เหมือนของจริง (ผ่าน rules จริง)
 });
 
 const read = async (id) => (await getDoc(doc(db, "menuItems", id))).data();

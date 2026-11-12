@@ -39,7 +39,7 @@ const read = async (path) => {
   await env.withSecurityRulesDisabled(async (ctx) => { data = (await getDoc(doc(ctx.firestore(), path))).data(); });
   return data;
 };
-const asStaff = () => setTestDb(env.authenticatedContext("staff").firestore());
+const asStaff = () => setTestDb(env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore());
 const expected = {
   "1-2": { orderIds: ["a1", "a2"], total: 150 },
   "1-3": { orderIds: ["b1"], total: 80 },
@@ -106,8 +106,8 @@ test("one table was already paid on another device → 'nothing', the other tabl
 });
 
 test("two devices close the same combined bill at once → exactly one wins, one batch id", async () => {
-  const a = env.authenticatedContext("staff").firestore();
-  const b = env.authenticatedContext("staff").firestore();
+  const a = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore();
+  const b = env.authenticatedContext("staff", { email: "admin@hueanyong.local" }).firestore();
   setTestDb(a);
   const p1 = closeTablesTx(["1-2", "1-3"], { method: "transfer" }, expected);
   setTestDb(b);

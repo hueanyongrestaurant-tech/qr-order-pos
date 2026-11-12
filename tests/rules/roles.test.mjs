@@ -308,11 +308,72 @@ test("guest: ordering and the table link still work; nothing else opened up", as
   await assertFails(getDoc(doc(db, "counters", "takeaway-2026-11-12")));
 });
 
-// ─── บัญชีอื่นที่ไม่ใช่เจ้าของ = พนักงาน (ไม่ใช่ทุกคนที่ล็อกอินได้สิทธิ์เจ้าของ) ───
-test("any other signed-in account, or one with no email, gets staff rights only", async () => {
-  for (const db of [env.authenticatedContext("x", { email: "owner@hueanyong.local.evil.com" }).firestore(), env.authenticatedContext("y").firestore()]) {
+// ─── บัญชีแปลกหน้า: ใครก็สมัครบัญชี Firebase Auth ได้ด้วย API key ในหน้าเว็บ — ล็อกอินได้ แต่ต้องไม่ได้อะไรเลย ───
+test("signed-in STRANGER (self-registered account) is denied everything staff can do — same as a guest", async () => {
+  const strangers = [
+    env.authenticatedContext("stranger-1", { email: "someone@gmail.com" }).firestore(),
+    env.authenticatedContext("stranger-2", { email: "admin@hueanyong.local.evil.com" }).firestore(),
+    env.authenticatedContext("stranger-3", { email: "ADMIN@hueanyong.local" }).firestore(),     // อีเมลใน token เป็นตัวพิมพ์เล็กเสมอ — ตัวใหญ่ = ไม่ใช่
+    env.authenticatedContext("stranger-4", { email: "xowner@hueanyong.local" }).firestore(),
+    env.authenticatedContext("stranger-5").firestore(),                                           // ไม่มีอีเมล (anonymous / custom token)
+    env.authenticatedContext("stranger-6", { email_verified: true, name: "admin@hueanyong.local" }).firestore(),
+  ];
+  for (const [i, db] of strangers.entries()) {
+    const who = `stranger-${i + 1}`;
+    const orders = collection(db, "orders");
+    // ออเดอร์: อ่านไม่ได้เลย แก้ไม่ได้
+    await assertFails(getDocs(query(orders, where("status", "in", ACTIVE), limit(300))), who);
+    await assertFails(getDocs(query(orders, where("tableNumber", "==", "1-2"), where("status", "in", ACTIVE))));
+    await assertFails(getDoc(doc(db, "orders", "a1")));
+    await assertFails(getDoc(doc(db, "orders", "paid-today")));
     await assertFails(getDocs(historyQuery(db)));
+    await assertFails(updateDoc(doc(db, "orders", "a1"), { status: "awaiting-payment" }));
+    await assertFails(updateDoc(doc(db, "orders", "a1"), { status: "cancelled", cancelledAt: new Date() }));
+    await assertFails(updateDoc(doc(db, "orders", "a2"), { status: "paid", paymentMethod: "cash" }));
+    await assertFails(updateDoc(doc(db, "orders", "a1"), { tableNumber: "2-9" }));
+    await assertFails(deleteDoc(doc(db, "orders", "a1")));
+    await assertFails(addDoc(orders, order("1-1", "paid", [], { backfilled: true, createdAt: at(1) })));
+    await assertFails(runTransaction(db, async (tx) => { await tx.get(doc(db, "orders", "a1")); }));
+    // เมนู / สต็อก / สถานะร้าน: เขียนไม่ได้
+    await assertFails(updateDoc(doc(db, "menuItems", "rice"), { price: 1 }));
+    await assertFails(setDoc(doc(db, "menuItems", "new"), { price: 1 }));
+    await assertFails(deleteDoc(doc(db, "menuItems", "rice")));
+    await assertFails(setDoc(doc(db, "categories", "x"), { nameTh: "x", order: 9 }));
+    await assertFails(setDoc(doc(db, "stock", "rice"), { remaining: 999 }));
+    await assertFails(deleteDoc(doc(db, "stock", "rice")));
+    await assertFails(setDoc(doc(db, "status", "live"), { busyTables: 99, busyItems: 99 }));
+    await assertFails(setDoc(doc(db, "status", "qrConfig"), { legacyTableUrl: true }, { merge: true }));
+    await assertFails(setDoc(doc(db, "status", "printRouting"), { food: "counter" }, { merge: true }));
+    await assertFails(setDoc(doc(db, "status", "receipt"), { footer: "x" }, { merge: true }));
+    await assertFails(setDoc(doc(db, "status", "tableClosures"), { closedAt: {} }, { merge: true }));
+    // ลิงก์โต๊ะ: ไล่ดูรหัส/สร้าง/แก้/ลบไม่ได้
+    await assertFails(getDocs(collection(db, "tableViews")));
+    await assertFails(setDoc(doc(db, "tableViews", "EVIL"), { table: "1-2", version: 1, data: "{}", hash: "h" }));
+    await assertFails(updateDoc(doc(db, "tableViews", "TOKEN-1-2"), { data: "{}" }));
+    await assertFails(deleteDoc(doc(db, "tableViews", "TOKEN-1-2")));
+    // ตัวนับ / เครื่องพิมพ์ / เหตุผลยกเลิก / log / สถิติ / รายจ่าย
+    await assertFails(getDoc(doc(db, "counters", "takeaway-2026-11-12")));
+    await assertFails(setDoc(doc(db, "counters", "tableLinkLock"), { seq: 1 }));
+    await assertFails(setDoc(doc(db, "counters", "table-moves"), { lastMoveId: "x" }));
+    await assertFails(getDocs(collection(db, "printers")));
+    await assertFails(setDoc(doc(db, "printers", "AA:BB:CC:DD:EE:FF"), { name: "x", address: "AA:BB:CC:DD:EE:FF" }));
+    await assertFails(getDoc(doc(db, "voidReasons", "list")));
+    await assertFails(setDoc(doc(db, "voidReasons", "list"), { reasons: ["x"] }));
+    await assertFails(addDoc(collection(db, "activityLogs"), { action: "x", createdAt: serverTimestamp() }));
+    await assertFails(getDoc(doc(db, "activityLogs", "log1")));
     await assertFails(getDoc(doc(db, "dailyStats", "2026-10-01")));
-    await assertSucceeds(getDocs(query(collection(db, "orders"), where("status", "in", ACTIVE), limit(300))));
+    await assertFails(setDoc(doc(db, "dailyStats", "2026-10-02"), { total: 1 }));
+    await assertFails(getDoc(doc(db, "expenses", "2026-10-01")));
+    await assertFails(setDoc(doc(db, "expenses", "2026-10-03"), { date: "2026-10-03", items: [] }));
+    await assertFails(getDocs(collection(db, "expenseItems")));
+    // สิ่งที่ลูกค้าทำได้ ยังทำได้เท่าลูกค้า (ไม่มากกว่า): อ่านเมนู/สถานะ, เปิดลิงก์โต๊ะที่รู้รหัส, สั่งอาหาร
+    await assertSucceeds(getDocs(collection(db, "menuItems")));
+    await assertSucceeds(getDoc(doc(db, "status", "qrConfig")));
+    await assertSucceeds(getDoc(doc(db, "tableViews", "TOKEN-1-2")));
+    await assertSucceeds(setDoc(doc(db, "orders", `from-${who}`), order("1-2", "in-progress", [line("rice", 50, 1)], { createdAt: serverTimestamp() })));
+    await assertFails(getDoc(doc(db, "orders", `from-${who}`)));
   }
+  // บัญชีของร้านสองบัญชียังผ่านตามเดิม
+  await assertSucceeds(getDocs(query(collection(staff(), "orders"), where("status", "in", ACTIVE), limit(300))));
+  await assertSucceeds(getDocs(query(collection(owner(), "orders"), where("status", "in", ACTIVE), limit(300))));
 });

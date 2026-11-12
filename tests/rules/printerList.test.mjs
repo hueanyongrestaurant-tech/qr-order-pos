@@ -146,7 +146,10 @@ test("offline: loading fails with an error (retry on screen) and the list on thi
   } finally {
     await enableNetwork(db);
   }
-  await refreshSharedPrinters(5000); // ลองใหม่
+  // กด "ลองใหม่" จนต่อ server ได้ (หลังออฟไลน์ SDK อาจใช้เวลาต่อกลับหลายวินาที)
+  let ok = false;
+  for (let i = 0; i < 5 && !ok; i++) ok = await refreshSharedPrinters(5000).then(() => true, () => false);
+  assert.ok(ok, "retry reaches the server once back online");
   assert.equal((await server())[P1], "ครัวใน");
 });
 
