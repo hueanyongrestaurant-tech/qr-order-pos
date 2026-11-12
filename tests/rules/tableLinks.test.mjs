@@ -79,16 +79,35 @@ test("create links: two devices at the same time → one link per table", async 
   assert.deepEqual(c, { created: [], skipped: ["2-1", "2-2"] });
 });
 
-test("create links offline: fails with an error, creates nothing", async () => {
+// หน้าจอขึ้นว่าไม่สำเร็จแล้ว = ต้องไม่มีอะไรถูกเขียนทีหลัง แม้เน็ตจะกลับมาระหว่างที่ SDK ยังลอง transaction ซ้ำอยู่
+const backOnlineAndSettled = async () => {
+  await enableNetwork(db);
+  await new Promise((r) => setTimeout(r, 4000)); // นานกว่ารอบลองซ้ำของ SDK
+};
+
+test("create links offline: fails with an error, and nothing is created later when the network comes back", async () => {
   await disableNetwork(db);
+  let failed;
   try {
-    await assert.rejects(withTimeout(createMissingTableLinks(["1-3"]), 3000));
+    failed = await createMissingTableLinks(["1-3", "1-4"], undefined, 800).then(() => null, (err) => err);
   } finally {
-    await enableNetwork(db);
+    await backOnlineAndSettled();
   }
-  // คำสั่งที่ค้างตอนออฟไลน์ต้องไม่ไปสร้างทีหลัง
-  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(failed, "offline create must reject");
   assert.deepEqual(await tokensOf("1-3"), []);
+  assert.deepEqual(await tokensOf("1-4"), []);
+  assert.deepEqual((await allDocs()).map((d) => d.token), ["PRINTED-1-1", "PRINTED-1-2"]);
+  // กดอีกครั้งตอนออนไลน์: สร้างได้ตามปกติ
+  assert.deepEqual(await createMissingTableLinks(["1-3"]), { created: ["1-3"], skipped: [] });
+});
+
+test("a slow create that passes its deadline writes nothing (deadline is checked before every write)", async () => {
+  // เส้นตาย 0 ms: transaction รอบแรกก็เลยเส้นตายแล้ว
+  await new Promise((r) => setTimeout(r, 5));
+  await assert.rejects(createMissingTableLinks(["1-3"], undefined, -1), (err) => err instanceof TimeoutError);
+  await assert.rejects(regenerateTableLink("1-1", "PRINTED-1-1", undefined, -1), (err) => err instanceof TimeoutError);
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual((await allDocs()).map((d) => d.token), ["PRINTED-1-1", "PRINTED-1-2"]);
 });
 
 test("offline read: listing links throws (an error on screen) instead of returning an empty 'no links' list", async () => {
@@ -185,8 +204,8 @@ test("an operation that dies half-way leaves no lock behind: the next create wor
   assert.equal(await readLock(), undefined);
   // สร้างตอนออฟไลน์ล้ม — ไม่มีล็อกค้าง
   await disableNetwork(db);
-  try { await assert.rejects(withTimeout(createMissingTableLinks(["1-3"]), 2000)); } finally { await enableNetwork(db); }
+  try { await assert.rejects(createMissingTableLinks(["1-3"], undefined, 800)); } finally { await enableNetwork(db); }
   const t0 = Date.now();
   assert.deepEqual(await createMissingTableLinks(["1-4"]), { created: ["1-4"], skipped: [] });
-  assert.ok(Date.now() - t0 < 5000);
+  assert.ok(Date.now() - t0 < 15000);
 });

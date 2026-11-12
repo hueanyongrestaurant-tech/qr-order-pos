@@ -13,10 +13,10 @@
 // status/qrConfig — { legacyTableUrl: boolean } สวิตช์ลิงก์แบบเดิม (?table=1-3) ไม่มี doc/ไม่มีฟิลด์ = เปิด
 
 import {
-  collection, doc, getDoc, getDocFromServer, getDocsFromServer, limit, query, runTransaction, serverTimestamp, setDoc, updateDoc, where,
+  collection, doc, getDoc, getDocFromServer, getDocsFromServer, limit, query, runTransaction, serverTimestamp, setDoc, updateDoc, where, type Transaction,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { withTimeout } from "./timeout";
+import { LOAD_TIMEOUT_MS, TimeoutError, withTimeout } from "./timeout";
 import { encodeTableView, newTableToken, TABLE_VIEW_VERSION, type EncodedTableView } from "./tableView";
 
 export const TABLE_VIEWS = "tableViews";
@@ -83,15 +83,40 @@ export interface CreateLinksResult {
   skipped: string[]; // มีลิงก์อยู่แล้วบน server — ไม่แตะเลย
 }
 
+// transaction ของลิงก์โต๊ะที่ "หมดเวลาแล้วต้องไม่เขียนทีหลัง":
+// SDK ลอง transaction ซ้ำเองหลายรอบ — ถ้าออฟไลน์/ช้า หน้าจอขึ้นว่าไม่สำเร็จไปแล้ว แต่รอบที่ค้างอยู่อาจไปสำเร็จตอนเน็ตกลับมา
+// (สร้าง/เปลี่ยนลิงก์ทั้งที่บอกพนักงานว่าไม่สำเร็จ) จึงเช็คเส้นตายก่อนเขียนทุกรอบ: เลยเส้นตาย = โยน TimeoutError ไม่เขียนอะไร
+// ภายนอกรอเกินเส้นตายอีก COMMIT_GRACE_MS เผื่อรอบที่ผ่านเช็คไปแล้วกำลังส่ง — ผลที่หน้าจอเห็นจึงตรงกับที่เกิดจริง
+const COMMIT_GRACE_MS = 5000;
+function linkTransaction<T>(timeoutMs: number, body: (tx: Transaction, beforeWrite: () => void) => Promise<T>): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  const beforeWrite = () => {
+    if (Date.now() > deadline) throw new TimeoutError();
+  };
+  return withTimeout(
+    runTransaction(db, (tx) => {
+      beforeWrite(); // รอบลองซ้ำหลังเส้นตาย: ไม่ต้องอ่านอะไรอีก
+      return body(tx, beforeWrite);
+    }),
+    timeoutMs + COMMIT_GRACE_MS,
+  );
+}
+
 // สร้างลิงก์ให้โต๊ะที่ยังไม่มีเท่านั้น — ไม่มีทางแทน/ลบลิงก์เดิม
 // ทีละโต๊ะใน transaction: อ่านล็อก → เช็ค server ว่าโต๊ะยังไม่มีลิงก์ → เขียนลิงก์ใหม่ + ขยับล็อก
 // อีกเครื่องสร้างให้โต๊ะเดียวกันพร้อมกัน: ล็อกเปลี่ยน → transaction นี้ลองใหม่ → เห็นลิงก์ของอีกเครื่อง → ข้าม
-export async function createMissingTableLinks(tables: string[], encoded: EncodedTableView = emptyTableView()): Promise<CreateLinksResult> {
+// timeoutMs = ต่อ 1 โต๊ะ — หมดเวลา/ออฟไลน์ = throw (โต๊ะที่สร้างไปแล้วก่อนหน้าในรอบนี้ยังอยู่ กดอีกครั้งจะข้ามโต๊ะพวกนั้นเอง)
+export async function createMissingTableLinks(
+  tables: string[],
+  encoded: EncodedTableView = emptyTableView(),
+  timeoutMs = LOAD_TIMEOUT_MS,
+): Promise<CreateLinksResult> {
   const result: CreateLinksResult = { created: [], skipped: [] };
   for (const table of tables) {
-    const made = await runTransaction(db, async (tx) => {
+    const made = await linkTransaction(timeoutMs, async (tx, beforeWrite) => {
       const lock = await tx.get(LINK_LOCK_REF());
       if (await serverHasLink(table)) return false;
+      beforeWrite();
       tx.set(LINK_LOCK_REF(), { seq: nextSeq(lock.data()?.seq), lastTable: table, at: serverTimestamp() });
       tx.set(viewRef(newTableToken()), newViewData(table, encoded));
       return true;
@@ -110,11 +135,18 @@ export class LinkChangedError extends Error {
 
 // สร้างรหัสใหม่แทนรหัสเดิมของโต๊ะ (QR ที่พิมพ์ไว้จะใช้ไม่ได้) — เรียกหลังพนักงานยืนยันชัดเจนเท่านั้น
 // ลบเฉพาะ oldToken ที่หน้าจอแสดงอยู่ และเฉพาะเมื่อบน server ยังเป็นของโต๊ะนี้ ไม่งั้น LinkChangedError (ไม่แตะอะไร)
-export async function regenerateTableLink(table: string, oldToken: string, encoded: EncodedTableView = emptyTableView()): Promise<string> {
-  return runTransaction(db, async (tx) => {
+// หมดเวลา/ออฟไลน์ = throw และไม่มีการเปลี่ยนทีหลัง (QR เดิมยังใช้ได้)
+export async function regenerateTableLink(
+  table: string,
+  oldToken: string,
+  encoded: EncodedTableView = emptyTableView(),
+  timeoutMs = LOAD_TIMEOUT_MS,
+): Promise<string> {
+  return linkTransaction(timeoutMs, async (tx, beforeWrite) => {
     const lock = await tx.get(LINK_LOCK_REF());
     const old = await tx.get(viewRef(oldToken));
     if (!old.exists() || old.data()?.table !== table) throw new LinkChangedError();
+    beforeWrite();
     const token = newTableToken();
     tx.set(LINK_LOCK_REF(), { seq: nextSeq(lock.data()?.seq), lastTable: table, at: serverTimestamp() });
     tx.set(viewRef(token), newViewData(table, encoded));
