@@ -14,7 +14,7 @@ import { getFirestore } from "firebase/firestore";
 import {
   applyPhotoStrip, checkPhotoBackup, measureAllOrders, rollbackPhotoStrip, summarizePhotoBackup, takePhotoBackup, type PhotoBackupFile,
 } from "./core";
-import { STAFF_EMAIL } from "../../src/app/constants";
+import { OWNER_EMAIL } from "../../src/app/constants";
 
 // ค่าเดียวกับ src/lib/firebase.ts (ค่า public ของเว็บแอป ไม่ใช่ความลับ) — แยกไว้เพราะไฟล์นั้นผูกกับ Vite
 const firebaseConfig = {
@@ -72,12 +72,12 @@ function printSummary(backup: PhotoBackupFile) {
   console.log("แก้เฉพาะรูปในรายการ (photo → ว่าง) — ราคา/จำนวน/สถานะ/เวลา/ข้อมูลอื่นไม่แตะ");
 }
 
-// บัญชีเดียวกับหน้าล็อกอินพนักงานในแอป (STAFF_EMAIL) — ถามแค่รหัสผ่าน ผิดพิมพ์ใหม่ได้ 3 ครั้ง
+// บัญชีเจ้าของ (OWNER_EMAIL — อ่านออเดอร์/ยอดขายย้อนหลังได้ตาม rules; บัญชีพนักงานอ่านไม่ได้) — ถามแค่รหัสผ่าน ผิดพิมพ์ใหม่ได้ 3 ครั้ง
 async function login() {
   for (let attempt = 1; ; attempt++) {
-    const password = await ask("\nรหัสผ่านพนักงาน (รหัสเดียวกับหน้าล็อกอินในแอป — พิมพ์แล้วไม่ขึ้นบนจอ): ", true);
+    const password = await ask("\nรหัสผ่านบัญชีเจ้าของ (รหัสเดียวกับที่ล็อกอิน "เจ้าของ" ในแอป — พิมพ์แล้วไม่ขึ้นบนจอ): ", true);
     try {
-      await signInWithEmailAndPassword(getAuth(app), STAFF_EMAIL, password);
+      await signInWithEmailAndPassword(getAuth(app), OWNER_EMAIL, password);
       console.log("ล็อกอินแล้ว");
       return;
     } catch (err) {

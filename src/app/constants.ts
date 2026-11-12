@@ -10,6 +10,9 @@ export const AUDIT_UI_ENABLED = false;
 // บัญชีพนักงานบัญชีเดียวของร้าน (Firebase Auth) — หน้าล็อกอินให้พิมพ์แค่รหัสผ่าน
 // สคริปต์ scripts/options-migration ใช้ค่านี้ด้วย ถามแค่รหัสผ่านเหมือนกัน
 export const STAFF_EMAIL = "admin@hueanyong.local";
+// บัญชีเจ้าของ — เห็นทุกอย่าง (สถิติ/รายจ่าย/ประวัติ/บันทึกกิจกรรม) บัญชี STAFF_EMAIL = พนักงานทั่วไป ไม่เห็นหน้าพวกนั้น
+// firestore.rules ใช้อีเมลนี้ใน isOwner() — เปลี่ยนที่นี่ต้องเปลี่ยนใน rules ด้วย (ตัวพิมพ์เล็กทั้งหมด)
+export const OWNER_EMAIL = "owner@hueanyong.local";
 
 // ─── แยกพิมพ์ตั๋วตามจุด (ดู staff/stationTickets.ts) ──────────────────────────
 // เทียบแบบ "ขึ้นต้นด้วย" กับชื่อภาษาไทยเสมอ (ไม่ขึ้นกับภาษาที่จอใช้อยู่)

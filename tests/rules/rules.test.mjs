@@ -219,11 +219,14 @@ test("staff: cancelled order cannot be revived or turned into paid", async () =>
   await assertFails(updateDoc(doc(db, "orders", "cancel1"), { status: "awaiting-payment" }));
   await assertFails(updateDoc(doc(db, "orders", "cancel1"), { status: "paid" }));
 });
-test("staff: normal paid bill cannot be cancelled; backfilled one can (history page)", async () => {
+test("normal paid bill cannot be cancelled by anyone; a backfilled one only by the owner (history page)", async () => {
   await seedClosed();
   const db = staff();
+  const owner = env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore();
   await assertFails(updateDoc(doc(db, "orders", "paid1"), { status: "cancelled" }));
-  await assertSucceeds(updateDoc(doc(db, "orders", "backfill1"), { status: "cancelled" }));
+  await assertFails(updateDoc(doc(owner, "orders", "paid1"), { status: "cancelled" }));
+  await assertFails(updateDoc(doc(db, "orders", "backfill1"), { status: "cancelled" }));
+  await assertSucceeds(updateDoc(doc(owner, "orders", "backfill1"), { status: "cancelled" }));
 });
 test("staff: closed bills can still have other fields edited (status unchanged)", async () => {
   await seedClosed();

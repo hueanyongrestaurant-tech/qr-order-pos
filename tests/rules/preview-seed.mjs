@@ -40,12 +40,15 @@ const PASSWORD = "preview-only-123";
 const env = await initializeTestEnvironment({ projectId: PROJECT, firestore: { host: "127.0.0.1", port: 8080 } });
 await env.clearFirestore();
 
-// ผู้ใช้พนักงานใน Auth emulator (มีอยู่แล้ว = ไม่เป็นไร)
-await fetch(`http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email: STAFF_EMAIL, password: PASSWORD, returnSecureToken: false }),
-}).catch(() => {});
+// บัญชีพนักงาน + เจ้าของ ใน Auth emulator (มีอยู่แล้ว = ไม่เป็นไร) — รหัสทดสอบคนละตัว ใช้กับ emulator เท่านั้น
+const OWNER_PASSWORD = "preview-owner-123";
+for (const [email, password] of [[STAFF_EMAIL, PASSWORD], ["owner@hueanyong.local", OWNER_PASSWORD]]) {
+  await fetch(`http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, returnSecureToken: false }),
+  }).catch(() => {});
+}
 
 const orders = seedOrders(Timestamp);
 

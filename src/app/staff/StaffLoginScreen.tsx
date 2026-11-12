@@ -4,12 +4,13 @@ import logo from "../../assets/logo.png";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { LannaBorder } from "../shared";
+import { getLastLoginRole, type StaffRole } from "./roleStore";
 
 // ─── Staff Login Screen ───────────────────────────────────────────────────────
 
 interface StaffLoginProps {
   lang: Language;
-  onLogin: (pw: string) => void;
+  onLogin: (pw: string, loginAs: StaffRole) => void;
   onBack: () => void;
   error: boolean;
   onLangToggle: () => void;
@@ -19,6 +20,8 @@ export function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }:
   const t = T[lang];
   const [pw, setPw] = useState("");
   const [showPw, setShowPw] = useState(false);
+  // บัญชีที่จะเข้า — ค่าเริ่มต้น = ที่เครื่องนี้ใช้ครั้งล่าสุด (ครั้งแรก = พนักงาน) จำเมื่อเข้าสำเร็จ ไม่เก็บรหัสผ่าน
+  const [loginAs, setLoginAs] = useState<StaffRole>(getLastLoginRole);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -44,12 +47,26 @@ export function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }:
             <h1 className="font-display text-2xl font-semibold text-foreground">{t.staffLogin}</h1>
             <p className="text-muted-foreground text-sm mt-1">{T[lang].appName} — Staff Portal</p></div>
 
+          <div role="radiogroup" aria-label={lang === "en" ? "Account" : "บัญชี"} className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-muted mb-3">
+            {([["staff", lang === "en" ? "Staff" : "พนักงาน"], ["owner", lang === "en" ? "Owner" : "เจ้าของ"]] as [StaffRole, string][]).map(([value, label]) => (
+              <button
+                key={value}
+                role="radio"
+                aria-checked={loginAs === value}
+                onClick={() => setLoginAs(value)}
+                className={`py-2 rounded-lg text-sm ${loginAs === value ? "bg-card text-foreground font-semibold shadow-sm" : "text-muted-foreground"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div className="relative mb-3">
             <input
               type={showPw ? "text" : "password"}
               value={pw}
               onChange={(e) => setPw(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && onLogin(pw)}
+              onKeyDown={(e) => e.key === "Enter" && onLogin(pw, loginAs)}
               placeholder={t.password}
               className={`w-full bg-card border-2 rounded-xl px-4 py-3.5 text-foreground pr-12 outline-none transition-all ${error ? "border-destructive" : "border-border focus:border-primary"
                 }`}
@@ -69,7 +86,7 @@ export function StaffLoginScreen({ lang, onLogin, onBack, error, onLangToggle }:
           )}
 
           <button
-            onClick={() => onLogin(pw)}
+            onClick={() => onLogin(pw, loginAs)}
             className="w-full bg-primary text-primary-foreground py-3.5 rounded-xl font-semibold text-base hover:bg-primary/90 transition-all active:scale-95 shadow-md"
           >
             {t.loginBtn}

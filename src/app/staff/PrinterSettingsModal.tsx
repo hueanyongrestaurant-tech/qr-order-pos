@@ -1,17 +1,16 @@
 import { useEffect, useState } from "react";
-import { Bell, BellOff, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
+import { Bell, BellOff, Check, LogOut, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import type { Language } from "../types";
 import {
-  addSavedPrinter,
-  getSavedPrinters,
   getPrintRole,
   getSelectedPrinterAddress,
-  removeSavedPrinter,
+  useSavedPrinters,
   setPrintRole,
   setSelectedPrinterAddress,
   type PrintRole,
   type SavedPrinter,
 } from "./printerStore";
+import { addSharedPrinter, removeSharedPrinter, renameSharedPrinter, useSharedPrinterList } from "./printerListStore";
 import { isSoundMuted, setSoundMuted } from "./soundStore";
 import { useStockSwitch } from "./stockSwitchStore";
 import { RECEIPT_FOOTER_MAX_LINES, saveReceiptSettings, useReceiptSettings, type ReceiptSettings } from "./receiptSettingsStore";
@@ -48,12 +47,22 @@ function SectionTitle({ title, shop, lang }: { title: string; shop: boolean; lan
 // Self-contained: ไม่รับ props จาก App — ค่าทั้งร้านมาจาก store (stockSwitchStore, printRoutingStore, receiptSettingsStore)
 
 interface PrinterSettingsModalProps {
+  onLogout?: () => void; // แอป Android: ปุ่มออกจากระบบอยู่ในหน้านี้ (header ไม่มีปุ่ม กันกดพลาด)
   lang: Language;
   onClose: () => void;
 }
 
-export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProps) {
-  const [printers, setPrinters] = useState<SavedPrinter[]>(getSavedPrinters());
+export function PrinterSettingsModal({ lang, onClose, onLogout }: PrinterSettingsModalProps) {
+  // รายชื่อเครื่องพิมพ์ใช้ร่วมกันทั้งร้าน (printerListStore) — สำเนาบนเครื่องแสดงทันที server มาแล้วอัปเดตเอง
+  const printers = useSavedPrinters();
+  const printerList = useSharedPrinterList();
+  const [printerError, setPrinterError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ address: string; name: string } | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const notShared = (err: any) =>
+    setPrinterError((lang === "en" ? "Saved on this device only, not yet shared: " : "บันทึกในเครื่องนี้แล้ว แต่ยังไม่ขึ้นทั้งร้าน: ")
+      + (err?.name === "TimeoutError" ? (lang === "en" ? "no response from the server" : "เซิร์ฟเวอร์ไม่ตอบ") : err?.message || String(err)));
   const [selected, setSelected] = useState<string | null>(getSelectedPrinterAddress());
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
@@ -127,17 +136,25 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
     const name = newName.trim();
     const address = newAddress.trim();
     if (!name || !address) return;
-    addSavedPrinter({ name, address });
-    setPrinters(getSavedPrinters());
+    setPrinterError(null);
+    addSharedPrinter({ name, address }).catch(notShared);
     setNewName("");
     setNewAddress("");
     setShowAddForm(false);
   };
 
   const handleRemovePrinter = (address: string) => {
-    removeSavedPrinter(address);
-    setPrinters(getSavedPrinters());
+    setConfirmRemove(null);
+    setPrinterError(null);
+    removeSharedPrinter(address).catch(notShared);
     setSelected(getSelectedPrinterAddress());
+  };
+
+  const handleRename = () => {
+    if (!renaming || !renaming.name.trim()) return;
+    setPrinterError(null);
+    renameSharedPrinter(renaming.address, renaming.name).catch(notShared);
+    setRenaming(null);
   };
 
   const handleTestPrint = async () => {
@@ -211,6 +228,22 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
               <p className="text-xs text-muted-foreground mb-3">
                 {en ? "Pick a printer to print tickets automatically. View-only devices can skip this." : "เลือกเครื่องพิมพ์ถ้าให้เครื่องนี้พิมพ์ตั๋วอัตโนมัติ ใช้ดูอย่างเดียวไม่ต้องเลือก"}
               </p>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-xs font-medium text-foreground">{en ? "Printer list" : "รายชื่อเครื่องพิมพ์"}</span>
+                <ScopeTag shop lang={lang} />
+              </div>
+              {printerList.status === "error" && (
+                <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 mb-2 flex items-center gap-3">
+                  <p className="flex-1 text-xs text-foreground">
+                    {en ? "Could not load the shared list. Showing the copy on this device." : "โหลดรายชื่อทั้งร้านไม่สำเร็จ แสดงรายชื่อที่เครื่องนี้จำไว้"}
+                  </p>
+                  <button onClick={printerList.retry} className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-border bg-card hover:bg-muted flex items-center gap-1.5 flex-shrink-0">
+                    <RefreshCw size={13} />
+                    {en ? "Retry" : "ลองใหม่"}
+                  </button>
+                </div>
+              )}
+              {printerError && <p role="alert" className="text-xs text-destructive mb-2">{printerError}</p>}
 
               <div className="space-y-2 mb-3">
                 <button
@@ -223,19 +256,62 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
                 {printers.map((p) => (
                   <div
                     key={p.address}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm transition-all ${selected === p.address ? "border-primary bg-primary/10" : "border-border"
-                      }`}
+                    className={`px-3 py-2.5 rounded-xl border text-sm transition-all ${selected === p.address ? "border-primary bg-primary/10" : "border-border"}`}
                   >
-                    <button onClick={() => handleSelect(p.address)} className="flex-1 text-left min-w-0">
-                      <div className="font-medium text-foreground truncate">{p.name}</div>
-                      <div className="text-xs text-muted-foreground">{p.address}</div>
-                    </button>
-                    <button
-                      onClick={() => handleRemovePrinter(p.address)}
-                      className="text-muted-foreground hover:text-destructive flex-shrink-0 p-1"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {renaming?.address === p.address ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          autoFocus
+                          value={renaming.name}
+                          onChange={(e) => setRenaming({ address: p.address, name: e.target.value })}
+                          onKeyDown={(e) => e.key === "Enter" && handleRename()}
+                          aria-label={en ? "Printer name" : "ชื่อเครื่องพิมพ์"}
+                          className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-border bg-background text-sm text-foreground"
+                        />
+                        <button onClick={handleRename} disabled={!renaming.name.trim()} aria-label={en ? "Save name" : "บันทึกชื่อ"} className="text-secondary p-1 disabled:opacity-40">
+                          <Check size={16} />
+                        </button>
+                        <button onClick={() => setRenaming(null)} aria-label={en ? "Cancel" : "ยกเลิก"} className="text-muted-foreground p-1">
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleSelect(p.address)} className="flex-1 text-left min-w-0">
+                          <div className="font-medium text-foreground truncate">{p.name}</div>
+                          <div className="text-xs text-muted-foreground">{p.address}</div>
+                        </button>
+                        <button
+                          onClick={() => { setConfirmRemove(null); setRenaming({ address: p.address, name: p.name }); }}
+                          aria-label={en ? "Rename" : "เปลี่ยนชื่อ"}
+                          className="text-muted-foreground hover:text-foreground flex-shrink-0 p-1"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => setConfirmRemove(p.address)}
+                          aria-label={en ? "Remove" : "ลบ"}
+                          className="text-muted-foreground hover:text-destructive flex-shrink-0 p-1"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
+                    {confirmRemove === p.address && (
+                      <div role="alertdialog" className="mt-2 rounded-lg bg-destructive/10 p-2.5">
+                        <p className="text-xs text-foreground mb-2">
+                          {en ? "Remove this printer from the list on every device?" : "ลบเครื่องพิมพ์นี้ออกจากรายชื่อของทุกเครื่อง?"}
+                        </p>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleRemovePrinter(p.address)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-destructive text-destructive-foreground">
+                            {en ? "Remove" : "ยืนยัน ลบ"}
+                          </button>
+                          <button onClick={() => setConfirmRemove(null)} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-card border border-border">
+                            {en ? "Cancel" : "ยกเลิก"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -360,6 +436,33 @@ export function PrinterSettingsModal({ lang, onClose }: PrinterSettingsModalProp
                 </button>
               )}
               {testStatus && <p className="text-xs text-muted-foreground mt-2 text-center">{testStatus}</p>}
+
+              {/* ออกจากระบบ — เฉพาะแอป Android (header ไม่มีปุ่ม กันกดพลาด) ใช้ตอนสลับบัญชี พนักงาน ↔ เจ้าของ ถามยืนยันก่อน
+                  เครื่องพิมพ์ที่เลือก/หน้าที่ของเครื่องนี้ยังอยู่ */}
+              {onLogout && import.meta.env.MODE === "capacitor" && (
+                <div className="mt-5 pt-4 border-t border-border">
+                  {confirmLogout ? (
+                    <div role="alertdialog" className="rounded-lg bg-destructive/10 p-2.5">
+                      <p className="text-xs text-foreground mb-2">
+                        {en ? "Log out? This device stops receiving and printing orders until someone logs in again." : "ออกจากระบบ? เครื่องนี้จะไม่รับ/ไม่พิมพ์ออเดอร์จนกว่าจะล็อกอินใหม่"}
+                      </p>
+                      <div className="flex gap-2">
+                        <button onClick={() => { onClose(); onLogout(); }} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-destructive text-destructive-foreground">
+                          {en ? "Log out" : "ยืนยัน ออกจากระบบ"}
+                        </button>
+                        <button onClick={() => setConfirmLogout(false)} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-card border border-border">
+                          {en ? "Cancel" : "ยกเลิก"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmLogout(true)} className="w-full py-2 rounded-xl text-xs font-medium border border-border text-muted-foreground flex items-center justify-center gap-1.5 hover:bg-muted">
+                      <LogOut size={14} />
+                      {en ? "Log out / switch account" : "ออกจากระบบ / สลับบัญชี"}
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           )}
 

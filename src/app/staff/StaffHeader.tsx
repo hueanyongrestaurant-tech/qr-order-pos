@@ -6,6 +6,7 @@ import { LannaBorder, RestaurantLogo } from "../shared";
 import { PrinterSettingsModal } from "./PrinterSettingsModal";
 import { AUDIT_UI_ENABLED } from "../constants";
 import { useConnectionAlert } from "./connectionStore";
+import { canSeeTab, useStaffRole } from "./roleStore";
 
 // ─── Staff Header (shared) ────────────────────────────────────────────────────
 
@@ -23,6 +24,8 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
   // จะได้ไม่ต้องแก้ signature/props ที่ต้นทางทุกที่ที่เรียกใช้
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   const alert = useConnectionAlert();
+  // เจ้าของเห็นทุกแท็บ พนักงานไม่เห็น ประวัติ/รายจ่าย/สถิติ/กิจกรรม (rules บังคับชุดเดียวกัน — ดู roleStore.ts)
+  const role = useStaffRole();
   return (
     <div className="bg-[#3C2414] sticky top-0 z-50">
       {/* แถบเตือนเน็ตหลุด/อ่านออเดอร์ไม่ได้ — อยู่ใน header ที่ sticky จึงเห็นตลอดทุกแท็บ หายเองเมื่อต่อได้ */}
@@ -40,6 +43,14 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
       <div className="px-4 py-2.5 flex items-center justify-between">
         <RestaurantLogo dark lang={lang} />
         <div className="flex items-center gap-1">
+          {role && (
+            <span
+              className={`text-[11px] font-semibold px-2 py-0.5 rounded-full mr-1 ${role === "owner" ? "bg-[#D07E35] text-[#3C2414]" : "bg-[#E6D5BA]/15 text-[#E6D5BA]"}`}
+              title={lang === "en" ? "Logged in as" : "บัญชีที่ล็อกอินอยู่"}
+            >
+              {role === "owner" ? (lang === "en" ? "Owner" : "เจ้าของ") : (lang === "en" ? "Staff" : "พนักงาน")}
+            </span>
+          )}
           <button onClick={onLangToggle} className="text-[#D07E35] text-xs px-2 py-1 hover:text-[#FFF8F0] transition-colors">
             {t.langSwitch}
           </button>
@@ -60,11 +71,11 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
         </div>
       </div>
       {showPrinterSettings && (
-        <PrinterSettingsModal lang={lang} onClose={() => setShowPrinterSettings(false)} />
+        <PrinterSettingsModal lang={lang} onClose={() => setShowPrinterSettings(false)} onLogout={onLogout} />
       )}
       <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
         {/* แท็บ activity ซ่อนชั่วคราวเมื่อ AUDIT_UI_ENABLED = false — เปิดกลับที่ constants.ts */}
-        {(["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity"] as const : [])] as const).map((tab) => (
+        {(["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity"] as const : [])] as const).filter((tab) => canSeeTab(role, tab)).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}

@@ -42,7 +42,7 @@ before(async () => {
       await batch.commit();
     }
   });
-  setTestDb(env.authenticatedContext("staff").firestore());
+  setTestDb(env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore());
 });
 after(async () => { await env?.cleanup(); });
 
@@ -201,7 +201,7 @@ test("backfilled bill cancelled on an old day: summary marked stale, recomputed 
   const day = daysAgo(4);
   const before = await readSummaryDoc(day);
   assert.ok(before && !before.stale);
-  await updateDoc(doc(env.authenticatedContext("staff").firestore(), "orders", "backfill-old"), { status: "cancelled", cancelledAt: new Date() });
+  await updateDoc(doc(env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore(), "orders", "backfill-old"), { status: "cancelled", cancelledAt: new Date() });
   invalidatePaidOrdersDay(day);
   for (let i = 0; i < 50 && !(await readSummaryDoc(day))?.stale; i++) await new Promise((r) => setTimeout(r, 50));
   assert.equal((await readSummaryDoc(day)).stale, true);
@@ -217,7 +217,7 @@ test("backfilled bill cancelled on an old day: summary marked stale, recomputed 
 test("old day with an awaiting-payment order: saved once that order is paid", async () => {
   const day = daysAgo(6);
   assert.equal(await readSummaryDoc(day), undefined);
-  await updateDoc(doc(env.authenticatedContext("staff").firestore(), "orders", "stuck-open"), { status: "paid", paymentMethod: "cash", paymentBatchId: "pb-stuck" });
+  await updateDoc(doc(env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore(), "orders", "stuck-open"), { status: "paid", paymentMethod: "cash", paymentBatchId: "pb-stuck" });
   resetSalesMemory();
   await compareAll("after closing the stuck order");
   const saved = await readSummaryDoc(day);
@@ -225,9 +225,9 @@ test("old day with an awaiting-payment order: saved once that order is paid", as
   assert.ok(saved.groups.includes("pb-stuck"));
 });
 
-test("rules: dailyStats is staff-only (read + write), guests get nothing, id must be a date", async () => {
+test("rules: dailyStats is owner-only (read + write), guests get nothing, id must be a date", async () => {
   const guest = env.unauthenticatedContext().firestore();
-  const staff = env.authenticatedContext("staff").firestore();
+  const staff = env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore(); // เจ้าของ (พนักงานถูกปฏิเสธ — ดู roles.test.mjs)
   const day = daysAgo(10);
   await assertFails(getDoc(doc(guest, "dailyStats", day)));
   await assertFails(getDocs(collection(guest, "dailyStats")));

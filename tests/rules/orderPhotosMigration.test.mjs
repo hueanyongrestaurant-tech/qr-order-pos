@@ -43,7 +43,7 @@ beforeEach(async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     for (const [id, data] of Object.entries(seed())) await setDoc(doc(ctx.firestore(), "orders", id), data);
   });
-  db = env.authenticatedContext("staff").firestore(); // ล็อกอินเป็นพนักงาน เหมือนของจริง (ผ่าน rules จริง)
+  db = env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore(); // ล็อกอินเป็นเจ้าของ เหมือนของจริง (สคริปต์ใช้ OWNER_EMAIL — ผ่าน rules จริง)
 });
 
 const read = async (id) => (await getDoc(doc(db, "orders", id))).data();

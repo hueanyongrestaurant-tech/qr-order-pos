@@ -13,7 +13,7 @@ import {
   buildDaySummary, DAILY_STATS, fetchOrdersForDays, isUsableSummary, readServerSummaries, summaryBytes, summaryDocData, type DaySummary,
 } from "../../src/app/dailyStats";
 import { contiguousRuns, dayKeysInRange, formatDateInput, lastPersistableDay, mapOrderDoc } from "../../src/app/utils";
-import { STAFF_EMAIL } from "../../src/app/constants";
+import { OWNER_EMAIL } from "../../src/app/constants";
 
 // ค่าเดียวกับ src/lib/firebase.ts (ค่า public ของเว็บแอป ไม่ใช่ความลับ)
 const firebaseConfig = {
@@ -63,12 +63,12 @@ function ask(question: string, hidden = false): Promise<string> {
   return new Promise((resolve) => waiting.push((l) => resolve(done(l))));
 }
 
-// บัญชีเดียวกับหน้าล็อกอินพนักงานในแอป (STAFF_EMAIL) — ถามแค่รหัสผ่าน ผิดพิมพ์ใหม่ได้ 3 ครั้ง
+// บัญชีเจ้าของ (OWNER_EMAIL — อ่านออเดอร์/ยอดขายย้อนหลังได้ตาม rules; บัญชีพนักงานอ่านไม่ได้) — ถามแค่รหัสผ่าน ผิดพิมพ์ใหม่ได้ 3 ครั้ง
 async function login() {
   for (let attempt = 1; ; attempt++) {
-    const password = await ask("\nรหัสผ่านพนักงาน (รหัสเดียวกับหน้าล็อกอินในแอป — พิมพ์แล้วไม่ขึ้นบนจอ): ", true);
+    const password = await ask("\nรหัสผ่านบัญชีเจ้าของ (รหัสเดียวกับที่ล็อกอิน "เจ้าของ" ในแอป — พิมพ์แล้วไม่ขึ้นบนจอ): ", true);
     try {
-      await signInWithEmailAndPassword(auth, STAFF_EMAIL, password);
+      await signInWithEmailAndPassword(auth, OWNER_EMAIL, password);
       console.log("ล็อกอินแล้ว");
       return;
     } catch (err) {

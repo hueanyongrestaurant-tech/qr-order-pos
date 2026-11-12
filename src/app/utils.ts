@@ -631,6 +631,12 @@ const TODAY_PAID_CACHE_TTL_MS = 5 * 60 * 1000;
 const DISK_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const paidOrdersByDay = new Map<string, { orders: Order[]; fetchedAt: number }>();
 let lastDiskSyncAt = 0;
+// ล้างยอดขายในหน่วยความจำ (บัญชีพนักงานเข้าเครื่อง — ดู staff/roleStore.ts clearSalesCaches)
+export function resetPaidOrdersMemory() {
+  paidOrdersByDay.clear();
+  statsDirtyMem.clear();
+  lastDiskSyncAt = 0;
+}
 
 // เรียกหลังบันทึก/ยกเลิกบิลย้อนหลังของวันนั้น — ล้าง cache ออเดอร์ + สรุปรายวันบนเครื่อง และตีสรุปบน server ว่าเก่า
 // (ทุกเครื่องที่อ่านสรุปวันนั้นจะคำนวณใหม่) การตีว่าเก่าทำแบบเผื่อพลาด: ถ้าเขียนไม่ได้ (เน็ตหลุด/ยังไม่ได้วาง rules dailyStats)

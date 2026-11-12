@@ -75,7 +75,7 @@ import type {
   Category,
   ConfirmOptions,
 } from "./types";
-import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED, STAFF_EMAIL } from "./constants";
+import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED, OWNER_EMAIL, STAFF_EMAIL } from "./constants";
 import { T } from "./translations";
 import {
   resolvePhoto,
@@ -150,6 +150,8 @@ import { fetchTableLink, writeTableView } from "./tableViewStore";
 import { refreshTableLinks, useTableLinks } from "./staff/tableLinkStore";
 import { setStockSwitch } from "./staff/stockSwitchStore";
 import { setRoutingCategories, startPrintRouting } from "./staff/printRoutingStore";
+import { canSeeTab, clearSalesCaches, roleForEmail, setLastLoginRole, setStaffRole, useStaffRole, type StaffRole } from "./staff/roleStore";
+import { mergeLocalPrintersOnce } from "./staff/printerListStore";
 import { OrderedSheet } from "./customer/OrderedSheet";
 import { CloseTableError, TABLE_CLOSURES_DOC, closeTablesTx, paymentFields, type ExpectedBills } from "./staff/closeTables";
 
@@ -536,6 +538,8 @@ const STAFF_TAB_VIEW: Record<StaffTab, View> = {
 };
 // AUDIT_UI_ENABLED = false (ดู constants.ts) → ไม่ให้ session เก่าที่ค้างแท็บ activity กู้กลับไปหน้าที่ซ่อนอยู่
 const STAFF_TABS: StaffTab[] = ["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity" as const] : [])];
+// หน้าที่เฉพาะเจ้าของเห็น (ประวัติ + ลงบิลย้อนหลัง, สถิติ, รายจ่าย, กิจกรรม)
+const OWNER_ONLY_VIEWS: View[] = ["staff-history", "staff-stats", "staff-expenses", "staff-activity", "staff-backfill-setup", "staff-backfill-payment"];
 function isStaffTab(v: unknown): v is StaffTab {
   return typeof v === "string" && (STAFF_TABS as string[]).includes(v);
 }
@@ -614,6 +618,8 @@ export default function App() {
   const allCategoriesRef = useRef<Category[]>([]);
   allCategoriesRef.current = allCategories;
   const [staffLoggedIn, setStaffLoggedIn] = useState(false);
+  // "owner" | "staff" ของบัญชีที่ล็อกอินอยู่ — พนักงานไม่เห็น ประวัติ/สถิติ/รายจ่าย/กิจกรรม (rules บังคับด้วย)
+  const staffRole = useStaffRole();
   // ต่างจาก staffLoggedIn: latch เป็น true เมื่อ login สำเร็จครั้งแรก แล้วค้าง true จนกว่าจะ
   // กดปุ่ม logout จริงๆ — ไม่กลับเป็น false เวลา onAuthStateChanged fire null ชั่วคราว
   // (เช่นตอน Auth IndexedDB สะดุดเพราะเปิดหลายแท็บ) ใช้เป็น gate ของ Firestore listener ฝั่งพนักงาน
@@ -1286,12 +1292,21 @@ export default function App() {
         setView((v) => {
           if (v !== "staff-login") return v;
           const savedTab = readSession<StaffTab>("staffTab");
-          if (isStaffTab(savedTab)) {
+          // แท็บที่จำไว้เป็นของเจ้าของ แต่บัญชีนี้เป็นพนักงาน → ไปหน้าออเดอร์
+          if (isStaffTab(savedTab) && canSeeTab(roleForEmail(user.email), savedTab)) {
             setStaffTab(savedTab);
             return STAFF_TAB_VIEW[savedTab];
           }
           return "staff-orders";
         });
+      }
+      // สิทธิ์ = อีเมลของบัญชีที่ล็อกอิน (ดู staff/roleStore.ts) — ตั้งเฉพาะตอนมี user: Auth fire null ชั่วคราวไม่ทำให้แท็บหาย
+      // (ล้างเป็น null เฉพาะตอนกด logout จริงใน handleLogout)
+      if (user) {
+        const nextRole = roleForEmail(user.email);
+        setStaffRole(nextRole);
+        // บัญชีพนักงานเข้าเครื่องนี้ → ล้างยอดขาย/ประวัติที่เครื่องเคยเก็บไว้ (ตอนเป็นเจ้าของ) ทุกครั้งที่เปิดแอป/ล็อกอิน
+        if (nextRole === "staff") clearSalesCaches().catch((err) => console.error("clear sales caches failed", err));
       }
       setStaffLoggedIn(!!user);
       if (user) setEverAuthed(true); // latch — ไม่มีการ set false ตรงนี้ (ทำเฉพาะตอนกด logout)
@@ -1693,9 +1708,12 @@ export default function App() {
   const takeawayCounterRef = { current: 0 };
 
   // Staff handlers
-  const handleStaffLogin = async (pw: string) => {
+  // loginAs = ตัวเลือกบนหน้าล็อกอิน (พนักงาน/เจ้าของ) บอกแค่ว่าจะเข้าบัญชีไหน — สิทธิ์จริงมาจากบัญชีที่ล็อกอินสำเร็จ
+  // จำตัวเลือกล่าสุดของเครื่องไว้ (ไม่เก็บรหัสผ่าน)
+  const handleStaffLogin = async (pw: string, loginAs: StaffRole = "staff") => {
     try {
-      await signInWithEmailAndPassword(getAuthInstance(), STAFF_EMAIL, pw);
+      await signInWithEmailAndPassword(getAuthInstance(), loginAs === "owner" ? OWNER_EMAIL : STAFF_EMAIL, pw);
+      setLastLoginRole(loginAs);
       setLoginError(false);
       setStaffTab("orders");
       writeSession("staffTab", "orders");
@@ -2282,6 +2300,7 @@ export default function App() {
   };
 
   const handleStaffTabChange = (tab: StaffTab) => {
+    if (!canSeeTab(staffRole, tab)) return; // พนักงานเข้าแท็บของเจ้าของไม่ได้ (ปุ่มถูกซ่อนอยู่แล้ว — กันทางอื่น)
     setHistoryInitialDate(undefined);
     setStaffTab(tab);
     writeSession("staffTab", tab);
@@ -2450,6 +2469,22 @@ export default function App() {
     await batch.commit();
   };
 
+  // พนักงานอยู่บนหน้าของเจ้าของ (session เก่า/เปลี่ยนบัญชี) → กลับหน้าออเดอร์ หน้าเหล่านั้นอ่านข้อมูลที่ rules ไม่ให้พนักงานอ่าน
+  useEffect(() => {
+    if (staffRole !== "staff") return;
+    if (!OWNER_ONLY_VIEWS.includes(view)) return;
+    setBackfill(null);
+    setStaffTab("orders");
+    writeSession("staffTab", "orders");
+    setView("staff-orders");
+  }, [staffRole, view]);
+
+  // รายชื่อเครื่องพิมพ์ทั้งร้าน: เครื่องที่ยังไม่เคยรวมรายการของตัวเองขึ้น Firestore รวม 1 ครั้งตอนเปิดแอป (ดู printerListStore.ts)
+  useEffect(() => {
+    if (getTableFromUrl() !== null || !everAuthed) return;
+    void mergeLocalPrintersOnce();
+  }, [everAuthed]);
+
   // หมวด → จุดพิมพ์ (status/printRouting) — auto-print อ่านค่าล่าสุดจาก store ตอนพิมพ์ ต้องเปิด listener ตลอดที่พนักงานล็อกอิน
   // gate ด้วย everAuthed (latch เดียวกับหน้าจอพนักงาน) ไม่ใช่ staffLoggedIn — Auth fire null ชั่วคราวแล้วหน้าจอยังอยู่
   // แต่หมวดในหน้าตั้งค่าหายจนค้าง "กำลังโหลด" / auto-print เสียค่าหมวด→จุดพิมพ์
@@ -2613,6 +2648,9 @@ export default function App() {
   const handleLogout = async () => {
     await signOut(getAuthInstance());
     setEverAuthed(false); // logout จริง — ปลด latch เพื่อให้ listener ฝั่งพนักงานหยุดทำงาน
+    setStaffRole(null);
+    // ออกจากระบบ = ล้างยอดขาย/ประวัติที่เครื่องเก็บไว้เสมอ (คนถัดไปอาจเป็นพนักงาน)
+    clearSalesCaches().catch((err) => console.error("clear sales caches failed", err));
     writeSession("staffTab", null);
     setView("staff-login");
   };

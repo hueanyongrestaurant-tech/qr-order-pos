@@ -47,7 +47,7 @@ before(async () => {
     await order("c", "2026-10-03", "cancelled");
     await order("d", "2026-10-05");
   });
-  setTestDb(env.authenticatedContext("staff").firestore());
+  setTestDb(env.authenticatedContext("owner", { email: "owner@hueanyong.local" }).firestore());
 });
 after(async () => { await env?.cleanup(); });
 

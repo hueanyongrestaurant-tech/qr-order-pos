@@ -1,5 +1,9 @@
 // ─── Saved Printers (this device's Bluetooth printer selection) ───────────────
 //
+// รายการเครื่องพิมพ์ (ชื่อ + MAC) ใช้ร่วมกันทั้งร้านใน Firestore (printers/{MAC} — ดู printerListStore.ts)
+// localStorage ในไฟล์นี้ = สำเนาล่าสุดของรายการนั้นบนเครื่อง (ใช้ได้ทันที/ออฟไลน์) + ค่าของเครื่องนี้เอง
+// "เครื่องพิมพ์ที่เลือก" กับ "หน้าที่" ยังเป็นของแต่ละเครื่องเหมือนเดิม ไม่ขึ้น Firestore
+//
 // Design: each staff device picks which physical printer IT prints to, stored as
 // the printer's MAC address in localStorage — not a single on/off flag — so the
 // shop can add a second printer later (e.g. a till-side receipt printer) without
@@ -37,30 +41,86 @@ const KNOWN_PRINTERS: SavedPrinter[] = [
   { name: "BlueTooth Printer (POS-5890U-L)", address: "5A:4A:8E:4E:09:4E" },
 ];
 
-export function getSavedPrinters(): SavedPrinter[] {
+export const normalizeMac = (address: string) => address.trim().toUpperCase();
+
+function cleanPrinters(list: unknown): SavedPrinter[] {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const out: SavedPrinter[] = [];
+  list.forEach((p) => {
+    if (!p || typeof p.address !== "string" || !p.address.trim()) return;
+    const address = normalizeMac(p.address);
+    if (seen.has(address)) return;
+    seen.add(address);
+    out.push({ name: typeof p.name === "string" && p.name.trim() ? p.name.trim() : address, address });
+  });
+  return out;
+}
+
+// รายการที่เก็บบนเครื่องจริงๆ (ไม่รวม seed) — ใช้ตอนรวมรายการของเครื่องนี้ขึ้น Firestore ครั้งแรก
+export function getStoredPrinters(): SavedPrinter[] {
   try {
     const raw = localStorage.getItem(SAVED_PRINTERS_KEY);
-    if (!raw) return KNOWN_PRINTERS;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) return KNOWN_PRINTERS;
-    return parsed;
+    return raw ? cleanPrinters(JSON.parse(raw)) : [];
   } catch {
-    return KNOWN_PRINTERS;
+    return [];
   }
 }
 
+// รายการที่แสดง/ใช้พิมพ์ — ว่าง = seed (KNOWN_PRINTERS) เป็นตัวสำรอง
+export function getSavedPrinters(): SavedPrinter[] {
+  const stored = getStoredPrinters();
+  return stored.length > 0 ? stored : KNOWN_PRINTERS;
+}
+
+// เขียนสำเนารายการทั้งร้านลงเครื่อง (printerListStore เรียกเมื่อได้รายการจาก server)
+export function setStoredPrinters(printers: SavedPrinter[]) {
+  persistSavedPrinters(cleanPrinters(printers));
+}
+
 function persistSavedPrinters(printers: SavedPrinter[]) {
-  localStorage.setItem(SAVED_PRINTERS_KEY, JSON.stringify(printers));
+  try {
+    localStorage.setItem(SAVED_PRINTERS_KEY, JSON.stringify(printers));
+  } catch { /* เก็บไม่ได้ = ใช้รายการจาก server รอบหน้า */ }
   notifyChange();
 }
 
 export function addSavedPrinter(printer: SavedPrinter) {
-  const existing = getSavedPrinters().filter((p) => p.address !== printer.address);
-  persistSavedPrinters([...existing, printer]);
+  const address = normalizeMac(printer.address);
+  const existing = getStoredPrinters().filter((p) => p.address !== address);
+  persistSavedPrinters([...existing, { name: printer.name.trim() || address, address }]);
+}
+
+export function renameSavedPrinter(address: string, name: string) {
+  const mac = normalizeMac(address);
+  // เปลี่ยนชื่อ seed ที่ยังไม่เคยเก็บ = เก็บลงรายการด้วยชื่อใหม่
+  const base = getStoredPrinters().some((p) => p.address === mac) ? getStoredPrinters() : getSavedPrinters();
+  persistSavedPrinters(base.map((p) => (p.address === mac ? { ...p, name: name.trim() || mac } : p)));
+}
+
+// รายการของเครื่องนี้ที่ยังไม่มีบน server (เทียบด้วย MAC) — ของที่ server มีแล้วใช้ชื่อบน server ไม่เขียนทับ
+export function printersMissingOnServer(local: SavedPrinter[], server: SavedPrinter[]): SavedPrinter[] {
+  const have = new Set(cleanPrinters(server).map((p) => p.address));
+  return cleanPrinters(local).filter((p) => !have.has(p.address));
+}
+
+// ผลรวมที่แสดงหลังรวมครั้งแรก: ของ server ก่อน (ชื่อบน server) ตามด้วยของเครื่องนี้ที่ server ยังไม่มี
+export function mergePrinterLists(local: SavedPrinter[], server: SavedPrinter[]): SavedPrinter[] {
+  return [...cleanPrinters(server), ...printersMissingOnServer(local, server)];
+}
+
+export function useSavedPrinters(): SavedPrinter[] {
+  const [list, setList] = useState<SavedPrinter[]>(() => getSavedPrinters());
+  useEffect(() => {
+    const sync = () => setList(getSavedPrinters());
+    window.addEventListener(CHANGE_EVENT, sync);
+    return () => window.removeEventListener(CHANGE_EVENT, sync);
+  }, []);
+  return list;
 }
 
 export function removeSavedPrinter(address: string) {
-  persistSavedPrinters(getSavedPrinters().filter((p) => p.address !== address));
+  persistSavedPrinters(getSavedPrinters().filter((p) => p.address !== normalizeMac(address)));
   if (getSelectedPrinterAddress() === address) {
     setSelectedPrinterAddress(null);
   }
@@ -82,7 +142,9 @@ export function setSelectedPrinterAddress(address: string | null) {
 export function getSelectedPrinter(): SavedPrinter | null {
   const address = getSelectedPrinterAddress();
   if (!address) return null;
-  return getSavedPrinters().find((p) => p.address === address) || null;
+  // เครื่องอื่นลบเครื่องพิมพ์นี้ออกจากรายการทั้งร้าน ≠ เครื่องนี้เลิกพิมพ์ — ยังพิมพ์ไป MAC ที่เลือกไว้ต่อ
+  // (เลิกใช้จริงต้องกด "ไม่เลือก" ที่เครื่องนี้เอง) ไม่งั้นครัวหยุดพิมพ์เงียบๆ เพราะมีคนแก้รายการที่เครื่องอื่น
+  return getSavedPrinters().find((p) => p.address === normalizeMac(address)) || { name: address, address };
 }
 
 // ─── Print role (which station THIS device prints tickets for) ───────────────

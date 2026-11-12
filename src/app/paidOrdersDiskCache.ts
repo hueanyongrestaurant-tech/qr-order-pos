@@ -120,3 +120,21 @@ export async function deleteDiskSummaries(keys: string[]): Promise<void> {
 export async function clearDiskSummaries(): Promise<void> {
   await run(SUMMARIES, "readwrite", (s) => s.clear());
 }
+
+// ล้างทุกอย่างในฐานข้อมูลนี้ (ออเดอร์รายวัน + ยอดสรุป + meta) — ใช้ตอนบัญชีพนักงานเข้าเครื่องที่เคยเป็นเจ้าของ
+// ลบทั้งฐานข้อมูล ถ้าลบไม่ได้ (มีแท็บอื่นเปิดค้าง) อย่างน้อยล้างทุก store ให้ว่าง
+export async function wipeSalesDisk(): Promise<void> {
+  await Promise.all([DAYS, META, SUMMARIES].map((store) => run(store, "readwrite", (s) => s.clear())));
+  const db = await openDb();
+  dbPromise = null;
+  if (!db) return;
+  db.close();
+  await new Promise<void>((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}

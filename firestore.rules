@@ -8,10 +8,18 @@ rules_version = '2';
 //   ยกเว้นพนักงานเพิ่ม "บิลขายย้อนหลัง" ที่สร้างเป็น "paid" ได้เลย (ดูเงื่อนไขใน /orders)
 // • ฝั่งพนักงาน (ล็อกอินด้วย Firebase Auth) — แก้ไขข้อมูลได้ตามงานหน้าร้าน
 // • ออเดอร์ห้ามลบถาวรเด็ดขาด — การ "ยกเลิก" ทำผ่าน update สถานะเป็น "cancelled"
-// • activityLogs เป็นบันทึกร่องรอย — สร้างได้ อ่านได้ แต่ห้ามแก้/ห้ามลบ
+// • activityLogs เป็นบันทึกร่องรอย — พนักงานสร้างได้ เจ้าของอ่านได้ ห้ามแก้/ห้ามลบ
+// • สองบัญชี: เจ้าของ (isOwner — owner@hueanyong.local) เห็นทุกอย่าง | บัญชีอื่นที่ล็อกอิน = พนักงาน ทำงานหน้าร้านได้ครบ
+//   แต่อ่านยอดขายย้อนหลังไม่ได้: ไล่ดู (list) ออเดอร์ได้เฉพาะที่ยังไม่ปิด, อ่านสถิติ/รายจ่าย/บันทึกกิจกรรมไม่ได้
+//   (แอปซ่อนแท็บพวกนี้ให้พนักงานอยู่แล้ว — rules นี้คือตัวบังคับจริง ดู src/app/staff/roleStore.ts)
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // เจ้าของร้าน — ต้องตรงกับ OWNER_EMAIL ใน src/app/constants.ts (ตัวพิมพ์เล็กทั้งหมด)
+    function isOwner() {
+      return request.auth != null && request.auth.token.email == 'owner@hueanyong.local';
+    }
 
     match /orders/{orderId} {
       // ทางที่ 2 (บิลขายย้อนหลัง): พนักงานที่ล็อกอินแล้วสร้างบิลที่ "จ่ายแล้ว" ได้ตรงๆ โดยต้องมี
@@ -25,7 +33,7 @@ service cloud.firestore {
                     && (
                       request.resource.data.status == "in-progress"
                       || (
-                        request.auth != null
+                        isOwner()   // บิลขายย้อนหลังลงจากหน้าประวัติ (เจ้าของเท่านั้น)
                         && request.resource.data.status == "paid"
                         && request.resource.data.backfilled == true
                         && request.resource.data.createdAt is timestamp
@@ -33,7 +41,14 @@ service cloud.firestore {
                         && request.resource.data.createdAt > request.time - duration.value(72, 'h')
                       )
                     );
-      allow read: if request.auth != null;
+      // อ่านทีละใบ (get) ต้องรู้ id — พนักงานต้องใช้: ทุก transaction (เสิร์ฟ/ยกเลิก/ปิดบิล/ย้ายโต๊ะ) อ่านใบนั้นก่อนเขียน
+      // รวมถึงใบที่เพิ่งถูกปิดจากเครื่องอื่น (เช็คจอค้าง) id เป็นรหัสสุ่ม ไล่เดาไม่ได้
+      allow get: if request.auth != null;
+      // ไล่ดู (list): เจ้าของได้ทั้งหมด | พนักงานได้เฉพาะออเดอร์ที่ยังไม่ปิด — query ต้องกรอง status เป็น
+      // in-progress / awaiting-payment เอง (หน้าออเดอร์, ปิดบิล, ย้ายโต๊ะ กรองแบบนี้อยู่แล้ว)
+      // query ตามวันที่/ทั้ง collection/บิล paid-cancelled = ยอดขายย้อนหลัง → ปฏิเสธ
+      allow list: if isOwner()
+                  || (request.auth != null && resource.data.status in ['in-progress', 'awaiting-payment']);
       allow update: if request.auth != null && closedOrderStaysClosed();
       allow delete: if false;   // ห้ามลบออเดอร์ทิ้งถาวรเด็ดขาด — บังคับผ่าน update สถานะ "cancelled" เท่านั้น
 
@@ -46,13 +61,13 @@ service cloud.firestore {
         let after = request.resource.data.status;
         return !(before in ['paid', 'cancelled'])
           || after == before
-          || (before == 'paid' && after == 'cancelled' && resource.data.get('backfilled', false) == true);
+          || (before == 'paid' && after == 'cancelled' && resource.data.get('backfilled', false) == true && isOwner());
       }
     }
 
     match /activityLogs/{logId} {
-      allow create: if request.auth != null;
-      allow read: if request.auth != null;
+      allow create: if request.auth != null;   // ทุกบัญชีที่ล็อกอินต้องจดได้เสมอ (รวมใน transaction ย้ายโต๊ะ)
+      allow read: if isOwner();
       allow update, delete: if false;   // log ต้องแก้ไข/ลบไม่ได้เลย ป้องกันการลบร่องรอย
     }
 
@@ -112,24 +127,30 @@ service cloud.firestore {
       allow create, update, delete: if request.auth != null;
     }
 
-    // ─── ตัวนับคิวกลับบ้าน (T-1, T-2, ...) — เฉพาะพนักงาน ───
+    // ─── รายชื่อเครื่องพิมพ์ทั้งร้าน (printers/{MAC} — ชื่อ + Bluetooth MAC) — เฉพาะคนที่ล็อกอิน ───
+    // ไม่อยู่ใน /status เพราะ status ใครก็อ่านได้ | เครื่องพิมพ์ที่เลือก/หน้าที่ของแต่ละเครื่องอยู่บนเครื่อง ไม่ได้อยู่ที่นี่
+    match /printers/{printerId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ─── ตัวนับคิวกลับบ้าน (T-1, T-2, ...) + ตัวกันชน (table-moves, tableLinkLock) — เฉพาะคนที่ล็อกอิน ───
     match /counters/{docId} {
       allow read, write: if request.auth != null;
     }
 
-    // ─── บัญชีรายจ่าย — เฉพาะพนักงาน ───
+    // ─── บัญชีรายจ่าย — เฉพาะเจ้าของ ───
     match /expenses/{docId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isOwner();
     }
 
     match /expenseItems/{docId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isOwner();
     }
 
-    // ─── ยอดสรุปรายวัน (dailyStats/{YYYY-MM-DD}) — หน้าสถิติสร้างเองตอนต้องใช้ เฉพาะพนักงาน (ลูกค้าอ่านไม่ได้) ───
+    // ─── ยอดสรุปรายวัน (dailyStats/{YYYY-MM-DD}) — หน้าสถิติสร้างเองตอนต้องใช้ เฉพาะเจ้าของ ───
     match /dailyStats/{day} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+      allow read: if isOwner();
+      allow write: if isOwner() && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
     }
   }
 }
