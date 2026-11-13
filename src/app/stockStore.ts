@@ -1,12 +1,13 @@
 // ─── สต็อกต่อเมนู: ส่วนที่คุยกับ Firestore (logic ล้วนอยู่ใน stock.ts) ─────────────────────
 // ตัดสต็อก = ทำใน transaction เดียวกับการสร้างออเดอร์ (อ่าน stock → เหลือไม่พอ = ไม่สร้างออเดอร์เลย)
-// หักสต็อกตอนกดสั่งเท่านั้น — ยกเลิก/คืนรายการ/ปรับจำนวน/ย้ายโต๊ะ/บิลย้อนหลัง ไม่แตะสต็อกเลย
-// (ต้องคืน พนักงานใส่จำนวนใหม่ที่หน้าแก้เมนู หรือกดเปิดขายแล้วกรอกจำนวนเอง)
+// หักสต็อกตอนกดสั่ง — แต่ละบรรทัดจดไว้ว่าตัดอะไรไป (stockDocs/stockQty) ให้การยกเลิก/ลดจำนวนคืนได้ถูกตัว
+// (คืนสต็อก/ตัดกลับตอนคืนรายการ ดู orderStockStore.ts + stockReturn.ts) | ย้ายโต๊ะ/บิลย้อนหลัง ไม่แตะสต็อก
 // ลูกค้าเขียน stock ได้เฉพาะ "ลด remaining" ที่ผูกกับออเดอร์ใหม่ใน commit เดียวกัน (ดู firestore.rules)
 
 import { doc, runTransaction, type DocumentReference, type Transaction } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { planStockTake } from "./stock";
+import type { CartItem } from "./types";
 import { isPrepId } from "./prep";
 
 export const stockDocRef = (itemId: string) => doc(db, "stock", itemId);
@@ -60,6 +61,8 @@ export async function createOrderTakingStock(
     orderData: Record<string, unknown>;
     needs: Map<string, number>;
     guest: boolean;
+    // stock doc ของแต่ละบรรทัด (ตัวเดียวกับที่ใช้คิด needs) — ใช้จด stockDocs/stockQty ลงบรรทัดที่ตัดจริง
+    docIdsOf?: (ci: CartItem) => string[];
     prepare?: (tx: Transaction) => Promise<{ fields: Record<string, unknown>; write: () => void }>;
   },
 ): Promise<{ remaining: Map<string, number>; soldOutIds: string[] }> {
@@ -68,12 +71,25 @@ export async function createOrderTakingStock(
   const plan = planStockTake(opts.needs, current, { guest: opts.guest });
   if (!plan.ok) throw new StockShortError(plan.shortIds, current);
   prepared?.write();
-  tx.set(opts.orderRef, { ...opts.orderData, ...(prepared?.fields ?? {}) });
+  const items = opts.orderData.items as CartItem[] | undefined;
+  const docIdsOf = opts.docIdsOf;
+  const markedItems = docIdsOf && Array.isArray(items)
+    ? { items: items.map((ci) => markStockTaken(ci, docIdsOf(ci), plan.updates)) }
+    : {};
+  tx.set(opts.orderRef, { ...opts.orderData, ...markedItems, ...(prepared?.fields ?? {}) });
   plan.updates.forEach((remaining, id) => {
     tx.update(stockDocRef(id), { remaining, lastOrderId: opts.orderRef.id });
   });
   if (!opts.guest) {
-    plan.soldOutIds.filter((id) => !isPrepId(id)).forEach((id) => tx.update(doc(db, "menuItems", id), { soldOut: true }));
+    plan.soldOutIds.filter((id) => !isPrepId(id))
+      .forEach((id) => tx.update(doc(db, "menuItems", id), { soldOut: true, soldOutByStock: true }));
   }
   return { remaining: plan.updates, soldOutIds: plan.soldOutIds };
+}
+
+// บรรทัดที่ตัดสต็อกจริง (doc ที่มีจำนวน — ไม่มี doc/ไม่จำกัดไม่นับ) จด stockDocs + stockQty — ไม่ได้ตัดเลย = ไม่ใส่ฟิลด์
+export function markStockTaken(ci: CartItem, docIds: string[], taken: Map<string, number>): CartItem {
+  const docs = [...new Set(docIds)].filter((id) => taken.has(id));
+  if (ci.voided || ci.quantity <= 0 || docs.length === 0) return ci;
+  return { ...ci, stockDocs: docs, stockQty: ci.quantity };
 }

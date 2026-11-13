@@ -101,7 +101,7 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
   const isHighlight = (a: ActivityAction) => a === "void_item" || a === "cancel_order";
   const actionOptions: (ActivityAction | "all")[] = [
     "all", "void_item", "cancel_order", "adjust_item_qty",
-    "unserve_item", "unserve_all", "unready_takeaway", "restore_item",
+    "unserve_item", "unserve_all", "unready_takeaway", "restore_item", "return_stock", "retake_stock",
     "menu_item_added", "menu_item_edited", "menu_item_deleted", "category_deleted", "expense_edited", "expense_deleted", "backfill_order", "table_moved",
   ];
 
@@ -216,6 +216,15 @@ export function StaffActivityScreen({ lang, onTabChange, onLogout, onLangToggle 
                 {l.action === "adjust_item_qty" && l.details && (
                   <div className="mt-1 text-xs text-muted-foreground">
                     {l.details.oldQty} → {l.details.newQty} {lang === "en" ? "pcs" : "ชิ้น"}
+                  </div>
+                )}
+
+                {/* คืนสต็อก / ตัดกลับ — "คืนสต็อก ข้าวซอย ×2" (โต๊ะอยู่บรรทัดบน) */}
+                {(l.action === "return_stock" || l.action === "retake_stock") && typeof l.details?.qty === "number" && (
+                  <div className="mt-1 text-xs text-muted-foreground tabular-nums">
+                    {l.action === "return_stock"
+                      ? (lang === "en" ? `Returned ${l.itemName} ×${l.details.qty} to stock` : `คืนสต็อก ${l.itemName} ×${l.details.qty}`)
+                      : (lang === "en" ? `Took ${l.itemName} ×${l.details.qty} from stock again` : `ตัดสต็อก ${l.itemName} ×${l.details.qty} กลับ`)}
                   </div>
                 )}
 

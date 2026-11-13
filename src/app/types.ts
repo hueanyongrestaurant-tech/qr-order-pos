@@ -79,7 +79,9 @@ export type ActivityAction =
   | "unserve_item"      // ย้อนการเสิร์ฟ 1 รายการ
   | "unserve_all"       // ย้อน "เสิร์ฟทั้งหมด"
   | "unready_takeaway"  // ย้อน "พร้อมรับ" ของกลับบ้าน
-  | "restore_item";     // คืนรายการที่ยกเลิก (void) ไปแล้ว
+  | "restore_item"      // คืนรายการที่ยกเลิก (void) ไปแล้ว
+  | "return_stock"      // คืนสต็อกตอนยกเลิก/ลดจำนวน (ดู stockReturn.ts)
+  | "retake_stock";     // ตัดสต็อกกลับตอนคืนรายการที่เคยคืนสต็อกไปแล้ว
 
 // ตัวเลือกของหน้าต่างยืนยัน (ConfirmModal ใน App) — tone กำหนดสีปุ่มยืนยัน: danger = แดง (ยกเลิก/ลบ, ค่าเริ่มต้น),
 // success = เขียว (เสิร์ฟ/พร้อมรับ/รับเงิน), neutral = สีหลัก (ย้อนกลับ)
@@ -134,6 +136,7 @@ export interface MenuItem {
   prepIds?: string[];      // stock doc id ของของเตรียมที่เมนูนี้ใช้ (หัก 1 ต่อ 1 ที่สั่ง)
   prepTracked?: boolean;   // true = ผูกไว้ (ทั้งเมนู หรือตัวเลือกใดตัวเลือกหนึ่ง) และระบบสต็อกเปิดอยู่ → เครื่องลูกค้าตัดของเตรียมด้วย
   soldOutByPrep?: boolean; // true = ระบบกด "หมด" ให้เพราะของเตรียมเหลือ 0 — เติมแล้วเปิดขายคืนเฉพาะเมนูที่มีธงนี้
+  soldOutByStock?: boolean; // true = ระบบกด "หมด" ให้เพราะสต็อกของเมนูเองเหลือ 0 — คืนสต็อกแล้วเปิดขายคืนเฉพาะเมนูที่มีธงนี้
 }
 
 export type MenuAvailability = "available" | "soldOut" | "hidden";
@@ -155,6 +158,10 @@ export interface CartItem {
   voidReason?: string;
   voidedAt?: Date;
   voidedWhileUnserved?: boolean; // ยกเลิกตอนยังไม่เสิร์ฟ — ใช้ตอนคืนรายการ (restore) ให้กลับไปเป็น "ยังไม่เสิร์ฟ" ถูกต้อง
+  // สต็อกที่บรรทัดนี้ตัดไปตอนสั่ง (ดู stockReturn.ts) — ไม่มี = ไม่ได้ตัด หรือออเดอร์เก่าก่อนมีฟิลด์นี้ (ไม่คืนอะไรเลย)
+  stockDocs?: string[];    // stock doc ที่ตัด (สต็อกของเมนู / prep_*) doc ละ 1 ต่อชิ้น
+  stockQty?: number;       // ตัดไปกี่ชิ้น (ชิ้นที่บวกเพิ่มทีหลังในหน้าจ่ายเงินไม่ได้ตัด) — ตัดจริง = min(stockQty, quantity)
+  stockReturned?: boolean; // บรรทัดที่ยกเลิกนี้คืนสต็อกไปแล้ว — คืนรายการ = ต้องตัดกลับ
 }
 
 export interface ServedUnits {
