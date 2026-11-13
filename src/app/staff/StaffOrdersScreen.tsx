@@ -6,6 +6,7 @@ import { T } from "../translations";
 import { isNamedTable, tableShort, tableTitle } from "../tables";
 import { compareTables, formatClock, lineServedQty, liveItems, orderTotal } from "../utils";
 import { StaffHeader } from "./StaffHeader";
+import { ReservationAlerts } from "./ReservationAlerts";
 import type { ClosedAlert, StockAlert } from "../prep";
 
 // แถบ "หมดแล้ว": ยาวเกินนี้ย่อไว้ก่อน (แตะ "ดูทั้งหมด" เพื่อกาง) — นับเป็นรายการ ไม่ใช่บรรทัด
@@ -68,9 +69,10 @@ interface StaffOrdersProps {
   // แถบเตือน: หมดแล้ว (สต็อกเมนู/ของเตรียม ≤ 0) + ใกล้หมด — App คำนวณให้ (buildStockAlerts)
   // + closed = กด "หมด" เอง / ตัวเลือกที่ปิด (buildClosedAlerts แสดงแม้ปิดระบบสต็อก) ว่างทั้งหมด = ไม่ขึ้นแถบ
   stockAlerts: { out: StockAlert[]; low: StockAlert[]; closed: ClosedAlert[] };
+  onOpenReservations: (date: string) => void;
 }
 
-export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories, stockAlerts }: StaffOrdersProps) {
+export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, onServeItem, onUnserveItem, onRestoreItem, onRemoveItem, onCancelOrder, onTabChange, onLogout, onLangToggle, onAskConfirm, onNotice, onStartManualOrder, onMoveTable, categories, stockAlerts, onOpenReservations }: StaffOrdersProps) {
   const t = T[lang];
   const [alertsExpanded, setAlertsExpanded] = useState(false);
 
@@ -479,6 +481,8 @@ export function StaffOrdersScreen({ lang, orders, onMarkServed, onUnmarkServed, 
           className={`flex-1 px-4 py-5 overflow-y-auto ${toast ? "pb-28" : ""}`}
           style={{ scrollbarWidth: "none" }}
         >
+
+          <ReservationAlerts lang={lang} onOpen={onOpenReservations} />
 
           {/* แถบเตือน (เฉพาะพนักงาน): หมดแล้ว (แดง: สต็อก + กดหมดเอง) → ปิดตัวเลือก → ใกล้หมด (ส้ม)
               ยาวเกิน SOLD_OUT_PREVIEW / CLOSED_CHOICE_PREVIEW ย่อไว้ แตะ "ดูทั้งหมด" กาง */}

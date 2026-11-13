@@ -16,6 +16,7 @@ export type View =
   | "staff-stats"
   | "staff-expenses"
   | "staff-activity"
+  | "staff-reservations"
   | "staff-manual-table"
   | "staff-manual-menu"
   | "staff-manual-cart"
@@ -23,7 +24,7 @@ export type View =
   | "staff-backfill-setup"
   | "staff-backfill-payment";
 
-export type StaffTab = "orders" | "payment" | "menu" | "history" | "stats" | "expenses" | "activity";
+export type StaffTab = "orders" | "payment" | "menu" | "reservations" | "history" | "stats" | "expenses" | "activity";
 export type MeatChoice = "pork" | "chicken" | "beef";
 export type SpiceLevel = 0 | 1 | 2 | 3;
 export type Portion = "regular" | "special";

@@ -1,9 +1,13 @@
 import { X } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
-import { TABLE_GROUPS, tableButtonLabel, tableTitle, zoneTitle } from "../tables";
+import { tableTitle } from "../tables";
+import { FloorPlan } from "./FloorPlan";
+import { reservationTag } from "./ReservationTag";
+import { upcomingReservationByTable } from "../reservations";
+import { useMinuteClock, useNearReservations } from "./reservationStore";
 
-// เลือกโต๊ะปลายทางของการย้ายโต๊ะ — ผังเดียวกับหน้าเลือกโต๊ะ (TABLE_ZONES)
+// เลือกโต๊ะปลายทางของการย้ายโต๊ะ — ผังร้านเดียวกับหน้าเลือกโต๊ะ (FLOOR_PLAN) + ป้าย "จอง 18:00" (เตือนเฉยๆ ยังย้ายได้)
 // โต๊ะที่มีลูกค้า (occupied) และโต๊ะต้นทางเป็นสีเทากดไม่ได้ — เป็นแค่ UX ตัวเช็คจริงอยู่ใน transaction
 export function MoveTableModal({
   lang, from, occupied, onSelect, onCancel,
@@ -15,6 +19,9 @@ export function MoveTableModal({
   onCancel: () => void;
 }) {
   const t = T[lang];
+  const near = useNearReservations();
+  const now = useMinuteClock();
+  const upcoming = upcomingReservationByTable(near, now);
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center px-4" onClick={onCancel}>
       <div
@@ -28,36 +35,16 @@ export function MoveTableModal({
           </button>
         </div>
 
-        {TABLE_GROUPS.map((z) => (
-          <div key={z.zone} className="mb-4 last:mb-0">
-            <h3 className="font-semibold text-foreground text-sm mb-2">{zoneTitle(z, lang)}</h3>
-            <div className="grid grid-cols-4 gap-2">
-              {z.tables.map((tb) => {
-                const tn = tb.id;
-                const isSource = tn === from;
-                const isOccupied = !isSource && occupied.has(tn);
-                const disabled = isSource || isOccupied;
-                return (
-                  <button
-                    key={tn}
-                    onClick={() => onSelect(tn)}
-                    disabled={disabled}
-                    className={`${tb.name ? "col-span-2 aspect-[2/1] px-2" : "aspect-square"} rounded-2xl flex flex-col items-center justify-center border transition-all ${
-                      disabled
-                        ? "bg-muted text-muted-foreground border-border cursor-not-allowed"
-                        : "bg-card text-foreground border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95"
-                    }`}
-                  >
-                    <span className={`${tb.name ? "text-base" : "text-lg"} font-semibold leading-none`}>{tableButtonLabel(tb, lang)}</span>
-                    {disabled && (
-                      <span className="text-[10px] mt-1 leading-none">{isSource ? t.thisTableBadge : t.tableOccupiedBadge}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+        <FloorPlan
+          lang={lang}
+          onSelect={onSelect}
+          view={(tn) => {
+            const isSource = tn === from;
+            if (isSource) return { disabled: true, tone: "selected", badge: t.thisTableBadge, badgeTone: "light" };
+            if (occupied.has(tn)) return { disabled: true, tone: "muted", badge: t.tableOccupiedBadge, badgeTone: "muted" };
+            return reservationTag(upcoming.get(tn), lang);
+          }}
+        />
       </div>
     </div>
   );

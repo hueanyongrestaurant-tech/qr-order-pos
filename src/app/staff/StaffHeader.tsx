@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Settings, WifiOff } from "lucide-react";
+import { LogOut, Clock, CreditCard, Utensils, CheckCircle, Receipt, ClipboardList, Star, Settings, WifiOff, CalendarDays } from "lucide-react";
 import type { Language, StaffTab } from "../types";
 import { T } from "../translations";
 import { LannaBorder, RestaurantLogo } from "../shared";
@@ -75,7 +75,7 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
       )}
       <div className="flex px-4 pb-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
         {/* แท็บ activity ซ่อนชั่วคราวเมื่อ AUDIT_UI_ENABLED = false — เปิดกลับที่ constants.ts */}
-        {(["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity"] as const : [])] as const).filter((tab) => canSeeTab(role, tab)).map((tab) => (
+        {(["orders", "payment", "menu", "reservations", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity"] as const : [])] as const).filter((tab) => canSeeTab(role, tab)).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}
@@ -84,8 +84,8 @@ export function StaffHeader({ lang, activeTab, onTabChange, onLogout, onLangTogg
               : "border-transparent text-[#E6D5BA]/60 hover:text-[#E6D5BA]"
               }`}
           >
-            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : tab === "expenses" ? <Receipt size={14} /> : tab === "activity" ? <ClipboardList size={14} /> : <Star size={14} />}
-            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : tab === "expenses" ? (lang === "en" ? "Expenses" : "รายจ่าย") : tab === "activity" ? t.activityTab : (lang === "en" ? "Stats" : "สถิติ")}
+            {tab === "orders" ? <Clock size={14} /> : tab === "payment" ? <CreditCard size={14} /> : tab === "menu" ? <Utensils size={14} /> : tab === "history" ? <CheckCircle size={14} /> : tab === "expenses" ? <Receipt size={14} /> : tab === "activity" ? <ClipboardList size={14} /> : tab === "reservations" ? <CalendarDays size={14} /> : <Star size={14} />}
+            {tab === "orders" ? t.staffOrders : tab === "payment" ? t.staffPayment : tab === "menu" ? (lang === "en" ? "Menu" : "จัดการเมนู") : tab === "history" ? (lang === "en" ? "History" : "ประวัติ") : tab === "expenses" ? (lang === "en" ? "Expenses" : "รายจ่าย") : tab === "activity" ? t.activityTab : tab === "reservations" ? (lang === "en" ? "Reservations" : "จองโต๊ะ") : (lang === "en" ? "Stats" : "สถิติ")}
           </button>
         ))}
       </div>

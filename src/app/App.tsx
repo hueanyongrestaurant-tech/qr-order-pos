@@ -151,6 +151,7 @@ import { refreshTableLinks, useTableLinks } from "./staff/tableLinkStore";
 import { setStockSwitch } from "./staff/stockSwitchStore";
 import { setRoutingCategories, startPrintRouting } from "./staff/printRoutingStore";
 import { canSeeTab, clearSalesCaches, roleForEmail, setLastLoginRole, setStaffRole, useStaffRole, type StaffRole } from "./staff/roleStore";
+import { bangkokDate } from "./reservations";
 import { mergeLocalPrintersOnce } from "./staff/printerListStore";
 import { OrderedSheet } from "./customer/OrderedSheet";
 import { CloseTableError, TABLE_CLOSURES_DOC, closeTablesTx, paymentFields, type ExpectedBills } from "./staff/closeTables";
@@ -171,6 +172,7 @@ const StaffStatsScreen = lazy(() => import("./staff/StaffStatsScreen").then((m) 
 const StaffBackfillSetupScreen = lazy(() => import("./staff/StaffBackfillSetupScreen").then((m) => ({ default: m.StaffBackfillSetupScreen })));
 const StaffBackfillPaymentScreen = lazy(() => import("./staff/StaffBackfillPaymentScreen").then((m) => ({ default: m.StaffBackfillPaymentScreen })));
 const StaffActivityScreen = lazy(() => import("./staff/StaffActivityScreen").then((m) => ({ default: m.StaffActivityScreen })));
+const StaffReservationsScreen = lazy(() => import("./staff/StaffReservationsScreen").then((m) => ({ default: m.StaffReservationsScreen })));
 const MoveTableModal = lazy(() => import("./staff/MoveTableModal").then((m) => ({ default: m.MoveTableModal })));
 
 // เหตุที่ย้ายโต๊ะไม่ได้ — โยนจากใน transaction (Firestore ไม่ retry error ของเรา) แล้วแจ้งพนักงานตาม code
@@ -531,13 +533,14 @@ const STAFF_TAB_VIEW: Record<StaffTab, View> = {
   orders: "staff-orders",
   payment: "staff-payment",
   menu: "staff-menu",
+  reservations: "staff-reservations",
   history: "staff-history",
   stats: "staff-stats",
   expenses: "staff-expenses",
   activity: "staff-activity",
 };
 // AUDIT_UI_ENABLED = false (ดู constants.ts) → ไม่ให้ session เก่าที่ค้างแท็บ activity กู้กลับไปหน้าที่ซ่อนอยู่
-const STAFF_TABS: StaffTab[] = ["orders", "payment", "menu", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity" as const] : [])];
+const STAFF_TABS: StaffTab[] = ["orders", "payment", "menu", "reservations", "history", "expenses", "stats", ...(AUDIT_UI_ENABLED ? ["activity" as const] : [])];
 // หน้าที่เฉพาะเจ้าของเห็น (ประวัติ + ลงบิลย้อนหลัง, สถิติ, รายจ่าย, กิจกรรม)
 const OWNER_ONLY_VIEWS: View[] = ["staff-history", "staff-stats", "staff-expenses", "staff-activity", "staff-backfill-setup", "staff-backfill-payment"];
 function isStaffTab(v: unknown): v is StaffTab {
@@ -2299,7 +2302,17 @@ export default function App() {
     adjustLine(order, target, delta, orderTotal(order));
   };
 
+  // จองโต๊ะ: วันที่ที่หน้าเปิดอยู่ (เริ่มที่วันนี้ตามเวลาไทย) — แถบเตือนหน้าออเดอร์เปิดหน้านี้ที่วันของแถบ
+  const [reservationsDate, setReservationsDate] = useState(() => bangkokDate());
+  const openReservations = (date: string) => {
+    setReservationsDate(date);
+    setStaffTab("reservations");
+    writeSession("staffTab", "reservations");
+    setView("staff-reservations");
+  };
+
   const handleStaffTabChange = (tab: StaffTab) => {
+    if (tab === "reservations" && view !== "staff-reservations") setReservationsDate(bangkokDate());
     if (!canSeeTab(staffRole, tab)) return; // พนักงานเข้าแท็บของเจ้าของไม่ได้ (ปุ่มถูกซ่อนอยู่แล้ว — กันทางอื่น)
     setHistoryInitialDate(undefined);
     setStaffTab(tab);
@@ -2478,6 +2491,12 @@ export default function App() {
     writeSession("staffTab", "orders");
     setView("staff-orders");
   }, [staffRole, view]);
+
+  // การจองเก่าเกิน 30 วัน: เครื่องเจ้าของลบเงียบๆ วันละครั้ง (ดู reservationStore.ts) — ไม่สำเร็จก็แค่ลองใหม่ครั้งหน้า
+  useEffect(() => {
+    if (staffRole !== "owner") return;
+    void import("./staff/reservationStore").then((m) => m.cleanupOldReservations());
+  }, [staffRole]);
 
   // รายชื่อเครื่องพิมพ์ทั้งร้าน: เครื่องที่ยังไม่เคยรวมรายการของตัวเองขึ้น Firestore รวม 1 ครั้งตอนเปิดแอป (ดู printerListStore.ts)
   useEffect(() => {
@@ -2930,6 +2949,7 @@ export default function App() {
             onMoveTable={setMoveFromTable}
             categories={allCategories}
             stockAlerts={stockAlerts}
+            onOpenReservations={openReservations}
           />
         </Suspense>
       );
@@ -3104,11 +3124,27 @@ export default function App() {
       );
       break;
 
+    case "staff-reservations":
+      content = (
+        <Suspense fallback={staffLoadingFallback}>
+          <StaffReservationsScreen
+            lang={lang}
+            date={reservationsDate}
+            onDateChange={setReservationsDate}
+            onTabChange={handleStaffTabChange}
+            onLogout={handleLogout}
+            onLangToggle={toggleLang}
+          />
+        </Suspense>
+      );
+      break;
+
     case "staff-manual-table":
       content = (
         <Suspense fallback={staffLoadingFallback}>
           <StaffManualTableScreen
             lang={lang}
+            showReservations
             onSelect={handlePickManualTable}
             onSelectTakeaway={handlePickManualTakeaway}
             onCancel={() => setView("staff-orders")}

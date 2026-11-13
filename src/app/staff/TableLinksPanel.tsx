@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Check, Copy, Loader2, Plus, RefreshCw } from "lucide-react";
 import type { Language } from "../types";
 import { CUSTOMER_SITE_URL } from "../constants";
-import { TABLE_GROUPS, allTableIds, tableTitle, zoneTitle } from "../tables";
+import { TABLE_GROUPS, allTableIds, tableTitle } from "../tables";
+import { FloorPlan } from "./FloorPlan";
 import {
   LinkChangedError, createMissingTableLinks, readLegacyTableUrlForStaff, regenerateTableLink, setLegacyTableUrlEnabled,
 } from "../tableViewStore";
@@ -53,6 +54,7 @@ export function TableLinksPanel({ lang }: { lang: Language }) {
   const [legacyOn, setLegacyOn] = useState<boolean | null>(null);
   const [legacyError, setLegacyError] = useState(false);
   const [legacySaving, setLegacySaving] = useState(false);
+  const [picked, setPicked] = useState(allTableIds()[0]);
 
   const loadLinks = () => {
     setLoading(true);
@@ -247,11 +249,20 @@ export function TableLinksPanel({ lang }: { lang: Language }) {
             false,
           )}
 
-          {TABLE_GROUPS.map((z) => (
-            <div key={z.zone} className="mt-3">
-              <h5 className="font-semibold text-foreground text-xs mb-1.5">{zoneTitle(z, lang)}</h5>
-              <div className="space-y-1.5">
-                {z.tables.map((tb) => {
+          {/* ผังร้าน: แตะโต๊ะ → รายละเอียดลิงก์ของโต๊ะนั้นด้านล่าง (คัดลอก / สร้าง / เปลี่ยน) */}
+          <div className="mt-3">
+            <FloorPlan
+              lang={lang}
+              onSelect={(id) => { setPicked(id); setConfirm((c) => (c?.kind === "legacyOff" ? c : null)); }}
+              view={(id) => ({
+                ...(id === picked ? { tone: "selected" as const } : {}),
+                badge: busy === id ? "…" : links.has(id) ? (en ? "linked" : "มีลิงก์") : (en ? "none" : "ยังไม่มี"),
+                badgeTone: id === picked ? "light" as const : links.has(id) ? "green" as const : "muted" as const,
+              })}
+            />
+          </div>
+              <div className="mt-3 space-y-1.5">
+                {[{ id: picked }].map((tb) => {
                   const link = links.get(tb.id);
                   const url = link ? tableLinkUrl(link.token) : null;
                   return (
@@ -312,8 +323,6 @@ export function TableLinksPanel({ lang }: { lang: Language }) {
                   );
                 })}
               </div>
-            </div>
-          ))}
         </>
       )}
     </div>

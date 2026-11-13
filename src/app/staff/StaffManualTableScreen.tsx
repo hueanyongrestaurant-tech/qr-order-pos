@@ -3,11 +3,14 @@ import { ChevronLeft } from "lucide-react";
 import type { Language } from "../types";
 import { T } from "../translations";
 import { LannaBorder } from "../shared";
-import { TABLE_GROUPS, tableButtonLabel, zoneTitle } from "../tables";
+import { FloorPlan } from "./FloorPlan";
+import { reservationTag } from "./ReservationTag";
+import { upcomingReservationByTable } from "../reservations";
+import { useMinuteClock, useNearReservations } from "./reservationStore";
 
 // ใช้ร่วมกับหน้าตั้งค่าบิลย้อนหลัง: title/topSlot (ช่องเวลา) แทรกด้านบน และ disabled ปิดปุ่มโต๊ะจนกว่าจะกรอกครบ
 export function StaffManualTableScreen({
-  lang, onSelect, onSelectTakeaway, onCancel, onLangToggle, title, topSlot, disabled,
+  lang, onSelect, onSelectTakeaway, onCancel, onLangToggle, title, topSlot, disabled, showReservations,
 }: {
   lang: Language;
   onSelect: (tn: string) => void;
@@ -17,8 +20,12 @@ export function StaffManualTableScreen({
   title?: string;
   topSlot?: ReactNode;
   disabled?: boolean;
+  showReservations?: boolean; // ป้าย "จอง 18:00" (สั่งอาหารเอง) — บิลย้อนหลังไม่ต้อง
 }) {
   const t = T[lang];
+  const near = useNearReservations(!!showReservations);
+  const now = useMinuteClock();
+  const upcoming = upcomingReservationByTable(near, now);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -45,23 +52,12 @@ export function StaffManualTableScreen({
           {lang === "en" ? "Takeaway" : "กลับบ้าน"}
         </button>
 
-        {TABLE_GROUPS.map((z) => (
-          <div key={z.zone} className="mb-6">
-            <h3 className="font-semibold text-foreground text-sm mb-3">{zoneTitle(z, lang)}</h3>
-            <div className="grid grid-cols-4 gap-2.5">
-              {z.tables.map((tb) => (
-                <button
-                  key={tb.id}
-                  onClick={() => onSelect(tb.id)}
-                  disabled={disabled}
-                  className={`${tb.name ? "col-span-2 aspect-[2/1] text-base px-2" : "aspect-square text-lg"} rounded-2xl font-semibold bg-card text-foreground border border-border hover:border-primary/40 hover:bg-primary/5 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none`}
-                >
-                  {tableButtonLabel(tb, lang)}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+        <FloorPlan
+          lang={lang}
+          onSelect={onSelect}
+          disabled={disabled}
+          view={(id) => reservationTag(upcoming.get(id), lang)}
+        />
       </div>
     </div>
   );

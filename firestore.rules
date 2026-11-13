@@ -142,6 +142,26 @@ service cloud.firestore {
       allow read, write: if isStaff();
     }
 
+    // ─── จองโต๊ะ (reservations/{id}) — มีชื่อ/เบอร์ลูกค้า: เฉพาะบัญชีของร้าน ห้ามเปิดให้ลูกค้าอ่านเด็ดขาด ───
+    // เก็บเท่าที่ต้องใช้: date, time, tables, name (+ phone, partySize, note ถ้ากรอก) | เครื่องเจ้าของลบรายการเก่าเกิน 30 วันเอง
+    // ต้องตรงกับ RESERVATION_LIMITS ใน src/app/reservations.ts
+    match /reservations/{reservationId} {
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff() && validReservation(request.resource.data);
+
+      function validReservation(d) {
+        return d.keys().hasAll(['date', 'time', 'tables', 'name'])
+          && d.keys().hasOnly(['date', 'time', 'tables', 'name', 'phone', 'partySize', 'note', 'createdAt', 'updatedAt'])
+          && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && d.time is string && d.time.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+          && d.tables is list && d.tables.size() >= 1 && d.tables.size() <= 20
+          && d.name is string && d.name.size() >= 1 && d.name.size() <= 80
+          && (!('phone' in d) || (d.phone is string && d.phone.size() <= 30))
+          && (!('partySize' in d) || (d.partySize is int && d.partySize >= 1 && d.partySize <= 200))
+          && (!('note' in d) || (d.note is string && d.note.size() <= 300));
+      }
+    }
+
     // ─── ตัวนับคิวกลับบ้าน (T-1, T-2, ...) + ตัวกันชน (table-moves, tableLinkLock) — เฉพาะบัญชีของร้าน ───
     match /counters/{docId} {
       allow read, write: if isStaff();

@@ -51,6 +51,58 @@ export const TABLE_ZONES: TableZoneConfig[] = [
   },
 ];
 
+// ─── ผังร้านจริง (FloorPlan.tsx) — ตำแหน่งโต๊ะแต่ละตัวบนตาราง ช่อง col/row เริ่มที่ 1 ───
+// แก้ผังที่นี่ที่เดียว (ย้ายโต๊ะ เพิ่มแถว/คอลัมน์) ไม่ต้องแตะ component | table = เลขโต๊ะภายใน (ห้ามเปลี่ยน)
+// row ใส่ครึ่งได้ (เช่น 2.5 = เริ่มกลางแถว 2 คร่อมถึงกลางแถว 3) สำหรับโต๊ะที่วางเหลื่อมกัน
+// ช่องที่ไม่มี table = ป้ายบอกตำแหน่ง (เช่นเคาน์เตอร์) กดไม่ได้ | ชื่อชั้นมาจาก TABLE_ZONES ตาม zone
+// โต๊ะใน TABLE_ZONES ที่ลืมใส่ผังนี้ จะไปโผล่ในหัวข้อ "อื่นๆ" ท้ายผังเอง (ไม่หาย) — เทสต์เช็คว่าครบทุกโต๊ะ
+export interface FloorPlanCell {
+  table?: string;
+  label?: { th: string; en: string };
+  col: number;
+  row: number;
+  colSpan?: number;
+  rowSpan?: number;
+}
+export interface FloorPlanFloor {
+  zone: number;
+  cols: number;
+  rows: number;
+  cells: FloorPlanCell[];
+}
+export const FLOOR_PLAN: FloorPlanFloor[] = [
+  {
+    zone: 1,
+    cols: 5,
+    rows: 3,
+    cells: [
+      { label: { th: "เคาน์เตอร์", en: "Counter" }, col: 1, row: 1, rowSpan: 2 },
+      { table: "1-5", col: 3, row: 1 },
+      { table: "1-4", col: 3, row: 2 },
+      { table: "1-1", col: 2, row: 3 },
+      { table: "1-2", col: 3, row: 3 },
+      { table: "1-3", col: 4, row: 3 },
+      { table: "3-1", col: 5, row: 3 }, // ม้าหินอ่อน
+    ],
+  },
+  {
+    zone: 2,
+    cols: 4,
+    rows: 4,
+    cells: [
+      { table: "2-9", col: 3, row: 1 },
+      { table: "2-1", col: 4, row: 1 },
+      { table: "2-2", col: 4, row: 2 },
+      { table: "2-7", col: 1, row: 2.5 }, // เหลื่อมระหว่าง 2-2 กับ 2-3 ตามผังจริง
+      { table: "2-8", col: 2, row: 2.5 },
+      { table: "2-3", col: 4, row: 3 },
+      { table: "2-6", col: 2, row: 4 },
+      { table: "2-5", col: 3, row: 4 },
+      { table: "2-4", col: 4, row: 4 },
+    ],
+  },
+];
+
 // หน้าเว็บลูกค้า (ลิงก์ในหน้า "ลิงก์โต๊ะ" ใช้ค่านี้เสมอ — แอป Android ไม่ได้อยู่บนโดเมนนี้ จึงใช้ window.location ไม่ได้)
 export const CUSTOMER_SITE_URL = "https://hueanyongrestaurant-tech.github.io/qr-order-pos/";
 

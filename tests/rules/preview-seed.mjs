@@ -74,5 +74,23 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, "tableViews", token), { table: "1-2", version: TABLE_VIEW_VERSION, data: encoded.data, hash: encoded.hash, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
   console.log(`customer link (table 1-2): http://localhost:5174/?t=${token}`);
 });
+// การจอง (วันนี้/พรุ่งนี้ตามเวลาไทย) — โชว์แถบเตือนหน้าออเดอร์ + ป้าย "จอง" ในผังโต๊ะ + เตือนชน 2 ชม.
+{
+  const bkkNow = new Date(Date.now() + 7 * 3600_000);
+  const day = (n) => new Date(bkkNow.getTime() + n * 86400_000).toISOString().slice(0, 10);
+  const hhmm = (addMin) => new Date(bkkNow.getTime() + addMin * 60_000).toISOString().slice(11, 16);
+  const rs = [
+    ["r1", day(0), hhmm(60), ["1-3"], "คุณสมชาย", { phone: "081-234-5678", partySize: 4 }],
+    ["r2", day(0), "18:00", ["2-1", "2-2"], "คุณมะลิ", { partySize: 10, note: "วันเกิด เตรียมเค้ก" }],
+    ["r3", day(0), "19:00", ["2-2"], "คุณบี", {}],
+    ["r4", day(1), "12:00", ["3-1"], "คุณแดง", { phone: "089-000-1111" }],
+  ];
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    for (const [id, date, time, tables, name, extra] of rs) {
+      await setDoc(doc(ctx.firestore(), "reservations", id), { date, time, tables, name, ...extra, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
+    }
+  });
+}
+
 await env.cleanup();
 console.log("seeded emulator", PROJECT);
