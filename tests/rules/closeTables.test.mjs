@@ -7,6 +7,9 @@ import { doc, getDoc, setDoc, Timestamp } from "firebase/firestore";
 import { setTestDb } from "./shim/firebase.mjs";
 import { CloseTableError, closeTablesTx } from "../../src/app/staff/closeTables";
 import { planTablesClose } from "../../src/app/tableSession";
+import { EMPTY_SPLIT_BILL, commitPicked, splitLines, splitPayment } from "../../src/app/staff/splitBill";
+import { mapOrderDoc, orderPaymentBreakdown } from "../../src/app/utils";
+import { layoutReceiptNew } from "../../src/app/staff/receiptLayout";
 
 let env;
 before(async () => {
@@ -144,4 +147,73 @@ test("planTablesClose: duplicate tables ignored, first failing table reported", 
   assert.deepEqual(ok.toClose.map((d) => d.id), ["y", "x"]);
   assert.deepEqual(planTablesClose(["1-1", "1-5"], docs, exp), { kind: "nothing", table: "1-5" });
   assert.deepEqual(planTablesClose([], docs, exp), { kind: "nothing", table: "" });
+});
+
+// ─── แยกจ่ายปิดบิลเอง: splitPayment() → closeTablesTx → ฟิลด์ที่บันทึก + ยอดสด/โอนในสถิติ + เงินทอนในใบเสร็จ ───
+// โต๊ะ 1-2 = a1 (rice 50×2) + a2 (tea 25×2) = 150
+const splitCase = async (people) => {
+  const items = [...(await read("orders/a1")).items, ...(await read("orders/a2")).items];
+  const lines = splitLines(items);
+  const key = (id) => lines.find((l) => l.ci.item.id === id).key;
+  let st = EMPTY_SPLIT_BILL;
+  for (const [pick, method, cash] of people) {
+    st = commitPicked({ ...st, picked: Object.fromEntries(Object.entries(pick).map(([id, q]) => [key(id), q])), method, cash: cash ?? "" }, lines);
+  }
+  const payment = splitPayment(st, lines);
+  asStaff();
+  if (payment) await closeTablesTx(["1-2"], payment, { "1-2": expected["1-2"] });
+  const docs = [];
+  for (const id of ["a1", "a2"]) docs.push({ id, ...(await read(`orders/${id}`)) });
+  const stats = docs.reduce((s, d) => {
+    const b = orderPaymentBreakdown(mapOrderDoc(d.id, d));
+    return { cash: s.cash + b.cash, transfer: s.transfer + b.transfer };
+  }, { cash: 0, transfer: 0 });
+  const receipt = payment ? layoutReceiptNew({ label: "1-2", items, total: 150, payment }, "th", new Date()).map((l) => l.text) : [];
+  return { payment, docs, stats, receipt };
+};
+const receiptValue = (lines, label) => lines.find((l) => l.startsWith(label))?.replace(label, "").trim();
+
+test("split all cash → paymentMethod cash, cashReceived = cash received total, stats all cash, receipt change adds up", async () => {
+  const { payment, docs, stats, receipt } = await splitCase([[{ rice: 1 }, "cash", "100"], [{ rice: 1, tea: 2 }, "cash", "100"]]);
+  assert.deepEqual(payment, { method: "cash", cashReceived: 200 });
+  for (const d of docs) {
+    assert.equal(d.status, "paid");
+    assert.equal(d.paymentMethod, "cash");
+    assert.equal(d.cashReceived, 200);
+    assert.equal(d.transferAmount, undefined);
+  }
+  assert.equal(docs[0].paymentBatchId, docs[1].paymentBatchId);
+  assert.deepEqual(stats, { cash: 150, transfer: 0 });
+  assert.equal(receiptValue(receipt, "เงินทอน"), "50 บาท"); // (100−50) + (100−100)
+});
+
+test("split all transfer → paymentMethod transfer, no cash fields, stats all transfer", async () => {
+  const { payment, docs, stats } = await splitCase([[{ rice: 2 }, "transfer"], [{ tea: 2 }, "transfer"]]);
+  assert.deepEqual(payment, { method: "transfer" });
+  for (const d of docs) {
+    assert.equal(d.paymentMethod, "transfer");
+    assert.equal(d.cashReceived, undefined);
+    assert.equal(d.transferAmount, undefined);
+  }
+  assert.deepEqual(stats, { cash: 0, transfer: 150 });
+});
+
+test("split mixed → 'split' fields: transfer spread over the bill's orders, stats cash/transfer exact, receipt change adds up", async () => {
+  // คน 1 โอน rice 1 (50) | คน 2 สด tea 2 (50) รับ 100 | คน 3 โอน rice 1 (50)
+  const { payment, docs, stats, receipt } = await splitCase([[{ rice: 1 }, "transfer"], [{ tea: 2 }, "cash", "100"], [{ rice: 1 }, "transfer"]]);
+  assert.deepEqual(payment, { method: "split", transferAmount: 100, cashReceived: 100 });
+  for (const d of docs) {
+    assert.equal(d.paymentMethod, "split");
+    assert.equal(d.cashReceived, 100);
+  }
+  assert.equal(docs.reduce((s, d) => s + d.transferAmount, 0), 100);
+  assert.deepEqual(stats, { cash: 50, transfer: 100 });
+  assert.equal(receiptValue(receipt, "โอนเงิน"), "100 บาท");
+  assert.equal(receiptValue(receipt, "เงินทอน"), "50 บาท");
+});
+
+test("split with someone still to pay → no payment, bill stays open", async () => {
+  const { payment } = await splitCase([[{ rice: 2 }, "transfer"]]);
+  assert.equal(payment, null);
+  await untouched("a1", "a2");
 });

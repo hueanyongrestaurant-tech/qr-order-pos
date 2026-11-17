@@ -2174,7 +2174,8 @@ export default function App() {
   };
   const closeTablesWithNotice = (tables: string[], payment: PaymentInput, expected: ExpectedBills) => {
     const en = lang === "en";
-    handleCloseTables(tables, payment, expected).catch((err) => {
+    // คืน true = ปิดบิลสำเร็จ (หน้าจ่ายเงินใช้ล้างแยกจ่ายที่เก็บในเครื่อง)
+    return handleCloseTables(tables, payment, expected).then(() => true, (err) => {
       if (err instanceof CloseTableError) {
         const name = tableTitle(err.table || tables[0], lang);
         setNotice(
@@ -2187,6 +2188,7 @@ export default function App() {
       } else {
         setNotice((en ? "Could not close the bill: " : "ปิดบิลไม่สำเร็จ: ") + (err?.message || String(err)));
       }
+      return false;
     });
   };
 

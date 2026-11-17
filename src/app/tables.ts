@@ -109,6 +109,7 @@ export interface Floor {
   cols: number;
   rows: number; // จำนวนแถวโต๊ะ (ใช้คิดสัดส่วนความสูง)
   rowSteps: number; // ช่องตารางต่อ 1 แถวโต๊ะ: 2 = มีโต๊ะวางครึ่งแถว (row: 2.5) — row/rowSpan ของ cells นับเป็นช่องตารางแล้ว
+  colSteps: number; // เหมือน rowSteps แต่แนวนอน (col: 2.5) — col/colSpan ของ cells นับเป็นช่องตารางแล้ว
   cells: FloorCell[];
 }
 const HALF = 2;
@@ -132,9 +133,9 @@ export function floorPlanProblems(plan: FloorPlanFloor[], config: TableZoneConfi
       }
       const cs = c.colSpan ?? 1;
       const rs = c.rowSpan ?? 1;
-      if (!isHalf(c.row) || !isHalf(rs) || !Number.isInteger(c.col) || !Number.isInteger(cs)) problems.push(`${what} row must be whole or .5, col whole`);
+      if (!isHalf(c.row) || !isHalf(rs) || !isHalf(c.col) || !isHalf(cs)) problems.push(`${what} row/col must be whole or .5`);
       if (c.col < 1 || c.row < 1 || c.col + cs - 1 > f.cols || c.row + rs - 1 > f.rows) problems.push(`${what} outside floor ${f.zone}`);
-      for (let x = c.col; x < c.col + cs; x++) {
+      for (let x = c.col; x < c.col + cs; x += 1 / HALF) {
         for (let y = c.row; y < c.row + rs; y += 1 / HALF) {
           const k = `${x},${y}`;
           if (used.has(k)) problems.push(`${what} overlaps ${used.get(k)} on floor ${f.zone}`);
@@ -158,9 +159,16 @@ export function buildFloors(plan: FloorPlanFloor[], config: TableZoneConfig[] = 
     cols: f.cols,
     rows: f.rows,
     rowSteps: HALF,
+    colSteps: HALF,
     cells: f.cells.flatMap((c): FloorCell[] => {
-      // แถวครึ่ง (row 2.5) → ตารางละเอียด 2 ช่องต่อแถว: แถว r เริ่มช่อง (r-1)*2+1 สูง rowSpan*2 ช่อง
-      const base = { col: c.col, row: Math.round((c.row - 1) * HALF) + 1, colSpan: c.colSpan ?? 1, rowSpan: Math.round((c.rowSpan ?? 1) * HALF) };
+      // ครึ่งแถว/ครึ่งคอลัมน์ (row 2.5 / col 2.5) → ตารางละเอียด 2 ช่องต่อแถว/คอลัมน์:
+      // แถว r เริ่มช่อง (r-1)*2+1 สูง rowSpan*2 ช่อง (คอลัมน์เหมือนกัน)
+      const base = {
+        col: Math.round((c.col - 1) * HALF) + 1,
+        row: Math.round((c.row - 1) * HALF) + 1,
+        colSpan: Math.round((c.colSpan ?? 1) * HALF),
+        rowSpan: Math.round((c.rowSpan ?? 1) * HALF),
+      };
       if (!c.table) return [{ ...base, label: c.label }];
       const def = byId.get(c.table);
       if (!def || placed.has(c.table)) return [];
@@ -177,6 +185,7 @@ export function buildFloors(plan: FloorPlanFloor[], config: TableZoneConfig[] = 
       cols,
       rows: Math.ceil(rest.length / cols),
       rowSteps: 1,
+      colSteps: 1,
       cells: rest.map((t, i) => ({ table: t, col: (i % cols) + 1, row: Math.floor(i / cols) + 1, colSpan: 1, rowSpan: 1 })),
     });
   }

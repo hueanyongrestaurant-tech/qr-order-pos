@@ -11,7 +11,10 @@ import { useSelectedPrinterAddress } from "./printerStore";
 import { useReceiptSettings } from "./receiptSettingsStore";
 import { QtyPickerModal, qtyInfo } from "./QtyPickerModal";
 import { SplitBillPanel } from "./SplitBillPanel";
-import { EMPTY_SPLIT_BILL, reconcileSplit, splitLines, type SplitLine, type SplitState } from "./splitBill";
+import {
+  EMPTY_SPLIT_BILL, clearSplit, loadSplit, pruneSplits, reconcileSplit, saveSplit, splitLines, splitPayment,
+  type SplitLine, type SplitState,
+} from "./splitBill";
 import type { ExpectedBills } from "./closeTables";
 
 // ─── Staff Payment Screen ─────────────────────────────────────────────────────
@@ -21,7 +24,7 @@ interface StaffPaymentProps {
   orders: Order[];
   // expected = ออเดอร์/ยอดที่พนักงานเห็นบนการ์ดตอนกด (ต่อโต๊ะ) — App ปิดบิลเฉพาะเมื่อข้อมูลบน server ยังตรงกัน
   // หลายโต๊ะ = "รวมโต๊ะ": ทุกโต๊ะปิดเป็นบิลเดียวใน transaction เดียว
-  onCloseTables: (tables: string[], payment: PaymentInput, expected: ExpectedBills) => void;
+  onCloseTables: (tables: string[], payment: PaymentInput, expected: ExpectedBills) => Promise<boolean>; // true = ปิดสำเร็จ
   onCloseTakeaway: (orderId: string, payment: PaymentInput) => void;
   onServeItem: (orderId: string, cartId: string, qty?: number) => Promise<number>;
   // App ถามยืนยัน/เหตุผลเอง แล้ว void qty ชิ้น (เฉพาะที่ยังไม่เสิร์ฟ) — picked = เลือกจำนวนจากหน้าต่างแล้ว ไม่ต้องยืนยันซ้ำ
@@ -73,7 +76,7 @@ interface PaymentCardProps {
   voidedTags?: string[];
   onAdjust: (key: string, delta: number, index: number) => void;
   total2: number;
-  closeAction: (payment: PaymentInput) => void;
+  closeAction: (payment: PaymentInput) => void | Promise<unknown>;
   // รายการของโต๊ะนี้ที่ยังไม่เสิร์ฟ (รอบที่ยัง in-progress) — มีอย่างน้อย 1 รายการ = ปิดบิลไม่ได้
   pending?: { order: Order; ci: CartItem }[];
   onServePending?: (order: Order, ci: CartItem) => void;
@@ -168,6 +171,9 @@ function PaymentCard({
     (paymentMethod === "cash" && cashInput !== "" && cashNum >= cashDue) ||
     (paymentMethod === "split" && splitTransferValid && cashInput !== "" && cashNum >= cashDue);
   const canClose = paymentReady && !hasPending;
+  const splitOpen = !!splitBill?.open;
+  // แยกจ่ายครบทุกคน → วิธีจ่ายของทั้งบิล (ใบเสร็จพิมพ์ส่วนชำระเงินได้) ยังไม่ครบ = null
+  const splitPaid = splitOpen ? splitPayment(splitBill!.state, splitBill!.lines) : null;
   const payment: PaymentInput = {
     method: paymentMethod,
     ...(paymentMethod !== "transfer" ? { cashReceived: Number(cashInput || 0) } : {}),
@@ -215,7 +221,16 @@ function PaymentCard({
       {isSelected && (
         <div className="px-4 pb-4 border-t border-border pt-3">
           {splitBill?.open && (
-            <SplitBillPanel lang={lang} lines={splitBill.lines} state={splitBill.state} onChange={splitBill.onChange} onAskConfirm={onAskConfirm} />
+            <SplitBillPanel
+              lang={lang}
+              lines={splitBill.lines}
+              state={splitBill.state}
+              onChange={splitBill.onChange}
+              onAskConfirm={onAskConfirm}
+              billName={billName}
+              hasPending={hasPending}
+              onClose={closeAction}
+            />
           )}
           <div className="space-y-2 mb-3">
             {!splitBill?.open && items.map((ci, ciIdx) => {
@@ -420,7 +435,8 @@ function PaymentCard({
             </div>
           )}
 
-          <div className="flex gap-2 mb-3">
+          {/* แยกจ่ายเปิดอยู่: วิธีจ่าย/รับเงิน/ปิดบิลอยู่ในแผงแยกจ่ายแล้ว — ไม่มีขั้นจ่ายเงินซ้ำ */}
+          {!splitOpen && <div className="flex gap-2 mb-3">
             {(["cash", "transfer", "split"] as PaymentMethod[]).map((m) => (
               <button
                 key={m}
@@ -433,9 +449,9 @@ function PaymentCard({
                 {m === "cash" ? cashLabel : m === "transfer" ? transferLabel : (lang === "en" ? "Cash + Transfer" : "สด + โอน")}
               </button>
             ))}
-          </div>
+          </div>}
 
-          {paymentMethod === "split" && (
+          {!splitOpen && paymentMethod === "split" && (
             <div className="mb-3">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-xs text-muted-foreground">
@@ -473,7 +489,7 @@ function PaymentCard({
             </div>
           )}
 
-          {(paymentMethod === "cash" || (paymentMethod === "split" && splitTransferValid)) && (
+          {!splitOpen && (paymentMethod === "cash" || (paymentMethod === "split" && splitTransferValid)) && (
             <div className="mb-3">
               <input
                 type="text"
@@ -496,21 +512,21 @@ function PaymentCard({
           <div className="flex gap-2">
             {printReceiptAction && (
               <button
-                onClick={() => printReceiptAction(paymentReady ? payment : undefined)}
+                onClick={() => printReceiptAction(splitOpen ? splitPaid ?? undefined : paymentReady ? payment : undefined)}
                 disabled={printDisabled || hasPending}
                 className="flex-shrink-0 bg-muted text-foreground px-4 py-3 rounded-xl text-sm font-semibold hover:bg-muted/80 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Printer size={16} />
               </button>
             )}
-            <button
+            {!splitOpen && <button
               onClick={confirmClose}
               disabled={!canClose}
               className="flex-1 bg-secondary text-secondary-foreground py-3 rounded-xl font-semibold text-sm hover:bg-secondary/90 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Check size={16} />
               {hasPending ? (lang === "en" ? "Serve all items first" : "เสิร์ฟให้ครบก่อนปิดบิล") : t.closeTable}
-            </button>
+            </button>}
           </div>
         </div>
       )}
@@ -591,9 +607,20 @@ export function StaffPaymentScreen({
     else onRemoveItem(order.id, ci.cartId, 1, false);
   };
 
-  // แยกจ่ายของแต่ละโต๊ะ (key = เลขโต๊ะ) — อยู่ในหน่วยความจำหน้านี้เท่านั้น ไม่เขียนที่ไหน ดู splitBill.ts
-  // พับการ์ด/ปิดโหมดแยกจ่ายแล้วกลับมา = ยังอยู่ | โต๊ะหายจากหน้านี้ (ปิดบิล/ย้ายโต๊ะ) = ทิ้ง
+  // แยกจ่ายของแต่ละโต๊ะ (key = เลขโต๊ะ) — เก็บในเครื่องนี้ (localStorage ต่อโต๊ะ) ไม่เขียน Firestore จนปิดบิล ดู splitBill.ts
+  // พับการ์ด/ปิดโหมดแยกจ่าย/รีโหลด/ปิดแอปแล้วกลับมา = ยังอยู่ | ปิดบิลสำเร็จ / เริ่มใหม่ = ล้าง
+  // โต๊ะหายจากหน้านี้ (ปิดบิลจากเครื่องอื่น/ย้ายโต๊ะ) = ทิ้งจากหน่วยความจำ ที่เก็บไว้ใช้ไม่ได้อีก (ผูกกับ id ออเดอร์ของบิลนั้น)
   const [splitBills, setSplitBills] = useState<Record<string, { open: boolean; state: SplitState }>>({});
+  useEffect(() => { pruneSplits(); }, []);
+  const dropSplit = (tn: string) => {
+    clearSplit(tn);
+    setSplitBills((prev) => {
+      if (!prev[tn]) return prev;
+      const next = { ...prev };
+      delete next[tn];
+      return next;
+    });
+  };
   const updateSplit = (tn: string, patch: Partial<{ open: boolean; state: SplitState }>) =>
     setSplitBills((prev) => ({ ...prev, [tn]: { ...(prev[tn] ?? { open: false, state: EMPTY_SPLIT_BILL }), ...patch } }));
 
@@ -650,9 +677,25 @@ export function StaffPaymentScreen({
         if (state !== v.state) changed = true;
         next[tn] = state === v.state ? v : { ...v, state };
       });
+      // โต๊ะที่เพิ่งโผล่ (เปิดหน้า/รีโหลด/ออเดอร์เพิ่งโหลด): ดึงแยกจ่ายที่เก็บไว้ในเครื่อง ถ้ายังเป็นบิลเดิม
+      tableGroups.forEach((g) => {
+        if (next[g.tableNumber]) return;
+        const stored = loadSplit(g.tableNumber, g.orders.map((o) => o.id));
+        if (!stored) return;
+        changed = true;
+        next[g.tableNumber] = { open: stored.open || stored.state.people.length > 0, state: reconcileSplit(stored.state, g.splitLines) };
+      });
       return changed ? next : prev;
     });
   }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // บันทึกลงเครื่องทุกครั้งที่แยกจ่ายเปลี่ยน (ผูกกับ id ออเดอร์ปัจจุบันของบิล — สั่งเพิ่มรอบใหม่ก็ยังเป็นบิลเดิม)
+  useEffect(() => {
+    Object.entries(splitBills).forEach(([tn, v]) => {
+      const g = tableGroups.find((x) => x.tableNumber === tn);
+      if (g) saveSplit(tn, g.orders.map((o) => o.id), v.open, v.state);
+    });
+  }, [splitBills]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── รวมโต๊ะ: โต๊ะหลัก (การ์ดที่กด) → โต๊ะที่ติ๊กรวม — อยู่ในหน่วยความจำหน้านี้เท่านั้น ไม่เขียนที่ไหนจนกว่าจะปิดบิล ───
   // โต๊ะที่หายจากหน้านี้ (ปิดบิล/ย้ายโต๊ะจากเครื่องอื่น) หลุดจากการรวมเอง | โต๊ะหลักหาย = เลิกรวมทั้งชุด
@@ -791,6 +834,7 @@ export function StaffPaymentScreen({
                         onAdjust={(key, delta) => onAdjustItem(g.orders, key, delta)}
                         closeAction={(payment) =>
                           onCloseTables([g.tableNumber], payment, { [g.tableNumber]: { orderIds: g.orders.map((o) => o.id), total: g.total } })
+                            .then((ok) => { if (ok) dropSplit(g.tableNumber); }) // ปิดบิลแล้ว = ล้างแยกจ่ายที่เก็บไว้
                         }
                         pending={g.pending}
                         onServePending={askServePending}
