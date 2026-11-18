@@ -1,10 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import type { Language } from "../types";
 import { FLOORS, floorButtonLabel, floorTitle, type Floor } from "../tables";
 
 // ─── ผังร้านจริง (ตำแหน่งจาก FLOOR_PLAN ใน constants.ts) — ใช้แทนตารางโต๊ะทุกหน้า ───
-// ไม่เกินกรอบที่วางอยู่เสมอ (ช่องโต๊ะย่อตามความกว้าง ไม่มีเลื่อนซ้ายขวา) | แต่ละหน้าบอกสถานะโต๊ะผ่าน view(id)
-// กรอบแคบ (มือถือ / หน้าต่างย้ายโต๊ะ) = ชั้นซ้อนกัน ช่องโต๊ะไม่เกิน CELL_MAX_PX | กรอบกว้าง (≥ 30rem) = สองชั้นวางคู่กัน
+// กว้างเต็มกรอบที่วางอยู่เสมอ (ช่องโต๊ะย่อตามความกว้าง ไม่มีเลื่อนซ้ายขวา) | แต่ละหน้าบอกสถานะโต๊ะผ่าน view(id)
 // จอเตี้ย (มือถือแนวนอน) วางสองชั้นซ้อนกันไม่พอ → แท็บ ชั้น 1 / ชั้น 2
 
 export type FloorTone = "default" | "muted" | "selected" | "reserved" | "busy";
@@ -20,9 +19,6 @@ export interface FloorTableView {
 const SHORT_SCREEN_PX = 600;
 const PAD = "min-w-0 min-h-0 p-[3px] sm:p-1";
 const MAX_COLS = Math.max(...FLOORS.map((f) => f.cols));
-// ผังแนวตั้ง (หลังหมุน) ซ้อนกัน — จำกัดขนาดช่องไม่ให้ผังสูงเกินจอ: มือถือ 60px (พอดีจอ 390×844) / แท็บเล็ต (sm+) 72px
-const CELL_MAX_PX = 60;
-const CELL_MAX_PX_SM = 72;
 
 function useShortScreen(): boolean {
   const read = () => typeof window !== "undefined" && window.innerHeight < SHORT_SCREEN_PX;
@@ -64,7 +60,7 @@ export function FloorPlan({
   const shown = useTabs ? FLOORS.filter((f) => f.key === active) : FLOORS;
 
   return (
-    <div className="w-full min-w-0 @container">
+    <div className="w-full min-w-0">
       {useTabs && (
         <div className="flex rounded-full bg-muted p-0.5 w-fit mb-3" role="tablist">
           {FLOORS.map((f) => (
@@ -80,7 +76,7 @@ export function FloorPlan({
           ))}
         </div>
       )}
-      <div className="flex flex-col gap-3 @[30rem]:flex-row @[30rem]:items-start">
+      <div className="space-y-3">
         {shown.map((f) => (
           <FloorBlock key={f.key} floor={f} lang={lang} onSelect={onSelect} view={view} disabled={disabled} heading={!useTabs} />
         ))}
@@ -100,25 +96,15 @@ function FloorBlock({
   heading: boolean;
 }) {
   return (
-    <section
-      className="rounded-2xl bg-muted/40 border border-border p-2 sm:p-3 min-w-0 @[30rem]:flex-[var(--floor-flex)]"
-      style={{ "--floor-flex": `${floor.cols} 1 0%` } as CSSProperties}
-    >
+    <section className="rounded-2xl bg-muted/40 border border-border p-2 sm:p-3">
       {heading && <h3 className="font-semibold text-foreground text-sm mb-2 text-center">{floorTitle(floor, lang)}</h3>}
-      {/* ซ้อนกัน: ชั้นที่คอลัมน์น้อยกว่า แคบลงตามสัดส่วน → ช่องโต๊ะทุกชั้นขนาดเท่ากัน (ไม่เกิน CELL_MAX_PX) */}
-      {/* วางคู่กัน: section กว้างตามจำนวนคอลัมน์ (flex) ผังเต็ม section */}
+      {/* ชั้นที่คอลัมน์น้อยกว่า แคบลงตามสัดส่วน → ช่องโต๊ะทุกชั้นขนาดเท่ากัน */}
       {/* ไม่ใช้ gap ของ grid (ช่องครึ่งแถวจะทำให้ช่องโต๊ะไม่จัตุรัส) — เว้นระยะด้วย padding ของแต่ละช่องแทน */}
-      <div
-        className="mx-auto w-[var(--floor-w)] sm:w-[var(--floor-w-sm)] @[30rem]:w-full"
-        style={{
-          "--floor-w": `min(${(floor.cols / MAX_COLS) * 100}%, ${floor.cols * CELL_MAX_PX}px)`,
-          "--floor-w-sm": `min(${(floor.cols / MAX_COLS) * 100}%, ${floor.cols * CELL_MAX_PX_SM}px)`,
-        } as CSSProperties}
-      >
+      <div className="mx-auto" style={{ width: `${(floor.cols / MAX_COLS) * 100}%` }}>
         <div
           className="grid"
           style={{
-            gridTemplateColumns: `repeat(${floor.cols * floor.colSteps}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${floor.cols}, minmax(0, 1fr))`,
             gridTemplateRows: `repeat(${floor.rows * floor.rowSteps}, minmax(0, 1fr))`,
             aspectRatio: `${floor.cols} / ${floor.rows}`,
           }}
