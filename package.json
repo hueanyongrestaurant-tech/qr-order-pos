@@ -19,7 +19,14 @@
     "photos:rollback": "node scripts/order-photos-migration/run.mjs rollback",
     "photos:size": "node scripts/order-photos-migration/run.mjs size",
     "stats:dry-run": "node scripts/daily-stats-backfill/run.mjs dry-run",
-    "stats:apply": "node scripts/daily-stats-backfill/run.mjs apply"
+    "stats:apply": "node scripts/daily-stats-backfill/run.mjs apply",
+    "menuphotos:recovered:dry-run": "node scripts/menu-photos/run.mjs recovered dry-run",
+    "menuphotos:recovered:apply": "node scripts/menu-photos/run.mjs recovered apply",
+    "menuphotos:supabase:dry-run": "node scripts/menu-photos/run.mjs supabase dry-run",
+    "menuphotos:supabase:apply": "node scripts/menu-photos/run.mjs supabase apply",
+    "menuphotos:restore:dry-run": "node scripts/menu-photos/run.mjs restore dry-run",
+    "menuphotos:restore:apply": "node scripts/menu-photos/run.mjs restore apply",
+    "menuphotos:backup": "node scripts/menu-photos/backup.mjs"
   },
   "dependencies": {
     "@capacitor/android": "7.6.9",
@@ -93,6 +100,7 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "4.7.0",
     "gh-pages": "^6.3.0",
+    "sharp": "^0.32.6",
     "tailwindcss": "4.1.12",
     "typescript": "^7.0.2",
     "vite": "6.3.5"

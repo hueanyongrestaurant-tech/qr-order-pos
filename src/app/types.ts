@@ -112,7 +112,10 @@ export interface MenuItem {
   name: { en: string; th: string };
   description: { en: string; th: string };
   price: number;
+  // URL รูปเดิมบน Supabase (เลิกใช้แสดงผลแล้ว ห้ามแก้/ลบ — สคริปต์ย้ายรูป 11 ธ.ค. ใช้) | "" = ไม่เคยมีรูป
   photo: string;
+  // รูปจริงอยู่ที่ menuPhotos/{id} — ดู menuPhotos.ts | ไม่มี = ยังไม่ย้าย, 0 = ลบรูปแล้ว, > 0 = เวอร์ชันรูป
+  photoVersion?: number;
   hasMeatChoice?: boolean;
   meatPriceDeltas?: Partial<Record<MeatChoice, number>>;
   hasSpice?: boolean;

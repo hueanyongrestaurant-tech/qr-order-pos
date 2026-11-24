@@ -90,6 +90,29 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
+    // ─── รูปเมนู (menuPhotos/{itemId}) — แทน Supabase Storage ดู src/app/menuPhotos.ts ───
+    // get = เปิดทีละรูปตาม id เมนู — ลูกค้าทำได้ (หน้าสั่งอาหาร, GitHub Action สำรองรูปรายสัปดาห์)
+    // list = ห้ามทุกคน (กันโหลดรูปทั้ง collection ทีเดียว — แอป/สคริปต์อ่านทีละ id จาก menuItems เสมอ)
+    // เขียน = บัญชีของร้าน + จำกัดขนาด: data URL ≤ 120,000 ตัวอักษร (≈ 87 KB ไฟล์จริง — แอปบีบให้ ≤ ~40 KB)
+    // ต้องตรงกับ PHOTO_MAX_DATA_URL_LENGTH ใน src/app/menuPhotos.ts
+    match /menuPhotos/{itemId} {
+      allow get: if true;
+      allow list: if false;
+      allow delete: if isStaff();
+      allow create, update: if isStaff() && validMenuPhoto(request.resource.data);
+
+      function validMenuPhoto(d) {
+        return d.keys().hasAll(['data', 'version'])
+          && d.keys().hasOnly(['data', 'version', 'updatedAt', 'source', 'temporary'])
+          && d.data is string
+          && d.data.size() <= 120000
+          && d.data.matches('^data:image/(webp|jpeg);base64,[A-Za-z0-9+/=]+$')
+          && d.version is int && d.version > 0
+          && (!('source' in d) || d.source in ['upload', 'cache-recovery', 'supabase-original', 'restore'])
+          && (!('temporary' in d) || d.temporary is bool);
+      }
+    }
+
     // ─── สต็อกต่อเมนู (stock/{itemId}) — ไม่มี doc = ขายไม่จำกัด ───
     // พนักงานแก้ได้ทุกอย่าง | ลูกค้า (ไม่ได้ล็อกอิน/บัญชีอื่น) "ลด remaining" ได้อย่างเดียว และต้องเป็นการเขียน
     // ใน commit เดียวกับการสร้างออเดอร์ใหม่ (lastOrderId = id ออเดอร์นั้น: ก่อน commit ต้องยังไม่มี

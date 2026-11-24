@@ -40,7 +40,7 @@ import { BarChart, Bar, XAxis, CartesianGrid } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "./components/ui/chart";
 
 import { db, getAuthInstance } from "../lib/firebase";
-import { getSupabaseClient, MENU_PHOTOS_BUCKET } from "../lib/supabase";
+import { applyPhotoChange, deletePhotoInBatch, type PhotoChange } from "./menuPhotos";
 import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, increment, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
@@ -87,7 +87,6 @@ import type {
 import { ADD_ONS, ADDON_CATEGORY_ID, AUDIT_UI_ENABLED, OWNER_EMAIL, STAFF_EMAIL } from "./constants";
 import { T } from "./translations";
 import {
-  resolvePhoto,
   itemPrice,
   cartItemUnitPrice,
   cartItemTotal,
@@ -118,7 +117,6 @@ import {
   getYesterdayKey,
   ignoreSoldOut,
   formatDateInput,
-  compressImage,
   fetchFreshMenuItems,
   isCartItemUnavailable,
   withLiveAvailability,
@@ -264,13 +262,6 @@ function recordSentOrder(sessionId: string, sent: SentOrder) {
     const list = [...readSentOrders(sessionId).filter((s) => s.id !== sent.id), sent].slice(-20);
     sessionStorage.setItem(sentOrdersKey(sessionId), JSON.stringify(list));
   } catch { /* ignore */ }
-}
-
-// แปลง data URL (base64 ที่ compressImage คืนมา) เป็น Blob — ใช้ตอนจะอัปโหลดขึ้น Storage จริง
-// (ยังคง base64 ไว้เป็น local preview เหมือนเดิมตอนเลือกรูป แปลงเป็น Blob แค่ตอนกดบันทึก)
-async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
-  const res = await fetch(dataUrl);
-  return res.blob();
 }
 
 // ─── Activity Log helpers ─────────────────────────────────────────────────────
@@ -2372,38 +2363,12 @@ export default function App() {
     setView("staff-menu-edit");
   };
 
-  const handleSaveItem = async (item: MenuItem, stockForm: StockFormValue) => {
+  const handleSaveItem = async (item: MenuItem, stockForm: StockFormValue, photoChange: PhotoChange = undefined) => {
     const rawPrev = allMenuItems.find((m) => m.id === item.id);
     const prev = rawPrev ? normalizeMenuItem(rawPrev) : undefined;
-    let photo = item.photo;
-
-    if (photo.startsWith("data:")) {
-      // เพิ่งเลือกรูปใหม่รอบนี้ (ยังเป็น base64 จาก compressImage) — อัปโหลดขึ้น Supabase Storage
-      // แทนที่จะเก็บ base64 ตรงๆ ใน Firestore ตั้งชื่อไฟล์ตาม id เมนู เพื่อให้แก้รูปซ้ำ = เขียนทับไฟล์เดิมอัตโนมัติ
-      // (upsert: true จำเป็น — Supabase ปฏิเสธถ้าไม่ใส่และมีไฟล์ชื่อนี้อยู่แล้ว ต่างจาก Firebase ที่ทับให้เลย)
-      const blob = await dataUrlToBlob(photo);
-      const supabase = getSupabaseClient();
-      const path = `menuPhotos/${item.id}.jpg`;
-      const { error: uploadError } = await supabase.storage
-        .from(MENU_PHOTOS_BUCKET)
-        .upload(path, blob, { contentType: "image/jpeg", upsert: true });
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from(MENU_PHOTOS_BUCKET).getPublicUrl(path);
-      // path เดิมซ้ำทุกครั้ง (ตั้งตาม item id) แต่ Supabase CDN cache public URL ไว้แล้วไม่ invalidate
-      // ตอน overwrite — ต่อ ?v=timestamp กันรูปใหม่โดน cache เก่าบังจนกว่า cache จะหมดอายุเอง
-      photo = `${data.publicUrl}?v=${Date.now()}`;
-    } else if (photo === "" && prev?.photo?.startsWith("http")) {
-      // ลบรูปออก และของเดิมเป็นไฟล์ใน Storage — ลบไฟล์เก่าทิ้งด้วย กันไฟล์กำพร้าค้าง
-      try {
-        const { error } = await getSupabaseClient().storage
-          .from(MENU_PHOTOS_BUCKET)
-          .remove([`menuPhotos/${item.id}.jpg`]);
-        if (error) console.error("remove (menu photo) failed", error); // ไฟล์อาจไม่มีอยู่แล้ว ไม่บล็อกการบันทึก
-      } catch (err) {
-        console.error("remove (menu photo) failed", err);
-      }
-    }
-    // กรณีอื่น (photo ไม่เปลี่ยน / ยังเป็น Unsplash ID เดิม) ไม่ต้องแตะ Storage เลย
+    // รูป: menuPhotos/{id} + photoVersion เขียนใน batch เดียวกับเมนู (ดู menuPhotos.ts)
+    // photo (URL Supabase เดิม) คงค่าเดิมจาก DB เสมอ — สคริปต์ย้ายรูป 11 ธ.ค. ต้องใช้ ห้ามแก้/ลบ
+    const photo = prev ? prev.photo ?? "" : "";
 
     // setDoc เขียนทับทั้ง doc — สถานะการขายทั้งหมด (เมนู + ตัวเลือกเนื้อสัตว์) เอาจากค่าล่าสุด ดู withLiveAvailability
     // สต็อก: เขียนพร้อมเมนูใน batch เดียว — ใส่จำนวนใหม่ = เปิดขาย (0 = หมด) | ลบจำนวนทิ้ง = ไม่จำกัด (สถานะขายคงเดิม)
@@ -2430,9 +2395,12 @@ export default function App() {
     const { remaining, alertAt, remainingChanged } = stockForm;
     const soldOut = remainingChanged && remaining !== null ? soldOutAfterStockSet(remaining) : live.soldOut;
     const batch = writeBatch(db);
+    const { photoVersion: _formPhotoVersion, ...liveNoPhoto } = live;
+    const photoFields = applyPhotoChange(batch, item.id, photoChange, prev?.photoVersion);
     batch.set(doc(db, "menuItems", item.id), {
-      ...live,
+      ...liveNoPhoto,
       photo,
+      ...photoFields,
       stockTracked: shouldTrackStock(stockEnabled, remaining !== null),
       soldOut,
       ...(prepIds.length > 0 ? { prepIds } : {}),
@@ -2682,18 +2650,11 @@ export default function App() {
       itemName: item?.name.th,
       details: item ? { price: item.price } : undefined,
     });
-    if (item?.photo?.startsWith("http")) {
-      // ลบเมนูทั้งตัว — เก็บกวาดไฟล์รูปใน Storage ไปด้วย กันไฟล์กำพร้าค้าง
-      try {
-        const { error } = await getSupabaseClient().storage
-          .from(MENU_PHOTOS_BUCKET)
-          .remove([`menuPhotos/${itemId}.jpg`]);
-        if (error) console.error("remove (menu photo) failed", error);
-      } catch (err) {
-        console.error("remove (menu photo) failed", err);
-      }
-    }
-    await deleteDoc(doc(db, "menuItems", itemId));
+    // ลบเมนูทั้งตัว — ลบรูปใน menuPhotos ไปด้วย (ไฟล์เดิมบน Supabase ไม่แตะ ถูกล็อกอยู่ และจะเลิกใช้ทั้งหมด)
+    const delBatch = writeBatch(db);
+    delBatch.delete(doc(db, "menuItems", itemId));
+    if (typeof item?.photoVersion === "number" && item.photoVersion > 0) deletePhotoInBatch(delBatch, itemId);
+    await delBatch.commit();
     if (stockMap.has(itemId)) await deleteDoc(doc(db, "stock", itemId)); // สต็อกของเมนูที่ลบไม่มีใครใช้แล้ว
   };
 

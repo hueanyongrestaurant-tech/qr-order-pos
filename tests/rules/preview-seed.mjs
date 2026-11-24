@@ -74,6 +74,34 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, "tableViews", token), { table: "1-2", version: TABLE_VIEW_VERSION, data: encoded.data, hash: encoded.hash, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
   console.log(`customer link (table 1-2): http://localhost:5174/?t=${token}`);
 });
+// รูปเมนู (menuPhotos) — 4 เมนูแรกมีรูป, เมนูที่ 5 ยังรอรูปเดิมจาก Supabase (ช่องว่าง), ที่เหลือไม่มีรูป
+// ใช้รูปที่กู้จาก cache ถ้ามีบนเครื่อง (recovered-menu-photos/ ไม่อยู่ใน git) ไม่งั้นสร้างรูปสีพื้น
+{
+  const sharp = (await import("sharp")).default;
+  const { readdirSync, readFileSync, existsSync } = await import("node:fs");
+  const recDir = path.join(here, "..", "..", "recovered-menu-photos", "menuPhotos");
+  const files = existsSync(recDir) ? readdirSync(recDir).filter((f) => /^\d+-\w+\.jpg$/.test(f)).slice(0, 4) : [];
+  const colors = [[200, 120, 60], [90, 140, 70], [180, 60, 60], [60, 110, 170]];
+  const items = Object.values(CURRENT_MENU);
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    for (let i = 0; i < 4 && i < items.length; i++) {
+      const [r, g, b] = colors[i];
+      const src = files[i] ? readFileSync(path.join(recDir, files[i]))
+        : await sharp({ create: { width: 800, height: 600, channels: 3, background: { r, g, b } } }).jpeg().toBuffer();
+      const webp = await sharp(src).resize(600, 600, { fit: "inside" }).webp({ quality: 70 }).toBuffer();
+      const version = 1000 + i;
+      await setDoc(doc(db, "menuPhotos", items[i].id), { data: `data:image/webp;base64,${webp.toString("base64")}`, version, source: "cache-recovery" });
+      await setDoc(doc(db, "menuItems", items[i].id), { photoVersion: version }, { merge: true });
+    }
+    if (items[4]) {
+      await setDoc(doc(db, "menuItems", items[4].id), {
+        photo: `https://ayfwvhgvnbixwfaovlzk.supabase.co/storage/v1/object/public/menu-photos/menuPhotos/${items[4].id}.jpg?v=1`,
+      }, { merge: true });
+    }
+  });
+  console.log(`menu photos: 4 seeded (${files.length ? "recovered files" : "solid colours"}), 1 waiting for Supabase`);
+}
 // การจอง (วันนี้/พรุ่งนี้ตามเวลาไทย) — โชว์แถบเตือนหน้าออเดอร์ + ป้าย "จอง" ในผังโต๊ะ + เตือนชน 2 ชม.
 {
   const bkkNow = new Date(Date.now() + 7 * 3600_000);

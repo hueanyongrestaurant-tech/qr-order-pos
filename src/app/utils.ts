@@ -118,13 +118,6 @@ export async function fetchFreshMenuItems(
   }
 }
 
-export function resolvePhoto(photo: string, w = 400, h = 300): string {
-  if (!photo) return "";
-  // data: = base64 เก่า (ก่อน migrate ไป Storage), http = URL เต็มจาก Storage (Supabase) — คืนค่าตรงๆ ทั้งคู่
-  if (photo.startsWith("data:") || photo.startsWith("http")) return photo;
-  return `https://images.unsplash.com/photo-${photo}?w=${w}&h=${h}&fit=crop&auto=format`; // Unsplash photo ID (เมนูตัวอย่างเดิม)
-}
-
 export function itemPrice(
   item: MenuItem,
   meat: MeatChoice | undefined,
@@ -569,28 +562,6 @@ export function ignoreSoldOut<M extends MenuItem>(item: M): M {
       choices: g.choices.map(({ soldOut: _soldOut, active: _active, ...c }) => c),
     })),
   };
-}
-
-export function compressImage(file: File, maxWidth = 600, quality = 0.7): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext("2d");
-        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.onerror = reject;
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 // query ออเดอร์ที่ชำระเงินแล้วตามช่วงเวลา (bin ตาม createdAt เหมือน logic เดิมของ History/Stats)

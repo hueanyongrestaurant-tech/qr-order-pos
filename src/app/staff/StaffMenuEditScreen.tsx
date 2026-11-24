@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Check, ChevronLeft, Plus, Trash2, X } from "lucide-react";
 import type { Category, CustomGroup, Language, MenuItem } from "../types";
 import { T } from "../translations";
-import { compressImage, resolvePhoto, uid } from "../utils";
+import { uid } from "../utils";
+import { compressMenuPhoto, hasPhotoSlot, isLegacyPhotoUrl, type PhotoChange } from "../menuPhotos";
+import { MenuPhoto } from "../components/MenuPhoto";
 import { isChoiceClosed, normalizeMenuItem } from "../menuOptions";
 import { LannaBorder } from "../shared";
 import { parseStockInput, stockLevel, type StockEntry } from "../stock";
@@ -19,7 +21,8 @@ export interface StockFormValue {
 interface StaffMenuEditProps {
   lang: Language;
   item: MenuItem;
-  onSave: (item: MenuItem, stock: StockFormValue) => Promise<void>;
+  // photo: undefined = ไม่แตะรูป | null = ลบรูป | { data } = รูปใหม่ — เขียน menuPhotos + photoVersion ใน batch เดียวกับเมนู
+  onSave: (item: MenuItem, stock: StockFormValue, photo: PhotoChange) => Promise<void>;
   // สวิตช์ เปิด/ปิด ตัวเลือก — เขียนลง DB ทันที (ไม่รอปุ่มบันทึก) คืน false = ตัวเลือกนี้ยังไม่มีใน DB เก็บไว้ในฟอร์มก่อน
   onSetChoiceClosed: (itemId: string, groupId: string, choiceId: string, closed: boolean) => Promise<boolean>;
   onCancel: () => void;
@@ -48,6 +51,13 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
   const [pendingSwitches, setPendingSwitches] = useState<Set<string>>(new Set());
 
   const update = (patch: Partial<MenuItem>) => setForm((prev) => ({ ...prev, ...patch }));
+  // รูป: แยกจากฟอร์ม — form.photo (URL Supabase เดิม) ไม่แตะเลย
+  const [photoChange, setPhotoChange] = useState<PhotoChange>(undefined);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  // เมนูที่รูปเดิมยังรอย้ายจาก Supabase (11 ธ.ค.) — อัปรูปใหม่ตอนนี้ติ๊ก "ชั่วคราว" ไว้ให้ก่อน
+  const awaitingOriginal = isLegacyPhotoUrl(item.photo) && item.photoVersion === undefined;
+  const showCurrent = photoChange === undefined && hasPhotoSlot(item);
   const groups = form.customGroups || [];
   const setGroups = (next: CustomGroup[]) => update({ customGroups: next });
   const patchGroup = (gIdx: number, patch: Partial<CustomGroup>) =>
@@ -70,7 +80,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave(form, { remaining, alertAt, remainingChanged });
+      await onSave(form, { remaining, alertAt, remainingChanged }, photoChange);
     } catch (err) {
       console.error("save menu item failed", err);
       setSaveError(`${en ? "Save failed" : "บันทึกไม่สำเร็จ"} (${errorCode(err)})`);
@@ -165,11 +175,26 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
           <>
             <div className="mb-5">
               <label className="text-sm font-semibold text-foreground block mb-1.5">{en ? "Photo" : "รูปภาพ"}</label>
-              {form.photo ? (
+              {photoChange ? (
                 <div className="relative w-full h-40 rounded-xl overflow-hidden bg-muted mb-2">
-                  <img src={resolvePhoto(form.photo, 600, 400)} alt="" className="w-full h-full object-cover" />
+                  <img src={photoChange.data} alt="" className="w-full h-full object-cover" />
                   <button
-                    onClick={() => update({ photo: "" })}
+                    onClick={() => setPhotoChange(undefined) /* ทิ้งรูปที่เพิ่งเลือก กลับไปรูปเดิม */}
+                    className="absolute top-2 right-2 bg-black/60 text-white p-1.5 rounded-full hover:bg-black/80 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ) : showCurrent ? (
+                <div className="relative w-full h-40 mb-2">
+                  <MenuPhoto item={item} alt="" className="w-full h-40 rounded-xl" iconSize={36} />
+                  {awaitingOriginal && (
+                    <div className="absolute bottom-2 left-2 right-12 bg-black/60 text-white text-[11px] px-2 py-1 rounded-lg">
+                      {en ? "Original photo returns on 11 Dec" : "รูปเดิมจะกลับมาวันที่ 11 ธ.ค."}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setPhotoChange(null)}
                     className="absolute top-2 right-2 bg-black/60 text-white p-1.5 rounded-full hover:bg-black/80 transition-colors"
                   >
                     <Trash2 size={14} />
@@ -180,15 +205,38 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
                   {en ? "No photo" : "ยังไม่มีรูป"}
                 </div>
               )}
-              <label className="block w-full text-center bg-card border-2 border-dashed border-border rounded-xl py-2.5 text-sm font-medium text-foreground cursor-pointer hover:border-primary/40 transition-all">
-                {en ? "Upload Photo" : "อัปโหลดรูปภาพ"}
+              {photoChange && isLegacyPhotoUrl(item.photo) && (
+                <label className="flex items-start gap-2 text-xs text-muted-foreground mb-2">
+                  <input
+                    type="checkbox"
+                    checked={!!photoChange.temporary}
+                    onChange={(e) => setPhotoChange({ ...photoChange, temporary: e.target.checked })}
+                    className="mt-0.5"
+                  />
+                  <span>{en ? "Temporary photo — replace with the original on 11 Dec" : "รูปชั่วคราว — แทนด้วยรูปเดิมวันที่ 11 ธ.ค."}</span>
+                </label>
+              )}
+              {photoError && <div className="text-xs text-destructive mb-2">{photoError}</div>}
+              <label className={`block w-full text-center bg-card border-2 border-dashed border-border rounded-xl py-2.5 text-sm font-medium text-foreground cursor-pointer hover:border-primary/40 transition-all ${photoBusy ? "opacity-50 pointer-events-none" : ""}`}>
+                {photoBusy ? (en ? "Compressing…" : "กำลังย่อรูป…") : en ? "Upload Photo" : "อัปโหลดรูปภาพ"}
                 <input
                   type="file"
                   accept="image/*"
                   className="hidden"
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
-                    if (file) update({ photo: await compressImage(file) });
+                    e.target.value = "";
+                    if (!file) return;
+                    setPhotoBusy(true);
+                    setPhotoError(null);
+                    try {
+                      setPhotoChange({ data: await compressMenuPhoto(file), temporary: awaitingOriginal });
+                    } catch (err) {
+                      console.error("compress photo failed", err);
+                      setPhotoError(en ? "Could not read this photo — try another one" : "อ่านรูปนี้ไม่ได้ — ลองรูปอื่น");
+                    } finally {
+                      setPhotoBusy(false);
+                    }
                   }}
                 />
               </label>

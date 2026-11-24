@@ -3,9 +3,10 @@ import type { CartItem, Language } from "../types";
 import { ADD_ONS } from "../constants";
 import { T } from "../translations";
 import { tableTitle } from "../tables";
-import { cartItemMeatLabel, cartItemTotal, cartTotal, resolvePhoto } from "../utils";
+import { cartItemMeatLabel, cartItemTotal, cartTotal } from "../utils";
 import { LannaBorder } from "../shared";
-import { ImageWithFallback } from "../components/figma/ImageWithFallback";
+import { MenuPhoto } from "../components/MenuPhoto";
+import { hasPhotoSlot } from "../menuPhotos";
 
 // ─── Cart Screen ──────────────────────────────────────────────────────────────
 
@@ -113,14 +114,13 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
             {cart.map((ci) => (
               <div key={ci.cartId} className={`bg-card rounded-2xl p-4 border ${isUnavailable(ci) || isShort(ci) ? "border-destructive/50" : "border-border"}`}>
                 <div className="flex gap-3">
-                  {ci.item.photo && (
-                    <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted flex-shrink-0">
-                      <ImageWithFallback
-                        src={resolvePhoto(ci.item.photo, 128, 128)}
-                        alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
+                  {hasPhotoSlot(ci.item) && (
+                    <MenuPhoto
+                      item={ci.item}
+                      alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
+                      className="w-16 h-16 rounded-xl flex-shrink-0"
+                      iconSize={20}
+                    />
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">

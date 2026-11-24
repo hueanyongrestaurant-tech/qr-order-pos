@@ -3,9 +3,10 @@ import { ChevronLeft, Flame, Plus, ReceiptText, ShoppingCart, Star, Utensils, X 
 import type { Category, CartItem, Language, MenuItem } from "../types";
 import { T } from "../translations";
 import { tableTitle } from "../tables";
-import { cartTotal, menuAvailability, resolvePhoto } from "../utils";
+import { cartTotal, menuAvailability } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
-import { ImageWithFallback } from "../components/figma/ImageWithFallback";
+import { MenuPhoto } from "../components/MenuPhoto";
+import { hasPhotoSlot } from "../menuPhotos";
 
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
 
@@ -193,12 +194,12 @@ export function MenuScreen({
                   }`}
               >
                 {/* มีรูป: ป้ายลอยมุมขวาบนของรูป | ไม่มีรูป: ป้ายอยู่บรรทัดบนสุดเหนือชื่อ (ลอยแล้วจะทับชื่อ) */}
-                {soldOut && item.photo && (
+                {soldOut && hasPhotoSlot(item) && (
                   <div className="absolute top-2 right-2 z-10 bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
                     {t.soldOut}
                   </div>
                 )}
-                {soldOut && !item.photo && (
+                {soldOut && !hasPhotoSlot(item) && (
                   <div className="px-2.5 pt-2.5 -mb-1">
                     <span className="inline-block bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
                       {t.soldOut}
@@ -206,15 +207,13 @@ export function MenuScreen({
                   </div>
                 )}
                 <div className={soldOut ? "grayscale opacity-50" : ""}>
-                {item.photo && (
-                  <div className="aspect-[4/3] relative bg-muted overflow-hidden">
-                    <ImageWithFallback
-                      src={resolvePhoto(item.photo, 400, 300)}
-                      alt={lang === "en" ? item.name.en : item.name.th}
-                      loading="lazy"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  </div>
+                {hasPhotoSlot(item) && (
+                  <MenuPhoto
+                    item={item}
+                    alt={lang === "en" ? item.name.en : item.name.th}
+                    className="aspect-[4/3]"
+                    imgClassName="group-hover:scale-105 transition-transform duration-300"
+                  />
                 )}
                 <div className="p-2.5">
                   <div className="font-semibold text-foreground text-sm leading-snug">

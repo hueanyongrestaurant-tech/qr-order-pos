@@ -1,0 +1,51 @@
+# สำรองรูปเมนู (Firestore menuPhotos) เป็นไฟล์ลง branch "photo-backup" ทุกสัปดาห์ — ฟรี ไม่ต้องมีคนทำ ไม่ต้องใช้ secret
+# อ่านแบบสาธารณะเท่านั้น (menuItems read / menuPhotos get เปิดให้ทุกคนตาม firestore.rules)
+# branch ถูกเขียนใหม่เป็น commit เดียวทุกครั้ง (force push) — เก็บแค่รูปเวอร์ชันล่าสุด repo ไม่โตเรื่อยๆ
+# กู้คืน: scripts/menu-photos/README.md
+name: photo-backup
+
+on:
+  schedule:
+    - cron: "0 20 * * 0" # ทุกวันจันทร์ 03:00 เวลาไทย (ร้านปิด)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: photo-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Previous manifest (guard against overwriting a good backup with an empty one)
+        run: |
+          git fetch --depth=1 origin photo-backup:refs/remotes/origin/photo-backup || true
+          git show origin/photo-backup:manifest.json > "$RUNNER_TEMP/prev-manifest.json" 2>/dev/null || rm -f "$RUNNER_TEMP/prev-manifest.json"
+
+      - name: Download photos
+        run: node scripts/menu-photos/backup.mjs "$RUNNER_TEMP/photo-backup" "$RUNNER_TEMP/prev-manifest.json"
+
+      - name: Replace branch photo-backup with one fresh commit
+        working-directory: ${{ runner.temp }}/photo-backup
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          git init -q -b photo-backup
+          git config user.name "photo-backup bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Menu photo backup $(date -u +%Y-%m-%d)"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${REPO}.git" photo-backup
