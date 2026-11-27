@@ -13,12 +13,21 @@ import { db } from "../lib/firebase";
 import type { MenuItem } from "./types";
 
 export const MENU_PHOTOS = "menuPhotos";
+// รูปย่อสำหรับหน้ารายการเมนู/ตะกร้า (ดู loadMenuThumb) — รูปเต็มโหลดเฉพาะตอนเปิดรายละเอียดเมนู
+// menuPhotoThumbs/{itemId} = { data, version (= เวอร์ชันรูปเต็มที่ใช้ย่อ), side, updatedAt }
+// ไม่มี / เวอร์ชันเก่ากว่า photoVersion (เช่น แอปเวอร์ชันเก่าเปลี่ยนรูป) → หน้ารายการใช้รูปเต็มแทน
+export const MENU_PHOTO_THUMBS = "menuPhotoThumbs";
+export const THUMB_SIDE = 240; // px ด้านยาว — เปลี่ยนค่า = สคริปต์ menuphotos:thumbs ย่อใหม่ทุกรูป (เช็คจาก side)
+export const THUMB_TARGET_BYTES = 15 * 1024;
+// ต้องตรงกับ firestore.rules (menuPhotoThumbs: data.size() <= ...)
+export const THUMB_MAX_DATA_URL_LENGTH = 30_000;
 export const PHOTO_MAX_SIDE = 600; // px ด้านยาว
 export const PHOTO_TARGET_BYTES = 40 * 1024; // เป้าขนาดไฟล์ (ไบต์จริง ไม่ใช่ความยาว base64)
 // ต้องตรงกับ firestore.rules (menuPhotos: data.size() <= ...) — ความยาวสตริง data URL ทั้งก้อน ≈ 87 KB ไฟล์จริง
 export const PHOTO_MAX_DATA_URL_LENGTH = 120_000;
 
 export type PhotoSource = "upload" | "cache-recovery" | "supabase-original" | "restore";
+export interface MenuPhotoThumbDoc { data: string; version: number; side?: number; updatedAt?: unknown }
 export interface MenuPhotoDoc {
   data: string;
   version: number;
@@ -97,12 +106,19 @@ export function createMemoryPhotoStore(): PhotoCacheStore & { map: Map<string, {
 // ─── ตัวโหลด ───
 // อ่าน Firestore เฉพาะตอน cache บนเครื่องไม่มีเวอร์ชันนี้ | หลายจอขอรูปเดียวกันพร้อมกัน = อ่านครั้งเดียว
 // คืน null = ไม่มีรูป/โหลดไม่ได้ (ผู้เรียกแสดงช่องว่าง) — ไม่ throw
-export function createPhotoLoader(store: PhotoCacheStore, fetchDoc: (itemId: string) => Promise<MenuPhotoDoc | null>) {
+// rejectOlder (รูปย่อ): doc เวอร์ชันเก่ากว่าที่ขอ = ถือว่าไม่มี (ผู้เรียกไปใช้รูปเต็มแทน) และจำไว้ทั้ง session ไม่อ่านซ้ำ
+export function createPhotoLoader(
+  store: PhotoCacheStore,
+  fetchDoc: (itemId: string) => Promise<{ data: string; version?: number } | null>,
+  opts: { rejectOlder?: boolean } = {},
+) {
   const inflight = new Map<string, Promise<string | null>>();
   const memory = new Map<string, { version: number; data: string }>();
+  const missing = new Map<string, number>(); // itemId → เวอร์ชันที่ขอแล้วไม่มี (rejectOlder เท่านั้น)
   const load = (itemId: string, version: number): Promise<string | null> => {
     const mem = memory.get(itemId);
     if (mem && mem.version === version) return Promise.resolve(mem.data);
+    if (missing.get(itemId) === version) return Promise.resolve(null);
     const key = `${itemId}@${version}`;
     const running = inflight.get(key);
     if (running) return running;
@@ -114,7 +130,11 @@ export function createPhotoLoader(store: PhotoCacheStore, fetchDoc: (itemId: str
           return cached.data;
         }
         const fresh = await fetchDoc(itemId);
-        if (!fresh || typeof fresh.data !== "string" || !fresh.data.startsWith("data:image/")) return null;
+        if (!fresh || typeof fresh.data !== "string" || !fresh.data.startsWith("data:image/")
+          || (opts.rejectOlder && !(typeof fresh.version === "number" && fresh.version >= version))) {
+          if (opts.rejectOlder) missing.set(itemId, version);
+          return null;
+        }
         // doc อาจใหม่กว่าเวอร์ชันที่เมนูบอก (เพิ่งเปลี่ยนรูป) — เก็บตามเวอร์ชันของ doc จริง
         const v = typeof fresh.version === "number" ? fresh.version : version;
         const entry = { version: v, data: fresh.data };
@@ -144,15 +164,60 @@ export async function fetchMenuPhotoDoc(itemId: string): Promise<MenuPhotoDoc | 
   return snap.exists() ? (snap.data() as MenuPhotoDoc) : null;
 }
 
+export async function fetchMenuThumbDoc(itemId: string): Promise<MenuPhotoThumbDoc | null> {
+  const snap = await getDoc(doc(db, MENU_PHOTO_THUMBS, itemId));
+  return snap.exists() ? (snap.data() as MenuPhotoThumbDoc) : null;
+}
+
 let _loader: ReturnType<typeof createPhotoLoader> | undefined;
 export function menuPhotoLoader() {
-  _loader ??= createPhotoLoader(createIdbPhotoStore(), fetchMenuPhotoDoc);
+  if (!_loader) {
+    _loader = createPhotoLoader(createIdbPhotoStore(), fetchMenuPhotoDoc);
+    requestPersistentStorage();
+  }
   return _loader;
+}
+
+let _thumbLoader: ReturnType<typeof createPhotoLoader> | undefined;
+export function menuThumbLoader() {
+  if (!_thumbLoader) {
+    _thumbLoader = createPhotoLoader(createIdbPhotoStore("menu-photo-thumb-cache"), fetchMenuThumbDoc, { rejectOlder: true });
+    requestPersistentStorage();
+  }
+  return _thumbLoader;
+}
+
+// รูปย่อก่อน ไม่มี/เก่า → รูปเต็ม (MenuPhoto size="thumb")
+export function loadMenuThumb(
+  itemId: string,
+  version: number,
+  thumbs = menuThumbLoader(),
+  full = menuPhotoLoader(),
+): Promise<string | null> {
+  return thumbs.load(itemId, version).then((t) => t ?? full.load(itemId, version));
+}
+
+// ขอให้เบราว์เซอร์ไม่ลบ cache รูปเองตอนพื้นที่เหลือน้อย — ครั้งเดียวต่อการเปิดหน้า เงียบๆ ไม่ได้ก็ไม่เป็นไร
+// Firefox เด้งหน้าต่างถามผู้ใช้ → ข้าม (ลูกค้าสแกน QR ไม่ควรเจอคำถามแปลกๆ)
+// iPhone Safari: ไม่กันการลบข้อมูลเว็บที่ไม่ได้เปิด 7 วัน (ยกเว้นเว็บที่เพิ่มลงหน้าจอโฮม) — แต่ไม่เสียหาย
+let persistAsked = false;
+export function requestPersistentStorage(nav: Navigator | undefined = typeof navigator === "undefined" ? undefined : navigator) {
+  if (persistAsked || !nav) return;
+  persistAsked = true;
+  try {
+    if (/firefox|fxios/i.test(nav.userAgent || "")) return;
+    const s = nav.storage;
+    if (!s?.persist || !s.persisted) return;
+    s.persisted().then((already) => (already ? undefined : s.persist())).catch(() => undefined);
+  } catch {
+    /* ไม่รองรับ — ข้าม */
+  }
 }
 
 // ─── พนักงานเปลี่ยน/ลบรูป — เขียนลง batch เดียวกับการบันทึกเมนู ───
 // change: undefined = ไม่แตะรูป | null = ลบรูป | { data } = รูปใหม่ (บีบอัดแล้ว)
-export type PhotoChange = undefined | null | { data: string; temporary?: boolean };
+// thumb = รูปย่อ (THUMB_SIDE) เขียนคู่กันใน batch เดียว | original = ไฟล์ที่พนักงานเลือก (ส่งขึ้น Storage ทีหลัง ดู staff/photoOriginals.ts)
+export type PhotoChange = undefined | null | { data: string; thumb?: string; temporary?: boolean; original?: File };
 
 // คืนค่าที่ต้องใส่ใน menuItems (photoVersion) — ผู้เรียก spread ลงใน set ของ menuItems
 export function applyPhotoChange(
@@ -163,9 +228,11 @@ export function applyPhotoChange(
   now = Date.now(),
 ): { photoVersion?: number } {
   const ref = doc(db, MENU_PHOTOS, itemId);
+  const thumbRef = doc(db, MENU_PHOTO_THUMBS, itemId);
   if (change === undefined) return prevVersion === undefined ? {} : { photoVersion: prevVersion };
   if (change === null) {
     batch.delete(ref);
+    batch.delete(thumbRef);
     return { photoVersion: 0 };
   }
   // เวอร์ชันต้องเพิ่มขึ้นเสมอ (ลบแล้วอัปใหม่ก็ไม่ชนเวอร์ชันเก่าที่ค้างใน cache เครื่องลูกค้า)
@@ -177,12 +244,16 @@ export function applyPhotoChange(
     source: "upload",
     ...(change.temporary ? { temporary: true } : {}),
   });
+  // ย่อไม่สำเร็จ (ไม่มี thumb) → ลบรูปย่อเก่าทิ้ง หน้ารายการใช้รูปเต็มแทน (ดีกว่าโชว์รูปเก่า)
+  if (change.thumb) batch.set(thumbRef, { data: change.thumb, version, side: THUMB_SIDE, updatedAt: serverTimestamp() });
+  else batch.delete(thumbRef);
   return { photoVersion: version };
 }
 
 // ลบเมนูทั้งตัว — ลบรูปไปด้วยใน batch เดียวกัน
 export function deletePhotoInBatch(batch: WriteBatch, itemId: string) {
   batch.delete(doc(db, MENU_PHOTOS, itemId));
+  batch.delete(doc(db, MENU_PHOTO_THUMBS, itemId));
 }
 
 // ─── บีบอัดในเบราว์เซอร์ ───
@@ -226,5 +297,26 @@ export async function compressMenuPhoto(file: Blob): Promise<string> {
     side = Math.round(side * 0.8);
   }
   if (best.length > PHOTO_MAX_DATA_URL_LENGTH) throw new Error("photo too large after compression");
+  return best;
+}
+
+// รูปย่อ: ด้านยาว THUMB_SIDE ลดคุณภาพจน ≤ ~15 KB (ส่วนใหญ่ ~5 KB) — WebP, Safari ได้ JPEG
+export async function compressMenuThumb(file: Blob): Promise<string> {
+  const img = await loadImage(file);
+  const scale = Math.min(1, THUMB_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas unavailable");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  let best = "";
+  for (const q of [0.7, 0.6, 0.5, 0.4]) {
+    let out = canvas.toDataURL("image/webp", q);
+    if (!out.startsWith("data:image/webp")) out = canvas.toDataURL("image/jpeg", q);
+    best = out;
+    if (dataUrlBytes(out) <= THUMB_TARGET_BYTES) break;
+  }
+  if (best.length > THUMB_MAX_DATA_URL_LENGTH) throw new Error("thumbnail too large");
   return best;
 }

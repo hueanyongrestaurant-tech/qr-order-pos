@@ -2,6 +2,9 @@
 // ใช้ Firebase Web SDK เหมือนสคริปต์อื่น — test กับ emulator ได้ (tests/rules/menuPhotosMigration.test.mjs)
 // อ่าน: menuItems (public) + menuPhotos ทีละ id (public get) | เขียน: ต้องล็อกอินบัญชีร้าน (rules: isStaff)
 import { collection, doc, getDoc, getDocs, runTransaction, serverTimestamp, type Firestore } from "firebase/firestore";
+import { THUMB_SIDE } from "./convert";
+
+export const MENU_PHOTO_THUMBS = "menuPhotoThumbs";
 
 export const SUPABASE_PHOTO_MARK = "/storage/v1/object/public/menu-photos/";
 
@@ -80,9 +83,11 @@ export async function writeOriginal(
   data: string,
   source: "cache-recovery" | "supabase-original",
   version = Date.now(),
+  thumb?: string, // รูปย่อ (menuPhotoThumbs) เขียนใน transaction เดียวกัน | ไม่มี = ลบรูปย่อเก่า (สคริปต์ thumbs เติมทีหลัง)
 ): Promise<"written" | "changed" | "gone"> {
   const itemRef = doc(db, "menuItems", c.row.id);
   const photoRef = doc(db, "menuPhotos", c.row.id);
+  const thumbRef = doc(db, MENU_PHOTO_THUMBS, c.row.id);
   return runTransaction(db, async (tx) => {
     const item = await tx.get(itemRef);
     if (!item.exists()) return "gone";
@@ -93,6 +98,8 @@ export async function writeOriginal(
       if (p.exists() && p.data().temporary !== true) return "changed";
     }
     tx.set(photoRef, { data, version, updatedAt: serverTimestamp(), source });
+    if (thumb) tx.set(thumbRef, { data: thumb, version, side: THUMB_SIDE, updatedAt: serverTimestamp() });
+    else tx.delete(thumbRef);
     tx.update(itemRef, { photoVersion: version });
     return "written";
   });
@@ -134,4 +141,69 @@ export async function writeRestore(db: Firestore, row: MenuRow, data: string, ve
     tx.update(itemRef, { photoVersion: version });
     return "written";
   });
+}
+
+// ─── รูปย่อ (menuPhotoThumbs) ───
+// ต้องย่อใหม่: มีรูป (photoVersion > 0) และรูปย่อไม่มี / เวอร์ชันไม่ตรงรูปเต็ม / ขนาด side ไม่ตรง THUMB_SIDE
+// อ่าน menuPhotos + menuPhotoThumbs ทีละ id (public get) — ไม่ list collection
+export interface ThumbTask { row: MenuRow; version: number; photoData: string; why: "missing" | "stale" | "resize" }
+export async function planThumbs(db: Firestore, rows: MenuRow[]) {
+  const todo: ThumbTask[] = [];
+  let upToDate = 0;
+  const skipped: { row: MenuRow; why: string }[] = [];
+  for (const row of rows) {
+    if (!(row.photoVersion && row.photoVersion > 0)) continue;
+    const p = await getDoc(doc(db, "menuPhotos", row.id));
+    const pd = p.exists() ? (p.data() as Record<string, any>) : null;
+    if (!pd || typeof pd.data !== "string") { skipped.push({ row, why: "ไม่มี doc รูปเต็ม" }); continue; }
+    if (pd.version !== row.photoVersion) { skipped.push({ row, why: "เวอร์ชันรูปเต็มไม่ตรงเมนู (กำลังเปลี่ยนรูป?)" }); continue; }
+    const t = await getDoc(doc(db, MENU_PHOTO_THUMBS, row.id));
+    const td = t.exists() ? (t.data() as Record<string, any>) : null;
+    const why = !td ? "missing" : td.version !== pd.version ? "stale" : td.side !== THUMB_SIDE ? "resize" : null;
+    if (why) todo.push({ row, version: pd.version, photoData: pd.data, why });
+    else upToDate++;
+  }
+  return { todo, upToDate, skipped };
+}
+
+// เขียนรูปย่อ — ข้ามถ้ารูปเต็มเปลี่ยนเวอร์ชันระหว่างรัน
+export async function writeThumb(db: Firestore, itemId: string, version: number, data: string): Promise<"written" | "changed"> {
+  const photoRef = doc(db, "menuPhotos", itemId);
+  const thumbRef = doc(db, MENU_PHOTO_THUMBS, itemId);
+  return runTransaction(db, async (tx) => {
+    const p = await tx.get(photoRef);
+    if (!p.exists() || p.data().version !== version) return "changed";
+    tx.set(thumbRef, { data, version, side: THUMB_SIDE, updatedAt: serverTimestamp() });
+    return "written";
+  });
+}
+
+// ─── 11 ธ.ค.: ต้นฉบับทุกรูปจาก Supabase → Storage photo-originals/ ───
+// ทุกเมนูที่มี URL Supabase (รวมเมนูที่ซ่อน / พนักงานลบรูป / มีรูปจริงแล้ว) — ไม่ใช่เฉพาะที่ต้องเติมรูปแสดงผล
+export function originalTargets(rows: MenuRow[]): { row: MenuRow; path: string }[] {
+  return rows.flatMap((row) => {
+    const path = supabasePath(row.photo);
+    return path ? [{ row, path }] : [];
+  });
+}
+
+const EXT_TYPES: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", heic: "image/heic" };
+// นามสกุล/ชนิดไฟล์ของต้นฉบับ: เชื่อ content-type จาก server ก่อน แล้วค่อยดูนามสกุลใน path
+export function originalType(supaPath: string, contentType: string | null): { ext: string; contentType: string } {
+  const ct = (contentType || "").split(";")[0].trim().toLowerCase();
+  const nameExt = supaPath.toLowerCase().match(/\.([a-z0-9]{2,5})$/)?.[1] ?? "";
+  if (ct.startsWith("image/")) {
+    const byType = Object.entries(EXT_TYPES).find(([, t]) => t === ct)?.[0];
+    const ext = byType ?? (nameExt || "img");
+    return { ext: ext === "jpeg" ? "jpg" : ext, contentType: ct };
+  }
+  if (EXT_TYPES[nameExt]) return { ext: nameExt === "jpeg" ? "jpg" : nameExt, contentType: EXT_TYPES[nameExt] };
+  return { ext: "jpg", contentType: "image/jpeg" };
+}
+
+// ชื่อไฟล์ใน Storage: เวอร์ชันรูปที่เพิ่งเขียน (ถ้าเมนูนี้ได้รูปแสดงผลรอบนี้) ไม่งั้นเวลาที่ไฟล์ถูกอัปขึ้น Supabase (Last-Modified)
+export function originalTimestamp(newVersion: number | undefined, lastModified: string | null, fallback: number): number {
+  if (newVersion) return newVersion;
+  const t = lastModified ? Date.parse(lastModified) : NaN;
+  return Number.isFinite(t) && t > 0 ? t : fallback;
 }

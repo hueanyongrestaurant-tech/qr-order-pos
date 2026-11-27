@@ -1,26 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Utensils } from "lucide-react";
 import type { MenuItem } from "../types";
-import { menuPhotoLoader, photoVersionOf } from "../menuPhotos";
+import { loadMenuThumb, menuPhotoLoader, menuThumbLoader, photoVersionOf } from "../menuPhotos";
 
 // รูปเมนูจาก menuPhotos/{id} — โหลดเมื่อเลื่อนมาใกล้จอเท่านั้น, cache บนเครื่องตาม id + เวอร์ชัน
 // ไม่มีรูป / กำลังโหลด / โหลดไม่ได้ = ช่องสีพื้นพร้อมไอคอนจางๆ (ไม่มีรูปแตกเด็ดขาด) — ไม่บล็อกการสั่งอาหาร
 // className = ขนาด/มุมโค้งของกรอบ (เหมือน <img> เดิม) — รูปเต็มกรอบแบบ object-cover
+// size="thumb" (รายการเมนู/ตะกร้า) = รูปย่อจาก menuPhotoThumbs ก่อน ไม่มี/เก่า → รูปเต็ม
 export function MenuPhoto({
   item,
   alt,
   className = "",
   imgClassName = "",
   iconSize = 28,
+  size = "full",
 }: {
   item: Pick<MenuItem, "id" | "photo" | "photoVersion">;
   alt: string;
   className?: string;
   imgClassName?: string;
   iconSize?: number;
+  size?: "thumb" | "full";
 }) {
   const version = photoVersionOf(item);
-  const loader = menuPhotoLoader();
+  const full = menuPhotoLoader();
+  const thumbs = size === "thumb" ? menuThumbLoader() : null;
+  const loader = useMemo(() => ({
+    peek: (id: string, v: number) => thumbs?.peek(id, v) ?? full.peek(id, v),
+    load: (id: string, v: number) => (thumbs ? loadMenuThumb(id, v, thumbs, full) : full.load(id, v)),
+  }), [thumbs, full]);
   const [src, setSrc] = useState<string | null>(() => (version ? loader.peek(item.id, version) : null));
   const [near, setNear] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);

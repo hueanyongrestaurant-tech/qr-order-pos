@@ -24,6 +24,9 @@
     "menuphotos:recovered:apply": "node scripts/menu-photos/run.mjs recovered apply",
     "menuphotos:supabase:dry-run": "node scripts/menu-photos/run.mjs supabase dry-run",
     "menuphotos:supabase:apply": "node scripts/menu-photos/run.mjs supabase apply",
+    "menuphotos:thumbs:dry-run": "node scripts/menu-photos/run.mjs thumbs dry-run",
+    "menuphotos:thumbs:apply": "node scripts/menu-photos/run.mjs thumbs apply",
+    "menuphotos:originals:download": "node scripts/menu-photos/run.mjs originals download",
     "menuphotos:restore:dry-run": "node scripts/menu-photos/run.mjs restore dry-run",
     "menuphotos:restore:apply": "node scripts/menu-photos/run.mjs restore apply",
     "menuphotos:backup": "node scripts/menu-photos/backup.mjs"

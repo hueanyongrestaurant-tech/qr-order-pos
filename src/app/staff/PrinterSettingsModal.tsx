@@ -17,6 +17,7 @@ import { RECEIPT_FOOTER_MAX_LINES, saveReceiptSettings, useReceiptSettings, type
 import { retryPrintRouting, savePrintStation, usePrintRouting, useRoutingCategories } from "./printRoutingStore";
 import { stationForCategory, type PrintStation } from "./stationTickets";
 import { TableLinksPanel } from "./TableLinksPanel";
+import { OriginalsBackupPanel } from "./OriginalsBackupPanel";
 import { LOAD_TIMEOUT_MS } from "../timeout";
 
 type SettingsTab = "device" | "printing" | "shop";
@@ -436,6 +437,8 @@ export function PrinterSettingsModal({ lang, onClose, onLogout }: PrinterSetting
                 </button>
               )}
               {testStatus && <p className="text-xs text-muted-foreground mt-2 text-center">{testStatus}</p>}
+
+              <OriginalsBackupPanel lang={lang} />
 
               {/* ออกจากระบบ — เฉพาะแอป Android (header ไม่มีปุ่ม กันกดพลาด) ใช้ตอนสลับบัญชี พนักงาน ↔ เจ้าของ ถามยืนยันก่อน
                   เครื่องพิมพ์ที่เลือก/หน้าที่ของเครื่องนี้ยังอยู่ */}

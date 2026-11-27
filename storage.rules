@@ -1,0 +1,40 @@
+rules_version = '2';
+
+// Cloud Storage for Firebase — ใช้เก็บ "ต้นฉบับรูปเมนู" อย่างเดียว (สำรอง ไม่ใช้แสดงผล)
+// รูปที่ลูกค้าเห็นอยู่ใน Firestore menuPhotos / menuPhotoThumbs — ดู src/app/menuPhotos.ts
+// วางที่ Firebase Console → Storage → Rules (ไม่ใช่หน้า Firestore) — ทดสอบกับ emulator: tests/rules/storageRules.test.mjs
+service firebase.storage {
+  match /b/{bucket}/o {
+    // บัญชีของร้าน — ต้องตรงกับ isStaff()/isOwner() ใน firestore.rules
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in ['admin@hueanyong.local', 'owner@hueanyong.local'];
+    }
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email == 'owner@hueanyong.local';
+    }
+
+    // photo-originals/{itemId}/{photoVersion หรือเวลา}.{นามสกุล}
+    // สร้าง = บัญชีร้าน, รูปภาพเท่านั้น, < 25 MB (ต้องตรงกับ ORIGINAL_MAX_BYTES ใน src/app/staff/photoOriginals.ts)
+    // อ่าน/list = เจ้าของเท่านั้น (สคริปต์ดาวน์โหลด) | ไม่มี rule update/delete = ทับหรือลบไม่ได้ทุกคน
+    // resource == null = ยังไม่มีไฟล์ชื่อนี้ (กันเขียนทับแม้ path ซ้ำ)
+    match /photo-originals/{itemId}/{fileName} {
+      allow create: if isStaff()
+        && resource == null
+        && request.resource.size > 0
+        && request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow get: if isOwner();
+    }
+    // list ทั้งโฟลเดอร์ (photo-originals/ และ photo-originals/{itemId}/) = เจ้าของเท่านั้น
+    match /photo-originals/{path=**} {
+      allow list: if isOwner();
+    }
+
+    // ที่อื่นทั้งหมด: ห้าม
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

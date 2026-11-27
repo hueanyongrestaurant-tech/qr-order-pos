@@ -3,7 +3,8 @@ import { Check, ChevronLeft, Plus, Trash2, X } from "lucide-react";
 import type { Category, CustomGroup, Language, MenuItem } from "../types";
 import { T } from "../translations";
 import { uid } from "../utils";
-import { compressMenuPhoto, hasPhotoSlot, isLegacyPhotoUrl, type PhotoChange } from "../menuPhotos";
+import { compressMenuPhoto, compressMenuThumb, hasPhotoSlot, isLegacyPhotoUrl, type PhotoChange } from "../menuPhotos";
+import { checkOriginal } from "./photoOriginals";
 import { MenuPhoto } from "../components/MenuPhoto";
 import { isChoiceClosed, normalizeMenuItem } from "../menuOptions";
 import { LannaBorder } from "../shared";
@@ -55,6 +56,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
   const [photoChange, setPhotoChange] = useState<PhotoChange>(undefined);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [originalSkipped, setOriginalSkipped] = useState(false); // ไฟล์ใหญ่เกินสำรองต้นฉบับ
   // เมนูที่รูปเดิมยังรอย้ายจาก Supabase (11 ธ.ค.) — อัปรูปใหม่ตอนนี้ติ๊ก "ชั่วคราว" ไว้ให้ก่อน
   const awaitingOriginal = isLegacyPhotoUrl(item.photo) && item.photoVersion === undefined;
   const showCurrent = photoChange === undefined && hasPhotoSlot(item);
@@ -217,6 +219,11 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
                 </label>
               )}
               {photoError && <div className="text-xs text-destructive mb-2">{photoError}</div>}
+              {photoChange && originalSkipped && (
+                <div className="text-xs text-muted-foreground mb-2">
+                  {en ? "File is over 25 MB — the original won't be backed up (the menu photo is fine)." : "ไฟล์ใหญ่เกิน 25 MB — ไม่ได้สำรองต้นฉบับ (รูปเมนูใช้ได้ปกติ)"}
+                </div>
+              )}
               <label className={`block w-full text-center bg-card border-2 border-dashed border-border rounded-xl py-2.5 text-sm font-medium text-foreground cursor-pointer hover:border-primary/40 transition-all ${photoBusy ? "opacity-50 pointer-events-none" : ""}`}>
                 {photoBusy ? (en ? "Compressing…" : "กำลังย่อรูป…") : en ? "Upload Photo" : "อัปโหลดรูปภาพ"}
                 <input
@@ -230,7 +237,13 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
                     setPhotoBusy(true);
                     setPhotoError(null);
                     try {
-                      setPhotoChange({ data: await compressMenuPhoto(file), temporary: awaitingOriginal });
+                      const data = await compressMenuPhoto(file);
+                      // รูปย่อสำหรับหน้ารายการ — ย่อไม่ได้ก็ไม่เป็นไร ลูกค้าเห็นรูปเต็มแทน
+                      const thumb = await compressMenuThumb(file).catch((err) => { console.warn("thumbnail failed", err); return undefined; });
+                      // ต้นฉบับ (ขนาดเดิม) สำรองขึ้น Storage หลังบันทึก — ใหญ่เกิน 25 MB ไม่สำรอง (แจ้งใต้รูป)
+                      const originalOk = checkOriginal(file) === "queued";
+                      setOriginalSkipped(!originalOk);
+                      setPhotoChange({ data, thumb, temporary: awaitingOriginal, ...(originalOk ? { original: file } : {}) });
                     } catch (err) {
                       console.error("compress photo failed", err);
                       setPhotoError(en ? "Could not read this photo — try another one" : "อ่านรูปนี้ไม่ได้ — ลองรูปอื่น");

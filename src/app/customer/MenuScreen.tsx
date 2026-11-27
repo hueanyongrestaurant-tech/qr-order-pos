@@ -210,6 +210,7 @@ export function MenuScreen({
                 {hasPhotoSlot(item) && (
                   <MenuPhoto
                     item={item}
+                    size="thumb"
                     alt={lang === "en" ? item.name.en : item.name.th}
                     className="aspect-[4/3]"
                     imgClassName="group-hover:scale-105 transition-transform duration-300"

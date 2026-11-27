@@ -117,6 +117,7 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
                   {hasPhotoSlot(ci.item) && (
                     <MenuPhoto
                       item={ci.item}
+                      size="thumb"
                       alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
                       className="w-16 h-16 rounded-xl flex-shrink-0"
                       iconSize={20}

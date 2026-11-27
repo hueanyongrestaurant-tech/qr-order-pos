@@ -113,6 +113,26 @@ service cloud.firestore {
       }
     }
 
+    // ─── รูปย่อ (menuPhotoThumbs/{itemId}) — หน้ารายการเมนู/ตะกร้า ~5 KB (รูปเต็มโหลดตอนเปิดรายละเอียด) ───
+    // สิทธิ์เหมือน menuPhotos | data URL ≤ 30,000 ตัวอักษร (≈ 22 KB ไฟล์จริง — แอปบีบให้ ≤ ~15 KB)
+    // ต้องตรงกับ THUMB_MAX_DATA_URL_LENGTH ใน src/app/menuPhotos.ts
+    match /menuPhotoThumbs/{itemId} {
+      allow get: if true;
+      allow list: if false;
+      allow delete: if isStaff();
+      allow create, update: if isStaff() && validMenuThumb(request.resource.data);
+
+      function validMenuThumb(d) {
+        return d.keys().hasAll(['data', 'version'])
+          && d.keys().hasOnly(['data', 'version', 'side', 'updatedAt'])
+          && d.data is string
+          && d.data.size() <= 30000
+          && d.data.matches('^data:image/(webp|jpeg);base64,[A-Za-z0-9+/=]+$')
+          && d.version is int && d.version > 0
+          && (!('side' in d) || (d.side is int && d.side > 0 && d.side <= 600));
+      }
+    }
+
     // ─── สต็อกต่อเมนู (stock/{itemId}) — ไม่มี doc = ขายไม่จำกัด ───
     // พนักงานแก้ได้ทุกอย่าง | ลูกค้า (ไม่ได้ล็อกอิน/บัญชีอื่น) "ลด remaining" ได้อย่างเดียว และต้องเป็นการเขียน
     // ใน commit เดียวกับการสร้างออเดอร์ใหม่ (lastOrderId = id ออเดอร์นั้น: ก่อน commit ต้องยังไม่มี

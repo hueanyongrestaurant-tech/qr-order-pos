@@ -41,6 +41,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 
 import { db, getAuthInstance } from "../lib/firebase";
 import { applyPhotoChange, deletePhotoInBatch, type PhotoChange } from "./menuPhotos";
+import { photoOriginalsQueue } from "./staff/photoOriginals";
 import { writeBatch, collection, addDoc, setDoc, onSnapshot, query, orderBy, where, limit, getDocs, getDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp, runTransaction, arrayUnion, arrayRemove, increment, deleteField, FieldPath } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { buildMenuSnapshot, readMenuSnapshot, readMenuSnapshotHash, writeMenuSnapshot } from "./menuSnapshot";
@@ -1380,6 +1381,18 @@ export default function App() {
     return () => { unsubscribe(); window.clearTimeout(fallback); };
   }, []);
 
+  // ต้นฉบับรูปที่ค้างในเครื่อง (ออฟไลน์/ส่งไม่ผ่าน) — ลองส่งตอนล็อกอินอยู่: เปิดแอป, กลับมาออนไลน์, ทุก 10 นาที
+  // คิวว่าง = อ่าน IndexedDB อย่างเดียว ไม่มี network | ฝั่งลูกค้าไม่เข้า effect นี้ (ไม่ได้ล็อกอิน)
+  useEffect(() => {
+    if (!staffLoggedIn) return;
+    const q = photoOriginalsQueue();
+    const kick = () => { q.flush().catch((err) => console.warn("photo originals retry failed", err)); };
+    kick();
+    window.addEventListener("online", kick);
+    const timer = window.setInterval(kick, 10 * 60 * 1000);
+    return () => { window.removeEventListener("online", kick); window.clearInterval(timer); };
+  }, [staffLoggedIn]);
+
   const toggleLang = () => setLang((l) => (l === "en" ? "th" : "en"));
   useEffect(() => {
     if (!activeCategory && categories.length > 0) setActiveCategory(categories[0].id);
@@ -2417,7 +2430,15 @@ export default function App() {
     } else {
       batch.update(stockRef, { alertAt: alertAt ?? deleteField() });
     }
+    // ต้นฉบับรูป: เข้าคิวในเครื่องก่อน commit (ปิดแอปกลางทางก็ไม่หาย) แล้วส่งขึ้น Storage หลัง commit — ดู staff/photoOriginals.ts
+    // เข้าคิวไม่ได้ (IndexedDB เสีย) ไม่บล็อกการบันทึกเมนู
+    const original = photoChange ? photoChange.original : undefined;
+    if (original && photoFields.photoVersion) {
+      await photoOriginalsQueue().enqueue(item.id, photoFields.photoVersion, original)
+        .catch((err) => console.error("queue photo original failed", err));
+    }
     await batch.commit();
+    if (original) void photoOriginalsQueue().flush().catch((err) => console.error("upload photo originals failed", err));
     if (!prev) {
       await logActivity({ action: "menu_item_added", itemName: item.name.th, details: { price: item.price } });
     } else if (prev.price !== item.price) {

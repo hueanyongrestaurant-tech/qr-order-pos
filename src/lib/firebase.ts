@@ -24,6 +24,9 @@ const useEmulator = import.meta.env.DEV && import.meta.env.VITE_FIREBASE_EMULATO
 const app = initializeApp(useEmulator ? { ...firebaseConfig, projectId: "demo-hueanyong" } : firebaseConfig);
 export const db = getFirestore(app);
 if (useEmulator) connectFirestoreEmulator(db, "127.0.0.1", 8080);
+// ใช้กับ Storage (staff/photoOriginalsUpload.ts — โหลดเฉพาะฝั่งพนักงาน ไม่เข้า bundle ลูกค้า)
+export const firebaseApp = app;
+export const usingEmulator = useEmulator;
 
 // เรียก getAuth() แบบ lazy — เฉพาะตอนโค้ดฝั่งพนักงานเรียกใช้จริง (login/logout/onAuthStateChanged)
 // ไม่ใช่ตอนโหลดไฟล์ทันที เพราะ getAuth() เองทำให้ Auth SDK เริ่มเช็ค session ที่ค้างใน
