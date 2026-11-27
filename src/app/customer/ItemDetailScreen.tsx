@@ -6,7 +6,6 @@ import { tableTitle } from "../tables";
 import { itemPrice, menuAvailability, uid } from "../utils";
 import { isChoiceClosed, normalizeMenuItem } from "../menuOptions";
 import { MenuPhoto } from "../components/MenuPhoto";
-import { hasPhotoSlot } from "../menuPhotos";
 
 // ─── Item Detail Screen ───────────────────────────────────────────────────────
 
@@ -83,9 +82,8 @@ export function ItemDetailScreen({
     <div className="min-h-screen bg-background flex flex-col">
       {/* Hero photo */}
       <div className="relative h-[42vh] bg-muted flex-shrink-0 overflow-hidden">
-        {hasPhotoSlot(item) && (
-          <MenuPhoto item={item} alt={lang === "en" ? item.name.en : item.name.th} className="w-full h-full" iconSize={48} />
-        )}
+        {/* กรอบรูปมีเสมอ — ไม่มีรูป = ไอคอนช้อนส้อม */}
+        <MenuPhoto item={item} alt={lang === "en" ? item.name.en : item.name.th} className="w-full h-full" iconSize={48} />
         <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background to-transparent" />
 
         {/* Top controls */}

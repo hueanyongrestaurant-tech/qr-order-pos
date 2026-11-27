@@ -6,7 +6,6 @@ import { tableTitle } from "../tables";
 import { cartTotal, menuAvailability } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
 import { MenuPhoto } from "../components/MenuPhoto";
-import { hasPhotoSlot } from "../menuPhotos";
 
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
 
@@ -188,34 +187,27 @@ export function MenuScreen({
                 onClick={() => onItemClick(item)}
                 disabled={soldOut}
                 aria-disabled={soldOut}
-                className={`relative bg-card rounded-2xl overflow-hidden text-left border border-border transition-all duration-150 group ${soldOut
+                // flex-col + justify-start: ปุ่มที่ถูกยืดสูงเท่าแถว ไม่จัดเนื้อหาไว้กลางการ์ด (ค่าเริ่มต้นของ <button> ใน Safari/Chrome)
+                className={`relative flex flex-col items-stretch justify-start h-full bg-card rounded-2xl overflow-hidden text-left border border-border transition-all duration-150 group ${soldOut
                   ? "cursor-not-allowed"
                   : "hover:border-primary/30 hover:shadow-lg active:scale-95"
                   }`}
               >
-                {/* มีรูป: ป้ายลอยมุมขวาบนของรูป | ไม่มีรูป: ป้ายอยู่บรรทัดบนสุดเหนือชื่อ (ลอยแล้วจะทับชื่อ) */}
-                {soldOut && hasPhotoSlot(item) && (
+                {/* ป้ายหมดลอยมุมขวาบนของกรอบรูปเสมอ (ทุกการ์ดมีกรอบรูป) */}
+                {soldOut && (
                   <div className="absolute top-2 right-2 z-10 bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
                     {t.soldOut}
                   </div>
                 )}
-                {soldOut && !hasPhotoSlot(item) && (
-                  <div className="px-2.5 pt-2.5 -mb-1">
-                    <span className="inline-block bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-                      {t.soldOut}
-                    </span>
-                  </div>
-                )}
-                <div className={soldOut ? "grayscale opacity-50" : ""}>
-                {hasPhotoSlot(item) && (
-                  <MenuPhoto
-                    item={item}
-                    size="thumb"
-                    alt={lang === "en" ? item.name.en : item.name.th}
-                    className="aspect-[4/3]"
-                    imgClassName="group-hover:scale-105 transition-transform duration-300"
-                  />
-                )}
+                <div className={`w-full ${soldOut ? "grayscale opacity-50" : ""}`}>
+                {/* กรอบรูปมีทุกการ์ด ขนาดเท่ากันหมด — ไม่มีรูป = ไอคอนช้อนส้อม (ดู MenuPhoto) */}
+                <MenuPhoto
+                  item={item}
+                  size="thumb"
+                  alt={lang === "en" ? item.name.en : item.name.th}
+                  className="w-full aspect-[4/3]"
+                  imgClassName="group-hover:scale-105 transition-transform duration-300"
+                />
                 <div className="p-2.5">
                   <div className="font-semibold text-foreground text-sm leading-snug">
                     {lang === "en" ? item.name.en : item.name.th}

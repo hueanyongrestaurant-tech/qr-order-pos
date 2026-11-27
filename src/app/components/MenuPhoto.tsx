@@ -4,9 +4,12 @@ import type { MenuItem } from "../types";
 import { loadMenuThumb, menuPhotoLoader, menuThumbLoader, photoVersionOf } from "../menuPhotos";
 
 // รูปเมนูจาก menuPhotos/{id} — โหลดเมื่อเลื่อนมาใกล้จอเท่านั้น, cache บนเครื่องตาม id + เวอร์ชัน
-// ไม่มีรูป / กำลังโหลด / โหลดไม่ได้ = ช่องสีพื้นพร้อมไอคอนจางๆ (ไม่มีรูปแตกเด็ดขาด) — ไม่บล็อกการสั่งอาหาร
-// className = ขนาด/มุมโค้งของกรอบ (เหมือน <img> เดิม) — รูปเต็มกรอบแบบ object-cover
+// กรอบรูปมีเสมอ ขนาดคงที่ตาม className (การ์ดไม่ยุบ/ไม่เปลี่ยนขนาด ไม่ว่าเมนูจะมีรูปหรือไม่):
+//   กำลังโหลด = กรอบสีพื้นกระพริบเบาๆ | ไม่มีรูป / โหลดไม่ได้ = กรอบสีพื้น + ไอคอนช้อนส้อม | มีรูป = รูปเต็มกรอบ (object-cover)
+// ไม่มีรูปแตกเด็ดขาด — ไม่บล็อกการสั่งอาหาร
 // size="thumb" (รายการเมนู/ตะกร้า) = รูปย่อจาก menuPhotoThumbs ก่อน ไม่มี/เก่า → รูปเต็ม
+export type MenuPhotoState = "loading" | "loaded" | "placeholder";
+
 export function MenuPhoto({
   item,
   alt,
@@ -30,6 +33,8 @@ export function MenuPhoto({
     load: (id: string, v: number) => (thumbs ? loadMenuThumb(id, v, thumbs, full) : full.load(id, v)),
   }), [thumbs, full]);
   const [src, setSrc] = useState<string | null>(() => (version ? loader.peek(item.id, version) : null));
+  // เวอร์ชันที่โหลดแล้วไม่ได้ (ไม่มี doc / ออฟไลน์) — แสดงไอคอนแทนการกระพริบค้าง
+  const [failed, setFailed] = useState<number | null>(null);
   const [near, setNear] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -52,16 +57,30 @@ export function MenuPhoto({
     if (!version) { setSrc(null); return; }
     const ready = loader.peek(item.id, version);
     if (ready) { setSrc(ready); return; }
+    setSrc(null);
     if (!near) return;
     let alive = true;
-    loader.load(item.id, version).then((data) => { if (alive) setSrc(data); });
+    loader.load(item.id, version).then((data) => {
+      if (!alive) return;
+      setSrc(data);
+      setFailed(data ? null : version);
+    });
     return () => { alive = false; };
   }, [item.id, version, near, loader]);
 
+  const state: MenuPhotoState = src ? "loaded" : version && failed !== version ? "loading" : "placeholder";
+
   return (
-    <div ref={boxRef} className={`relative overflow-hidden bg-muted ${className}`} data-menu-photo={src ? "loaded" : "placeholder"}>
+    <div
+      ref={boxRef}
+      className={`relative overflow-hidden bg-muted flex-shrink-0 ${className}`}
+      data-menu-photo={state}
+      aria-busy={state === "loading" || undefined}
+    >
       {src ? (
-        <img src={src} alt={alt} draggable={false} className={`w-full h-full object-cover ${imgClassName}`} />
+        <img src={src} alt={alt} draggable={false} className={`absolute inset-0 w-full h-full object-cover ${imgClassName}`} />
+      ) : state === "loading" ? (
+        <div className="absolute inset-0 animate-pulse bg-foreground/5" aria-hidden="true" />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-muted-foreground/40" aria-hidden="true">
           <Utensils size={iconSize} strokeWidth={1.5} />
