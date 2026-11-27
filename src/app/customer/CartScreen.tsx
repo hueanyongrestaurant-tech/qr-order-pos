@@ -113,13 +113,12 @@ export function CartScreen({ lang, tableNumber, cart, onBack, onUpdateQty, onRem
             {cart.map((ci) => (
               <div key={ci.cartId} className={`bg-card rounded-2xl p-4 border ${isUnavailable(ci) || isShort(ci) ? "border-destructive/50" : "border-border"}`}>
                 <div className="flex gap-3">
-                  {/* กรอบรูปมีทุกรายการ ขนาดเท่ากัน — ไม่มีรูป = ไอคอนช้อนส้อม */}
+                  {/* มีรูปจริงเท่านั้น — ไม่มีรูป/โหลดไม่ได้ = แถวตัวหนังสือล้วน (แบบเดิม) */}
                   <MenuPhoto
                     item={ci.item}
                     size="thumb"
                     alt={lang === "en" ? ci.item.name.en : ci.item.name.th}
                     className="w-16 h-16 rounded-xl flex-shrink-0"
-                    iconSize={20}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">

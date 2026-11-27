@@ -5,7 +5,7 @@ import { T } from "../translations";
 import { tableTitle } from "../tables";
 import { cartTotal, menuAvailability } from "../utils";
 import { LannaBorder, RestaurantLogo } from "../shared";
-import { MenuPhoto } from "../components/MenuPhoto";
+import { MenuPhotoBox, useMenuPhoto } from "../components/MenuPhoto";
 
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
 
@@ -177,52 +177,9 @@ export function MenuScreen({
         {/* Menu grid */}
         <div className="flex-1 px-4 py-4 pb-32">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {filtered.map((item) => {
-              // หมด = ยังแสดงตำแหน่งเดิม แต่เป็นสีเทา + ป้าย "หมด" กดไม่ได้ (เมนูที่ซ่อนถูกกรองออกตั้งแต่ App แล้ว)
-              // รวมกรณีเนื้อสัตว์ที่บังคับเลือกหมดทุกตัว (menuAvailability คิดให้)
-              const soldOut = menuAvailability(item) === "soldOut";
-              return (
-              <button
-                key={item.id}
-                onClick={() => onItemClick(item)}
-                disabled={soldOut}
-                aria-disabled={soldOut}
-                // flex-col + justify-start: ปุ่มที่ถูกยืดสูงเท่าแถว ไม่จัดเนื้อหาไว้กลางการ์ด (ค่าเริ่มต้นของ <button> ใน Safari/Chrome)
-                className={`relative flex flex-col items-stretch justify-start h-full bg-card rounded-2xl overflow-hidden text-left border border-border transition-all duration-150 group ${soldOut
-                  ? "cursor-not-allowed"
-                  : "hover:border-primary/30 hover:shadow-lg active:scale-95"
-                  }`}
-              >
-                {/* ป้ายหมดลอยมุมขวาบนของกรอบรูปเสมอ (ทุกการ์ดมีกรอบรูป) */}
-                {soldOut && (
-                  <div className="absolute top-2 right-2 z-10 bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-                    {t.soldOut}
-                  </div>
-                )}
-                <div className={`w-full ${soldOut ? "grayscale opacity-50" : ""}`}>
-                {/* กรอบรูปมีทุกการ์ด ขนาดเท่ากันหมด — ไม่มีรูป = ไอคอนช้อนส้อม (ดู MenuPhoto) */}
-                <MenuPhoto
-                  item={item}
-                  size="thumb"
-                  alt={lang === "en" ? item.name.en : item.name.th}
-                  className="w-full aspect-[4/3]"
-                  imgClassName="group-hover:scale-105 transition-transform duration-300"
-                />
-                <div className="p-2.5">
-                  <div className="font-semibold text-foreground text-sm leading-snug">
-                    {lang === "en" ? item.name.en : item.name.th}
-                  </div>
-                  <div className="text-muted-foreground text-[10px] mt-0.5 leading-snug">
-                    {lang === "en" ? item.name.th : item.name.en}
-                  </div>
-                  <div className="mt-1.5 font-bold text-primary text-sm">
-                    {t.thb}{item.price}
-                  </div>
-                </div>
-                </div>
-              </button>
-              );
-            })}
+            {filtered.map((item) => (
+              <MenuItemCard key={item.id} item={item} lang={lang} onClick={onItemClick} />
+            ))}
           </div>
         </div>
 
@@ -241,5 +198,61 @@ export function MenuScreen({
         )}
       </div>
     </>
+  );
+}
+
+// การ์ดเมนู 1 ใบ — หน้าตาเดิม: มีรูปจริง = รูปด้านบน + ป้าย "หมด" ลอยมุมขวาบนของรูป
+// ไม่มีรูป / รอรูป 11 ธ.ค. / โหลดรูปไม่ได้ = การ์ดตัวหนังสือล้วน (ป้าย "หมด" อยู่บรรทัดบนสุดเหนือชื่อ ลอยแล้วจะทับชื่อ)
+// ระหว่างโหลดรูปจริง = กรอบรูปกระพริบเบาๆ | รูปจาก Supabase มาถึง (photoVersion > 0) = เปลี่ยนเป็นการ์ดมีรูปเอง
+function MenuItemCard({ item, lang, onClick }: { item: MenuItem; lang: Language; onClick: (item: MenuItem) => void }) {
+  const t = T[lang];
+  // หมด = ยังแสดงตำแหน่งเดิม แต่เป็นสีเทา + ป้าย "หมด" กดไม่ได้ (เมนูที่ซ่อนถูกกรองออกตั้งแต่ App แล้ว)
+  // รวมกรณีเนื้อสัตว์ที่บังคับเลือกหมดทุกตัว (menuAvailability คิดให้)
+  const soldOut = menuAvailability(item) === "soldOut";
+  const photo = useMenuPhoto(item, "thumb");
+  const hasPhoto = photo.state !== "none";
+  return (
+    <button
+      onClick={() => onClick(item)}
+      disabled={soldOut}
+      aria-disabled={soldOut}
+      data-has-photo={hasPhoto}
+      className={`relative bg-card rounded-2xl overflow-hidden text-left border border-border transition-all duration-150 group ${soldOut
+        ? "cursor-not-allowed"
+        : "hover:border-primary/30 hover:shadow-lg active:scale-95"
+        }`}
+    >
+      {soldOut && hasPhoto && (
+        <div className="absolute top-2 right-2 z-10 bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
+          {t.soldOut}
+        </div>
+      )}
+      {soldOut && !hasPhoto && (
+        <div className="px-2.5 pt-2.5 -mb-1">
+          <span className="inline-block bg-[#3C2414] text-[#FFF8F0] text-[11px] font-bold px-2.5 py-0.5 rounded-full">
+            {t.soldOut}
+          </span>
+        </div>
+      )}
+      <div className={soldOut ? "grayscale opacity-50" : ""}>
+        <MenuPhotoBox
+          photo={photo}
+          alt={lang === "en" ? item.name.en : item.name.th}
+          className="aspect-[4/3]"
+          imgClassName="group-hover:scale-105 transition-transform duration-300"
+        />
+        <div className="p-2.5">
+          <div className="font-semibold text-foreground text-sm leading-snug">
+            {lang === "en" ? item.name.en : item.name.th}
+          </div>
+          <div className="text-muted-foreground text-[10px] mt-0.5 leading-snug">
+            {lang === "en" ? item.name.th : item.name.en}
+          </div>
+          <div className="mt-1.5 font-bold text-primary text-sm">
+            {t.thb}{item.price}
+          </div>
+        </div>
+      </div>
+    </button>
   );
 }

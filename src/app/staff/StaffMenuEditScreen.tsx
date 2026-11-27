@@ -189,7 +189,7 @@ export function StaffMenuEditScreen({ lang, item, onSave, onSetChoiceClosed, onC
                 </div>
               ) : showCurrent ? (
                 <div className="relative w-full h-40 mb-2">
-                  <MenuPhoto item={item} alt="" className="w-full h-40 rounded-xl" iconSize={36} />
+                  <MenuPhoto item={item} alt="" className="w-full h-40 rounded-xl" keepBox />
                   {awaitingOriginal && (
                     <div className="absolute bottom-2 left-2 right-12 bg-black/60 text-white text-[11px] px-2 py-1 rounded-lg">
                       {en ? "Original photo returns on 11 Dec" : "รูปเดิมจะกลับมาวันที่ 11 ธ.ค."}
